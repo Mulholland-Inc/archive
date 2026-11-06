@@ -13,7 +13,6 @@ export function confirmDialog({ title, body = '', confirm = 'Delete' }) {
   });
 }
 
-// A message with one button, for errors and for what the app can't do yet.
 export function notify({ title, body = '' }) {
   return new Promise((resolve) => {
     Object.assign(confirmer, { open: true, title, body, confirm: 'OK', info: true, resolve });

@@ -41,7 +41,7 @@ variable "min_instances" {
 variable "max_instances" {
   type        = number
   description = "Most Cloud Run instances."
-  default     = 1
+  default     = 2
 }
 
 variable "cpu" {

@@ -1,7 +1,5 @@
 <script>
   import Spinner from './Spinner.svelte';
-
-  // The whole window while the app starts: a spinner in its middle.
 </script>
 
 <div class="loading" aria-label="Loading"><Spinner /></div>

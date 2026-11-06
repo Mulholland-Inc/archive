@@ -2,38 +2,34 @@
   import Dialog from './Dialog.svelte';
   import Field from './Field.svelte';
   import Textarea from './Textarea.svelte';
-  import Select from './Select.svelte';
+  import Menu from './Menu.svelte';
   import Button from './Button.svelte';
   import Chip from './Chip.svelte';
   import Stack from './Stack.svelte';
   import { Plus } from '@lucide/svelte';
-  import { invite, ws } from '../lib/app.svelte.js';
+  import { invite, ws, ROLES, atLeast } from '../lib/app.svelte.js';
   import { newGroupPrompt } from '../lib/menus.js';
 
   let { open = $bindable(false) } = $props();
 
   let emails = $state('');
   let role = $state('viewer');
-  let picked = $state([]);
-  const pick = (id) => (picked = picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+  let picked = $state(null);
+  const pick = (id) => (picked = picked === id ? null : id);
 
   async function newGroup() {
     const g = await newGroupPrompt();
-    if (g) picked = [...picked, g.id];
+    if (g) picked = g.id;
   }
   const list = $derived(emails.split(/[\s,;]+/).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)));
   const count = $derived(list.length);
 
-  const roles = [
-    { value: 'viewer', label: 'Viewer' },
-    { value: 'editor', label: 'Editor' },
-    { value: 'owner', label: 'Owner' }
-  ];
+  const roles = $derived(ROLES.filter((r) => r.value !== 'owner' && atLeast(r.value)));
 
   function send(close) {
-    invite({ emails: list, role, groups: picked });
+    invite({ emails: list, role, group: picked });
     emails = '';
-    picked = [];
+    picked = null;
     close();
   }
 </script>
@@ -46,13 +42,13 @@
   </Field>
   <Field label="Role">
     {#snippet children(id)}
-      <Select {id} bind:value={role} options={roles} full />
+      <Menu {id} bind:value={role} options={roles} full />
     {/snippet}
   </Field>
-  <Field label="Groups">
+  <Field label="Group">
     {#snippet children()}
       <Stack direction="row" gap="1-5" wrap>
-        {#each ws().groups as g (g.id)}<Chip selected={picked.includes(g.id)} onclick={() => pick(g.id)}>{g.name}</Chip>{/each}
+        {#each ws().groups as g (g.id)}<Chip selected={picked === g.id} onclick={() => pick(g.id)}>{g.name}</Chip>{/each}
         <Chip icon={Plus} onclick={newGroup}>New group</Chip>
       </Stack>
     {/snippet}

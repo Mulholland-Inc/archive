@@ -1,5 +1,4 @@
 <script>
-  // The browser's file chooser, kept out of sight: a button calls element.click() to open it.
   let { element = $bindable(), multiple = false, onchange } = $props();
 </script>
 

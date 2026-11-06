@@ -14,7 +14,6 @@
   --blue-500: #0a74db;
   --blue-600: #0066c5;
 
-  --red-300: #ff8a8a;
   --red-600: #c9302c;
 
   --green-600: #2f9e5f;
@@ -94,9 +93,6 @@
 
   --size-icon-sm: 10px;
   --size-icon: 16px;
-  --size-icon-lg: 20px;
-  --size-dot: 8px;
-  --size-avatar: 24px;
   --size-control-xs: 32px;
   --size-brand: 26px;
   --size-badge: 28px;
@@ -120,7 +116,6 @@
   --art-story: min(680px, 76svh);
   --step-height: 72svh;
   --opacity-dim: 0.28;
-  --opacity-faint: 0.2;
 
   --measure-title-sm: 14ch;
   --measure-title-md: 16ch;
@@ -182,11 +177,6 @@
   --primary-hover: var(--blue-500);
   --on-primary: var(--gray-0);
   --on-primary-muted: var(--white-75);
-  --danger: var(--red-600);
-  --syntax-keyword: var(--blue-600);
-  --syntax-string: var(--green-600);
-  --syntax-number: var(--orange-600);
-  --syntax-comment: var(--fg-muted);
 
   --nav-height: var(--size-bar);
   --nav-slack: var(--space-2);
@@ -213,8 +203,6 @@
   --fill: var(--white-10);
   --fill-strong: var(--white-16);
   --accent: var(--blue-300);
-  --danger: var(--red-300);
-  --syntax-keyword: var(--blue-300);
 }
 
 .code {
@@ -240,92 +228,22 @@
   --frame: var(--space-2);
   --gutter: var(--space-5);
   --radius-panel: var(--radius-sm);
-  --radius-item: var(--radius-xs);
-  --radius-nav: var(--radius-full);
-  --item-pad: var(--space-1-5);
   --control-height: var(--size-control-sm);
   --control-height-sm: var(--size-control-xs);
   --sidebar-width: var(--measure-xs);
-  --lane-width: var(--measure-sm);
-  --cell-width: var(--measure-sm);
-  --door-width: calc(var(--measure-sm) + var(--space-8));
-  --door-art: var(--art-lg);
-  --title-size: var(--text-4xl);
-  --header-pad: var(--space-2);
-  --header-inset: 0px;
-  --table-bleed: var(--gutter);
   --text-app: var(--text-base);
   --text-ui: var(--text-app);
-  --text-meta: var(--text-app);
-  --leading-ui: var(--leading-medium);
   --text-chat: var(--text-ui);
-  --greeting-size: var(--display-xs);
-  --text-table: var(--text-app);
-  --app-columns: var(--sidebar-width) minmax(0, 1fr);
-  --side-position: sticky;
-  --side-top: var(--frame);
-  --side-bottom: auto;
-  --side-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top));
-  --side-pad: 0px;
-  --side-pad-top: 0px;
-  --side-pad-bottom: 0px;
-  --side-closed: none;
-  --side-visibility: visible;
-  --side-align: start;
-  --main-height: var(--side-height);
-  --scrim: var(--ink-14);
-  --sheet-overflow: auto;
-  --sheet-fade: linear-gradient(transparent, var(--gray-1000) var(--gutter), var(--gray-1000) calc(100% - var(--gutter)), transparent);
-  --wide-only: flex;
-  --narrow-only: none;
   --chat-width: calc(var(--measure-2xl) * 3 / 4);
   --composer-width: var(--chat-width);
-  --output-height: var(--art-md);
-  --chat-table-height: calc(var(--text-table) * var(--leading-none) + 2 * var(--space-2) + 5 * (var(--text-table) * var(--leading-medium) + 2 * var(--space-2) + var(--hairline)));
-  --bubble-width: 80%;
   --composer-max: 40svh;
   --composer-line: var(--size-control);
   --composer-pad: calc((var(--composer-line) - var(--text-chat) * var(--leading-medium)) / 2);
-  --menu-width: var(--measure-2xs);
-  --rise: var(--space-2);
-  --dock-gap: var(--frame);
-  --dock-lift: 0px;
-  --chat-head-inset: var(--gutter);
-  --prompt-lift: 0px;
-  --dock-inset: var(--gutter);
-  --composer-bg: var(--surface-raised);
-  --search-width: var(--measure-2xs);
-  --filter-width: var(--art-xs);
-  --filter-height: var(--size-control-xs);
-  --board-height: auto;
 }
 
 @media (max-width: 767px) {
   .app {
     --gutter: var(--space-4);
-    --title-size: var(--text-3xl);
-    --app-columns: minmax(0, 1fr);
-    --side-position: fixed;
-    --side-top: 0;
-    --side-bottom: 0;
-    --side-height: auto;
-    --side-pad: var(--frame);
-    --side-pad-top: calc(var(--frame) + env(safe-area-inset-top));
-    --side-pad-bottom: calc(var(--frame) + env(safe-area-inset-bottom));
-    --side-closed: translateX(-100%);
-    --side-visibility: hidden;
-    --side-align: stretch;
-    --main-height: auto;
-    --sheet-overflow: visible;
-    --sheet-fade: none;
-    --wide-only: none;
-    --narrow-only: flex;
-    --bubble-width: 88%;
     --composer-width: 100%;
-    --door-art: var(--art-md);
-    --dock-inset: 0px;
-    --chat-head-inset: var(--header-inset);
-    --prompt-lift: calc(var(--control-height-sm) + 2 * var(--space-2) + var(--frame));
-    --board-height: calc(100svh - 2 * var(--frame) - env(safe-area-inset-top) - var(--gutter) - 2 * var(--header-pad) - var(--title-size) * var(--leading-tight) - var(--size-icon) - 3 * var(--space-2) - env(safe-area-inset-bottom));
   }
 }

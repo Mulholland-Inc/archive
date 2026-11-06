@@ -3,12 +3,14 @@
 <title>draw render</title>
 <style>html, body { margin: 0; background: transparent; }</style>
 <script type="module">
-import { bake } from './render.js';
-window.bake = async (name, opts) => {
+import { bake, icon } from './render.js';
+const png = fn => async (...args) => {
   try {
-    return { png: await bake(name, opts) };
+    return { png: await fn(...args) };
   } catch (e) {
     return { error: e.message };
   }
 };
+window.bake = png(bake);
+window.icon = png(icon);
 </script>

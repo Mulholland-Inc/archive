@@ -4,14 +4,14 @@
   import PaneHeader from './PaneHeader.svelte';
   import SearchField from './SearchField.svelte';
   import ConnectorCard from './ConnectorCard.svelte';
-  import OwnerNotice from './OwnerNotice.svelte';
+  import ManagerNotice from './ManagerNotice.svelte';
   import EmptyState from './EmptyState.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
   import MenuLabel from './MenuLabel.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
-  import { archiveIntegrations, isArchiveOwner, connections } from '../lib/app.svelte.js';
+  import { archiveIntegrations, atLeast, connections } from '../lib/app.svelte.js';
 
   let { onopen, onback } = $props();
   connections.use();
@@ -20,7 +20,7 @@
   let categories = $state([]);
   let status = $state('all');
   const all = $derived(archiveIntegrations());
-  const owner = $derived(isArchiveOwner());
+  const manages = $derived(atLeast('manager'));
   const allCategories = $derived([...new Set(all.map((c) => c.category))]);
 
   const matches = $derived.by(() => {
@@ -38,10 +38,10 @@
 </script>
 
 <SettingsPane {onback} backNarrow>
-  <PaneHeader title="Integrations" description="The archive’s own accounts, like its QuickBooks or GitHub, connected once for everyone. Only owners can add or change them." art="connectors">
+  <PaneHeader title="Integrations" description="The archive’s own accounts, like its QuickBooks or GitHub, connected once for everyone. Only managers, engineers and the owner can add or change them." art="connectors">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search integrations" /></div>
-      <Menu label="Filter" placement="bottom-end">
+      <Menu label="Filter" end>
         {#snippet trigger(props)}<IconButton icon={ListFilter} label="Filter" pressed={filtered} {...props} />{/snippet}
         <MenuLabel>Status</MenuLabel>
         <MenuItem keepOpen checked={status === 'connected'} onselect={() => (status = status === 'connected' ? 'all' : 'connected')}>Connected</MenuItem>
@@ -58,14 +58,14 @@
       </Menu>
     {/snippet}
   </PaneHeader>
-  {#if !owner}<OwnerNotice what="integrations" />{/if}
+  {#if !manages}<ManagerNotice what="integrations" />{/if}
   {#if matches.length}
     <div class="grid">
       {#each matches as c (c.id)}
         <ConnectorCard
           connector={c}
           onopen={() => onopen?.(c.id)}
-          onconnect={owner ? () => onopen?.(c.id) : undefined}
+          onconnect={manages ? () => onopen?.(c.id) : undefined}
         />
       {/each}
     </div>

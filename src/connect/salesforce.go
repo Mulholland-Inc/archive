@@ -6,18 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Salesforce's CRM, through its REST API: an org's accounts, contacts, leads and opportunities. It reads
-// ARCHIVE_SALESFORCE, an External Client App (or Connected App) whose callback URL is
-// <API>/connect/salesforce/callback, with the OAuth scopes api and refresh_token, and PKCE on;
-// https://<id>:<secret>@test.salesforce.com in place of login.salesforce.com connects sandboxes. An owner
-// connects the org for everyone. Each org has its own host, which the user info of a token names.
-//
-// It syncs into the crm tables as HubSpot does: an account as a company, the organization of its website's
-// domain, a contact or an open lead as a contact, the person of their email, and an opportunity as a deal. Each
-// is listed whole the first time and a week after, which deletes what is gone for good, and in between
-// queryAll reads what changed since the sync before, deleted too, while the recycle bin still has it, about
-// two weeks, longer than that week. It pushes nothing: Salesforce's change events need a streaming client, not a
-// webhook.
 func init() {
 	Register(&Connector{
 		ID: "salesforce", Name: "Salesforce", Integration: true, Env: "ARCHIVE_SALESFORCE",
@@ -70,7 +58,6 @@ func init() {
 						"state": "data->>'MailingState'", "country": "data->>'MailingCountry'", "made_at": "archive.sync_at(data->>'CreatedDate')", "edited_at": "archive.sync_at(data->>'SystemModstamp')"},
 					People: map[string]SQL{"person": "data->>'Email'"},
 					Refs:   map[string]SQL{"company": "data->>'AccountId'"}}},
-			// A lead is a contact whose stage is lead, until it is converted into a contact, which is then the contact instead.
 			{Name: "leads", Gap: time.Second, Req: sfList, Items: "records", ID: "Id", Updated: "SystemModstamp", Page: sfPage, Change: sfChange, Deny: sfDeny, Restart: sfRestart,
 				Gone: []Test{{At: "IsDeleted", Is: "true"}, {At: "IsConverted", Is: "true"}},
 				Vars: Obj{"object": "Lead", "fields": "FirstName, LastName, Email, Phone, Title, Company, Status, City, State, Country, IsConverted, CreatedDate"},
@@ -98,12 +85,11 @@ const (
 )
 
 var (
-	sfList   = Req{URL: sfData + "/query", Query: Q{"q": "SELECT Id, SystemModstamp, {fields} FROM {object}"}}
-	sfPage   = NextURL{At: "nextRecordsUrl"}
-	sfChange = SinceTime{Req: Req{URL: sfData + "/queryAll", Query: Q{"q": "SELECT Id, SystemModstamp, IsDeleted, {fields} FROM {object} WHERE SystemModstamp > {since}"}}}
-	sfGone   = []Test{{At: "IsDeleted", Is: "true"}}
-	sfDeny   = []Deny{{Status: []int{400}, Why: "Salesforce does not let Archive read {object} in this org: {message}"}}
-	// A query's next page lasts about 15 minutes idle; one gone starts the sync again.
+	sfList    = Req{URL: sfData + "/query", Query: Q{"q": "SELECT Id, SystemModstamp, {fields} FROM {object}"}}
+	sfPage    = NextURL{At: "nextRecordsUrl"}
+	sfChange  = SinceTime{Req: Req{URL: sfData + "/queryAll", Query: Q{"q": "SELECT Id, SystemModstamp, IsDeleted, {fields} FROM {object} WHERE SystemModstamp > {since}"}}}
+	sfGone    = []Test{{At: "IsDeleted", Is: "true"}}
+	sfDeny    = []Deny{{Status: []int{400}, Why: "Salesforce does not let Archive read {object} in this org: {message}"}}
 	sfRestart = []int{400, 404}
 )
 

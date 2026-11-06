@@ -47,8 +47,7 @@
       [
         ['code', 'Code mode'],
         ['sdk', 'The SDK'],
-        ['api', 'The HTTP API'],
-        ['cli', 'The CLI']
+        ['api', 'The HTTP API']
       ]
     ],
     [
@@ -143,7 +142,7 @@
 <h2 id="quickstart">Quick start</h2>
 <p>From your invite to your first answer in a few minutes. No card, no sales call.</p>
 <ol>
-<li>Get invited to a workspace by one of its owners, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
+<li>Get invited to a workspace by its owner, or ask <a href="https://mulholland.ai">Mulholland</a> for one.</li>
 <li>Sign in with Google, Microsoft, Slack or GitHub under the email you were invited with.</li>
 <li>Create a token (see <a href="#tokens">Tokens</a>) and keep it as <code>ARCHIVE_TOKEN</code>.</li>
 <li>Connect your AI (see <a href="#connect">Connect your AI</a>), or call the API straight away.</li>
@@ -219,7 +218,7 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 </Code>
 
 <h2 id="tokens">Tokens</h2>
-<p>A token acts as you, with your role and groups, and never does more than you can. Agents, scripts and CI each get their own.</p>
+<p>A token acts as you, with your role and group, and never does more than you can. Agents, scripts and CI each get their own.</p>
 <Code tabs={['header']}>
 <pre>Authorization: Bearer $ARCHIVE_TOKEN</pre>
 </Code>
@@ -239,12 +238,12 @@ Then tell me which tables and views I have, and what each one is for.</pre>
 <tbody>
 <tr><td><code>name</code></td><td>A label, so you know which token is which.</td></tr>
 <tr><td><code>expires</code></td><td>A lifetime such as <code>"720h"</code>. Left out, the token does not expire.</td></tr>
-<tr><td><code>viewer</code></td><td><code>true</code> makes the token read only. It keeps your groups, and never sees more than you do.</td></tr>
+<tr><td><code>viewer</code></td><td><code>true</code> makes the token read only. It keeps your group, and never sees more than you do.</td></tr>
 </tbody>
 </table>
 
 <h3 id="token-manage">List and revoke</h3>
-<p><code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When your role or groups change, your tokens change with them, and removing you from the workspace removes your tokens.</p>
+<p>Only engineers and the owner create a workspace's tokens, read-only ones included, and read or revoke their own. <code>GET /auth/tokens</code> lists your tokens without their values. <code>DELETE /auth/tokens/&#123;id&#125;</code> revokes one, and it stops working at once. When your role or groups change, your tokens change with them, and removing you from the workspace removes your tokens.</p>
 
 <h2 id="types">Your own types</h2>
 <p>Each kind of record is a real Postgres table in the <code>public</code> schema. The table is the type, a row is a record, and nothing else is stored about it.</p>
@@ -312,6 +311,7 @@ icon: receipt'</span>;
 <li>If the run throws or times out later, the migration is undone with everything else.</li>
 <li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.update</code>, then make it <code>NOT NULL</code>.</li>
 <li>Renames and type changes with <code>USING</code> keep the data, as in any Postgres.</li>
+<li>At the end of the run every saved workflow is checked again. The report's <code>breaks</code> names what would break, by line and column; if any remain, the whole run fails, so one run can migrate and fix the workflows together.</li>
 </ul>
 <Code tabs={['run.ts', 'result']}>
 <pre><span class="k">const</span> sql = <span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>
@@ -330,14 +330,17 @@ icon: receipt'</span>;
 <h3 id="schema-drops">Drops</h3>
 <p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
 
+<h3 id="schema-breaks">Breaks</h3>
+<p>A schema change keeps every saved workflow valid or is refused: a column it reads is gone, a query no longer parses, a number now reads as a string, or its trigger table is gone. A saved workflow needs constant table names and constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves a changed source that passes the checks. A saved workflow cannot drop data or use <code>breaks</code>.</p>
+
 <h3 id="schema-history">History</h3>
-<p><code>archive.revisions()</code> lists every migration, newest first, with who ran it and its statements. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
+<p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
 
 <h3 id="schema-who">Who can change it</h3>
-<p>Owners. Everyone else can read the schema.</p>
+<p>Managers, engineers and the owner. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p>Keep migrations as <code>.sql</code> files and run them with <code>archive schema migrate &lt;dir&gt;</code>: it dry-runs the files that have not run yet, in name order, each once by its name, and <code>-confirm</code> with the hash it prints runs them. Over HTTP, <code>POST /api/schema/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
+<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/run</code> runs <code>archive.migrate(sql, &#123; name, confirm &#125;)</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
 <p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
@@ -360,7 +363,7 @@ icon: calendar'</span>;</pre>
 <ul>
 <li><code>WITH (security_invoker = true)</code>, so row-level security applies to whoever reads it.</li>
 <li>An <code>id</code> column, which <code>SELECT *</code> from a table already gives you.</li>
-<li>A comment, with <code>layout</code>, <code>by</code> and <code>icon</code> as its last lines.</li>
+<li>A comment, with <code>layout</code> and <code>by</code> as its last lines, and optionally <code>icon</code>, any <a href="https://lucide.dev/icons">Lucide</a> icon name.</li>
 </ul>
 
 <h3 id="views-read">Reading a view</h3>
@@ -390,7 +393,7 @@ icon: calendar'</span>;</pre>
 <h2 id="files">Files</h2>
 <p>Upload any file. Archive pulls out its metadata and text before the upload returns, so search finds it right away.</p>
 <Code tabs={['curl']}>
-<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/files?access=finance"</span> \
+<pre>curl <span class="s">"https://your-workspace.archive.mulholland.ai/api/file?access=finance"</span> \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -F file=@contract.pdf</pre>
 </Code>
@@ -400,20 +403,26 @@ icon: calendar'</span>;</pre>
 <Note>Office files are stored and edited in place but not text-extracted yet, so search finds them by name only.</Note>
 
 <h3 id="files-large">Large files</h3>
-<p>A plain upload takes up to 64 MB. For bigger files, use resumable tus uploads at <code>/api/files/tus</code>, which pick up where they stopped.</p>
+<p>A plain upload takes up to 64 MB. For bigger files, use resumable tus uploads at <code>/api/file/tus</code>, which pick up where they stopped.</p>
 
 <h3 id="files-links">Download links</h3>
-<p><code>POST /api/files/&#123;id&#125;/link</code> returns a signed URL that works without signing in, for 24 hours or for <code>?expires=1h</code>. Signed links always drop a photo's GPS location; on a signed-in download, add <code>?strip=gps</code>.</p>
+<p><code>GET /api/file/&#123;id&#125;/link</code> returns a signed URL that works without signing in, for 24 hours or for <code>?expires=1h</code>. Signed links always drop a photo's GPS location; on a signed-in download, add <code>?strip=gps</code>.</p>
 
 <h3 id="files-endpoints">Endpoints</h3>
 <table>
 <thead><tr><th>Endpoint</th><th>Returns</th></tr></thead>
 <tbody>
-<tr><td><code>GET /api/files</code></td><td>Your files, oldest first; page with <code>limit</code> and <code>after</code>.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;</code></td><td>One file's metadata.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/content</code></td><td>Its bytes.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/thumbnail</code></td><td>Its thumbnail, for images.</td></tr>
-<tr><td><code>GET /api/files/&#123;id&#125;/text</code></td><td>Its extracted text.</td></tr>
+<tr><td><code>GET /api/file</code></td><td>Your files, oldest first; page with <code>limit</code> and <code>after</code>, and <code>parent=</code> for the top.</td></tr>
+<tr><td><code>POST /api/file</code></td><td>Uploads a multipart <code>file</code>, or makes a folder from <code>&#123;"kind": "folder", "name", "parent", "access"&#125;</code>.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;</code></td><td>One file's metadata.</td></tr>
+<tr><td><code>PATCH /api/file/&#123;id&#125;</code></td><td>Changes <code>name</code>, <code>parent</code> or <code>access</code>, or a document with <code>edits</code>.</td></tr>
+<tr><td><code>DELETE /api/file/&#123;id&#125;</code></td><td>Deletes a file or empty folder of yours.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/content</code></td><td>Its bytes.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/thumbnail</code></td><td>Its thumbnail, for images.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/text</code></td><td>Its extracted text.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/model</code></td><td>A document's model, as <code>archive.read</code> gives it.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/media/&#123;part&#125;</code></td><td>An image inside a document.</td></tr>
+<tr><td><code>GET /api/file/&#123;id&#125;/link</code></td><td>A signed download link.</td></tr>
 </tbody>
 </table>
 
@@ -508,10 +517,10 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </Code>
 
 <h3 id="code-docs">The tool's docs</h3>
-<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text at <code>GET /api/run/docs</code>.</p>
+<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text with <code>GET /api/docs</code>.</p>
 
 <h3 id="code-elsewhere">Run it from anywhere</h3>
-<p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code> and <code>archive run script.ts</code> on the command line. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
+<p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code>. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
 
 <h2 id="sdk">The SDK</h2>
 <p>Scripts call one object, <code>archive</code>, with one word per action. Table names are typed from your schema, so <code>Tables[T]</code> below is the row type of table <code>T</code>.</p>
@@ -521,8 +530,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw.</td></tr>
-<tr><td><code>list(table, &#123; where?, limit?, after?, reveal? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
-<tr><td><code>get(table, id, &#123; reveal? &#125;): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
+<tr><td><code>list(table, &#123; where?, limit?, after? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
+<tr><td><code>get(table, id): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
 <tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
 <tr><td><code>update(table, id, patch): Tables[T]</code></td><td>Changes only the fields given; <code>null</code> clears one.</td></tr>
 <tr><td><code>delete(table, id): void</code></td><td>Deletes a row.</td></tr>
@@ -535,7 +544,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>schema(name?): Table[] | Table</code></td><td>Every table and view, or one, with its columns, types, comments, references and DDL.</td></tr>
-<tr><td><code>migrate(sql, &#123; confirm? &#125;): Migration</code></td><td>Dry-runs DDL and reports what it changes; with the confirm, runs it as part of the run.</td></tr>
+<tr><td><code>migrate(sql, &#123; confirm?, breaks? &#125;): Migration</code></td><td>Dry-runs DDL and reports what it changes and which saved workflows it breaks; with the confirm, runs it as part of the run.</td></tr>
 <tr><td><code>revisions(&#123; limit? &#125;): Revision[]</code></td><td>Migrations, newest first.</td></tr>
 </tbody>
 </table>
@@ -553,7 +562,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </table>
 
 <h3 id="sdk-members">Members</h3>
-<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, groups &#125;)</code>, <code>update("member", id, &#123; groups: ["hr"] &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; only owners can change it.</p>
+<p>People are rows of the <code>member</code> table, so the same calls manage them: <code>list("member")</code>, <code>create("member", &#123; email, role, group &#125;)</code>, <code>update("member", id, &#123; group: "hr" &#125;)</code> and <code>delete("member", id)</code>. Everyone can read it; managers, engineers and the owner can change it, up to their own role.</p>
 
 <h3 id="sdk-values">Values</h3>
 <p>Rows are plain JSON. Dates are <code>"2026-10-27"</code>, instants are UTC like <code>"2026-10-27T09:30:00Z"</code>, references are id strings, arrays are lists and enums are one of their strings. Empty fields read back as <code>null</code>. The built-in composite types read back as objects:</p>
@@ -603,7 +612,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tr><td><code>POST /api/&#123;table&#125;</code></td><td>Creates a row; its <code>access</code> says which group sees it.</td></tr>
 <tr><td><code>GET /api/&#123;table&#125;/&#123;id&#125;</code></td><td>One row.</td></tr>
 <tr><td><code>PATCH /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Changes only what you send.</td></tr>
-<tr><td><code>PUT /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Replaces the whole row.</td></tr>
 <tr><td><code>DELETE /api/&#123;table&#125;/&#123;id&#125;</code></td><td>Deletes the row.</td></tr>
 </tbody>
 </table>
@@ -613,8 +621,8 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Parameter</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>limit</code>, <code>after</code></td><td>Page size, and the last id you got for the next page.</td></tr>
-<tr><td><code>reveal=true</code></td><td>Shows secret values, to owners.</td></tr>
-<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>.</td></tr>
+<tr><td><code>desc</code></td><td>Newest first, so <code>limit</code> takes the last rows.</td></tr>
+<tr><td><code>column=value</code></td><td>Any other parameter filters rows by that column, like <code>access=hr</code>; an empty value matches null.</td></tr>
 </tbody>
 </table>
 
@@ -622,14 +630,12 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /api/types</code></td><td>Your tables and views, with their columns.</td></tr>
-<tr><td><code>GET /api/schema</code></td><td>Each table and view with its columns and DDL; <code>?name=</code> for one.</td></tr>
-<tr><td><code>POST /api/schema/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
-<tr><td><code>GET /api/schema/revisions</code></td><td>Migrations, newest first.</td></tr>
-<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
+<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: <code>me</code>, <code>agents</code>, <code>workflows</code>, <code>members</code>, <code>types</code> and <code>signup</code>. <code>?only=me,types</code> asks for just those. <code>me</code> is who you are, your <code>role</code>, your <code>group</code>, the current <code>workspace</code> and all your <code>workspaces</code>. <code>types</code> is the catalog: your tables and views with their columns and DDL, and every connector; a field that is false or empty is left out. <code>?only=signup</code> adds the agreement texts.</td></tr>
+<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>; with <code>provider</code>, the places a connector offers.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
-<tr><td><code>GET /api/run/docs</code></td><td>The SDK reference with your table types.</td></tr>
-<tr><td><code>/api/files…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Talks with an agent, as a stream: <code>&#123;"agent", "text"&#125;</code>. <code>&#123;"agent", "clear": true&#125;</code> clears your conversation with it.</td></tr>
+<tr><td><code>GET /api/docs</code></td><td>The SDK reference with your table types.</td></tr>
+<tr><td><code>/api/file…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
 </tbody>
 </table>
 
@@ -637,12 +643,15 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>groups</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/users</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (owners).</td></tr>
-<tr><td><code>DELETE /auth/users/&#123;email&#125;</code></td><td>Remove someone, with their tokens (owners).</td></tr>
-<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>groups</code> (owners).</td></tr>
-<tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List or create tokens.</td></tr>
-<tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token.</td></tr>
+<tr><td><code>GET</code>, <code>POST /api/member</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
+<tr><td><code>DELETE /api/member/&#123;id&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
+<tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
+<tr><td><code>GET /api/connection</code></td><td>The connections you can see, with their row counts.</td></tr>
+<tr><td><code>POST /api/connection</code></td><td>Connect an account with keys: <code>&#123;"provider", "keys"&#125;</code>. <code>&#123;"provider"&#125;</code> alone gives a connector's link token.</td></tr>
+<tr><td><code>PATCH /api/connection/&#123;id&#125;</code></td><td>Narrow an integration to a group: <code>&#123;"access"&#125;</code> (managers and up), or sync it now: <code>&#123;"sync": true&#125;</code>.</td></tr>
+<tr><td><code>DELETE /api/connection/&#123;id&#125;</code></td><td>Disconnect it, deleting what it synced.</td></tr>
+<tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List tokens, or create one (engineers and the owner).</td></tr>
+<tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token (engineers and the owner).</td></tr>
 </tbody>
 </table>
 
@@ -652,65 +661,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <pre>&#123;"type": "invoice", "errors": [&#123;"path": "amount", "message": "…"&#125;]&#125;</pre>
 </Code>
 
-<h2 id="cli">The CLI</h2>
-<p>The <code>archive</code> command line offers the same operations as the API and the SDK, for terminals and shell scripts. Output is JSON.</p>
-<Code tabs={['terminal']}>
-<pre>archive list invoice -limit <span class="n">5</span> status=unpaid
-archive search northwind -type invoice -from <span class="n">2026-01-01</span>
-archive schema migrate ./migrations</pre>
-</Code>
-
-<h3 id="cli-rows">Rows and search</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive list &lt;table&gt; [-limit n] [-after id] [-reveal] [column=value …]</code></td><td>Lists rows.</td></tr>
-<tr><td><code>archive get &lt;table&gt; &lt;id&gt; [-reveal]</code></td><td>One row.</td></tr>
-<tr><td><code>archive create &lt;table&gt; [json]</code></td><td>Creates a row from the argument or stdin, <code>access</code> included.</td></tr>
-<tr><td><code>archive set &lt;table&gt; &lt;id&gt; [json]</code></td><td>Sets some columns; <code>null</code> clears one.</td></tr>
-<tr><td><code>archive update &lt;table&gt; &lt;id&gt; [json]</code></td><td>Replaces the whole row.</td></tr>
-<tr><td><code>archive delete &lt;table&gt; &lt;id&gt;</code></td><td>Deletes a row.</td></tr>
-<tr><td><code>archive search &lt;query&gt; [-type t] [-from d] [-to d] [-limit n]</code></td><td>Finds rows and files.</td></tr>
-</tbody>
-</table>
-<Note mark="!">On the command line, <code>set</code> changes some columns and <code>update</code> replaces the row. In the SDK, <code>update</code> changes only the fields you pass.</Note>
-
-<h3 id="cli-schema">Schema and code</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive types</code></td><td>Tables, columns and the built-in types.</td></tr>
-<tr><td><code>archive schema show [name]</code></td><td>Prints the DDL of every table and view, or of one.</td></tr>
-<tr><td><code>archive schema migrate &lt;file.sql|dir|-&gt; [-confirm hash]</code></td><td>Dry-runs migrations, or with the confirm runs them: a file once by its name, a directory's files that have not run in name order.</td></tr>
-<tr><td><code>archive schema revisions</code></td><td>Lists the migrations.</td></tr>
-<tr><td><code>archive run &lt;file.ts|-&gt;</code></td><td>Runs a script and prints <code>&#123;result, logs, error&#125;</code>.</td></tr>
-<tr><td><code>archive run -docs</code></td><td>Prints the SDK reference with your table types.</td></tr>
-</tbody>
-</table>
-
-<h3 id="cli-files">Files</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive file add &lt;path&gt;… [-access group]</code></td><td>Stores files and extracts their text; with <code>-access</code>, only that group and the owners see them.</td></tr>
-<tr><td><code>archive file get &lt;id&gt; [-o path|-]</code></td><td>Prints metadata, or writes the content with <code>-o</code>.</td></tr>
-<tr><td><code>archive file list [-limit n] [-after id]</code></td><td>Lists files.</td></tr>
-</tbody>
-</table>
-
-<h3 id="cli-access">People and tokens</h3>
-<table>
-<thead><tr><th>Command</th><th>Does</th></tr></thead>
-<tbody>
-<tr><td><code>archive user add &lt;email&gt; [-name n] [-role viewer|editor|owner]</code></td><td>Invites a person to the workspace; they sign in with a provider under that email. The first one is an owner.</td></tr>
-<tr><td><code>archive user remove &lt;email&gt;</code></td><td>Takes them out of the workspace, with their tokens.</td></tr>
-<tr><td><code>archive list member</code></td><td>Lists the people here, with their role and groups.</td></tr>
-<tr><td><code>archive set member &lt;id&gt; '&#123;"role":"editor","groups":["hr"]&#125;'</code></td><td>Changes someone's role or groups.</td></tr>
-<tr><td><code>archive token create [-name n] [-expires 720h] [-viewer]</code></td><td>Creates a token that acts as you; <code>-viewer</code> makes it read only.</td></tr>
-<tr><td><code>archive token list</code>, <code>revoke &lt;id&gt;</code></td><td>Lists or revokes tokens.</td></tr>
-</tbody>
-</table>
-
 <h2 id="people">People and roles</h2>
 <p>Everyone in a workspace has one role. Roles are Postgres roles, so the database itself enforces them.</p>
 <table>
@@ -718,46 +668,46 @@ archive schema migrate ./migrations</pre>
 <tbody>
 <tr><td>viewer</td><td>Read rows and files.</td></tr>
 <tr><td>editor</td><td>Also add, change and delete them.</td></tr>
-<tr><td>owner</td><td>Also change the schema, manage people, see every row and file whatever its access, and reveal secret fields.</td></tr>
+<tr><td>manager</td><td>Also change the schema, manage people, integrations and agents, and see every row and file whatever its access.</td></tr>
+<tr><td>engineer</td><td>Also change the workspace's name and look, and create, read and revoke its API keys.</td></tr>
+<tr><td>owner</td><td>Also delete the workspace and transfer it. Each workspace has one.</td></tr>
 </tbody>
 </table>
 
 <h3 id="people-add">Adding people</h3>
-<p>An owner invites the person by email on the Users page or with <code>archive user add</code>, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
+<p>A manager, engineer or the owner invites the person by email on the Users page, and removes them there too. People are rows of the <code>member</code> table, so changing a role is an update.</p>
 <Code tabs={['curl', 'run.ts']}>
-<pre>curl https://your-workspace.archive.mulholland.ai/auth/users \
+<pre>curl https://your-workspace.archive.mulholland.ai/api/member \
   -H <span class="s">"Authorization: Bearer $ARCHIVE_TOKEN"</span> \
   -d <span class="s">'&#123;"email": "anna@example.com", "role": "editor"&#125;'</span></pre>
 <pre hidden><span class="k">const</span> [anna] = <span class="k">await</span> archive.<span class="f">list</span>(<span class="s">"member"</span>, &#123; where: &#123; email: <span class="s">"anna@example.com"</span> &#125; &#125;)
 
-<span class="k">return</span> archive.<span class="f">update</span>(<span class="s">"member"</span>, anna.id, &#123; role: <span class="s">"owner"</span> &#125;)</pre>
+<span class="k">return</span> archive.<span class="f">update</span>(<span class="s">"member"</span>, anna.id, &#123; role: <span class="s">"manager"</span> &#125;)</pre>
 </Code>
-<p>A workspace always keeps at least one owner, and an email cannot change: remove the person and add the new address.</p>
+<p>Nobody sets or removes a role above their own. A workspace has one owner, who cannot leave or be removed; setting another member's role to <code>owner</code> transfers it and makes the old owner an engineer. An email cannot change: remove the person and add the new address.</p>
 
 <h3 id="people-signin">Signing in</h3>
 <p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
 
 <h3 id="people-security">Row-level security</h3>
-<p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
+<p>Every table has one policy, <code>access</code>, that checks each row against the groups you are in, <code>archive.groups()</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
 
 <h2 id="groups">Groups</h2>
-<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and the owners. With no access, the whole workspace sees it.</p>
+<p>A group, like <code>hr</code> or <code>finance</code>, is a set of people, and each person is in one group at most. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>
 
 <h3 id="groups-make">Making a group</h3>
-<p>Put someone in it. A group exists while at least one person is in it, and its name is up to 24 lowercase letters, digits or <code>_</code>.</p>
-<Code tabs={['terminal', 'run.ts']}>
-<pre>archive list member email=anna@example.com
-archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'</span></pre>
-<pre hidden><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span>, access: <span class="s">"finance"</span> &#125;)
+<p>Put someone in it. A group exists while at least one person is in it, and its name can be any text.</p>
+<Code tabs={['run.ts']}>
+<pre><span class="k">await</span> archive.<span class="f">create</span>(<span class="s">"invoice"</span>, &#123; customer: <span class="s">"Hart"</span>, amount: <span class="s">"$980"</span>, access: <span class="s">"finance"</span> &#125;)
 
 <span class="k">return</span> archive.<span class="f">list</span>(<span class="s">"invoice"</span>, &#123; where: &#123; access: <span class="s">"finance"</span> &#125; &#125;)</pre>
 </Code>
 
 <h3 id="groups-rules">Who can write what</h3>
-<p>Anyone but an owner can only write rows whose access is empty or one of their own groups. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
+<p>Anyone below a manager can only write rows whose access is empty or their own group. A table only one group should ever see uses <code>access text NOT NULL DEFAULT 'hr' CHECK (access = 'hr')</code>.</p>
 
 <h2 id="secrets">Secret fields</h2>
-<p>Some values should never sit in plain text. Columns of a secret type are encrypted, read back masked, and shown only to owners.</p>
+<p>Columns of a secret type read back as they are stored, to anyone who can read the row. They stay out of search and cannot be filtered.</p>
 
 <h3 id="secrets-types">Secret types</h3>
 <table>
@@ -765,13 +715,13 @@ archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'
 <tbody>
 <tr><td><code>archive.card</code></td><td>Payment card numbers</td></tr>
 <tr><td><code>archive.us_ssn</code></td><td>US Social Security numbers</td></tr>
-<tr><td><code>archive.national</code></td><td>National identity numbers</td></tr>
-<tr><td><code>archive.passport</code></td><td>Passport numbers</td></tr>
+<tr><td><code>archive.national</code></td><td>National identity numbers, like <code>US 123456789</code></td></tr>
+<tr><td><code>archive.passport</code></td><td>Passport numbers, like <code>US X1234567</code></td></tr>
 </tbody>
 </table>
 
-<h3 id="secrets-reveal">Writing and reading</h3>
-<p>Write the real value as usual. Reads return it masked. Pass <code>&#123; reveal: true &#125;</code> to <code>list</code> or <code>get</code>, or <code>?reveal=true</code> over HTTP, to see it if you are an owner.</p>
+<h3 id="secrets-write">Writing</h3>
+<p>Write a national id or passport as a string, or as an object with its country and number. It reads back as the string.</p>
 
 <h2 id="connectors">Connectors</h2>
 <p>Connectors bring a workspace's data in from the tools your team already uses, syncing only what changed, and their actions work in those tools when you or an agent call them.</p>
@@ -798,7 +748,7 @@ archive set member &lt;id&gt; <span class="s">'&#123;"groups":["finance"]&#125;'
 <tr><td>Docs</td><td>Notion, Confluence</td></tr>
 <tr><td>Work and code</td><td>Jira, Linear, Asana, GitHub, GitLab</td></tr>
 <tr><td>CRM and support</td><td>HubSpot, Salesforce, Pipedrive, Zendesk, Intercom</td></tr>
-<tr><td>Finance and meetings</td><td>Stripe, Xero, QuickBooks Online, Exact Online, Zoom</td></tr>
+<tr><td>Finance and meetings</td><td>Stripe, Xero, QuickBooks Online, NetSuite, Exact Online, banks through Plaid, Zoom</td></tr>
 </tbody>
 </table>
 <Note>Connectors roll out provider by provider, as each provider approves the Archive app. Services that issue API tokens, such as Stripe, Notion, Linear and GitHub, connect with a pasted token.</Note>

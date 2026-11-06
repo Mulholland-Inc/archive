@@ -3,21 +3,15 @@ package main
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,693 +19,59 @@ import (
 	"time"
 
 	"github.com/Mulholland-Inc/archive/connect"
-	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-var cliVersion = "0.1.0"
-
-const cliUsage = `archive keeps all your stuff in one place, in Postgres tables you define.
-
-Usage:
-  archive [-as email] [-workspace uuid] <command> ...
-                                     every command acts as a user (default the first owner) of a
-                                     workspace (default the oldest one), and the workspace and admin
-                                     commands as an admin of this Archive (default the first one)
-
-  archive serve [-addr :8080]        serve the HTTP API (/api) and sign-in (/auth), and MCP on mcp.<domain>
-  archive mcp                        serve MCP over stdio
-  archive types                      print the tables, their columns and the built-in types
-  archive run <file.ts|->            run TypeScript against the archive SDK in one transaction,
-                                     as MCP's run tool does, and print {result, logs, error}
-  archive run -docs                  print the SDK documentation, with an interface per table
-
-  archive schema show [name]         print the DDL of every table and view, or of one, generated from
-                                     the database
-  archive schema migrate <file.sql|dir|-> [-confirm hash]
-                                     dry-run DDL in one transaction and print what it runs, what it
-                                     changes, what data it drops and a confirm; -confirm with that
-                                     confirm runs it. Archive adds to each table the id, access,
-                                     created_at, updated_at, search and row-level security it leaves
-                                     out. A file runs once, by its name; a dir runs its *.sql files
-                                     that have not run, in name order
-  archive schema revisions           list the migrations, newest first
-
-  archive file add <path>... [-access group]
-                                     store files and extract their metadata and text; with -access
-                                     only that group, by its name or id, and the owners see them
-  archive file get <id> [-o path|-]  print the file's metadata, or with -o write its content
-  archive file list [-limit n] [-after id]
-
-  archive list <table> [-limit n] [-after id] [-reveal] [column=value ...]
-  archive get <table> <id> [-reveal] -reveal shows secret values, to owners
-  archive create <table> [json]      json from the argument or stdin; its access column says which
-                                     group sees the row, by its id or name, null for the whole
-                                     workspace. Groups are rows of the group table: archive create
-                                     group '{"name": "finance"}' makes one, and archive delete group
-                                     <id> removes it once no row's access is it
-  archive set <table> <id> [json]    set some columns; null clears a column
-  archive update <table> <id> [json] replace the whole row
-  archive delete <table> <id>
-                                     workflows are rows of the workflow table: archive create workflow
-                                     '{"name": "nightly", "source": "return 1", "on": {"cron": "0 9 * * *"}}'
-                                     saves one, or prints why not; set and delete change it, and
-                                     archive list workflow_run reads the runs. A script that archive
-                                     run runs calls one with archive.run(name, input)
-  archive search <query> [-type t] [-from date] [-to date] [-limit n]
-                                     find rows and files by their words
-
-  archive user add <email> [-name n] [-role viewer|editor|owner]
-                                     add a row to the member table, which invites them: their first
-                                     sign-in with a provider under that verified email links them,
-                                     and one sign-in reaches all of their workspaces; the first one
-                                     is an owner, and on a new install this Archive's admin too.
-                                     Change roles and groups with archive set member
-  archive user remove <email>        delete their member row, which takes them out of the workspace
-                                     with their tokens and role; the last owner stays
-  archive token create [-name n] [-expires 720h] [-viewer]
-                                     a token acts as you; -viewer makes it read only
-  archive token list
-  archive token revoke <id>
-
-  archive workspace add <name> <owner email> [-type t] [-icon i] [-color 0-7]
-                                     create a workspace, with its own database, for someone else;
-                                     -type is personal (the default), family or business, and
-                                     -icon and -color are how the web app shows it
-  archive workspace list
-  archive workspace delete <uuid>    drop a workspace: its database and its roles
-  archive admin add <email>          make a user an admin of this Archive: admins make and delete
-                                     workspaces, whichever workspaces they are in
-  archive admin remove <email>       take that away; the last admin stays
-  archive admin list
-  archive secrets                    the connectors' environment variables, as the JSON Terraform reads
-
-Environment:
-  DATABASE_URL       Postgres 18, required, as a role with CREATEROLE and CREATEDB, like the one
-                     docker compose up -d starts; several instances can share one when they
-                     share ARCHIVE_SECRET_KEY and ARCHIVE_BLOB_URL. Its database is the main one, with
-                     what every workspace shares: the workspaces, users, admins and tokens; each
-                     workspace gets a database of its own, archive_<id>, on the same server
-  ARCHIVE_SECRET_KEY 32-byte key (hex or base64) for secret values and the Postgres role password,
-                     the same on every instance; unset uses ./data/secret.key, for one instance
-  ARCHIVE_URL        public base URL of the web app, which runs on its own as static files,
-                     for passkeys and where sign-in returns (default http://localhost:5173); the API,
-                     sign-in, MCP, webhooks, file links and OAuth redirects are on the same URL with
-                     app. made api., like https://api.archive.dev for https://app.archive.dev, or on
-                     http://localhost:<port> while it is http://localhost, when requests from this
-                     machine are signed in as the first admin
-  ARCHIVE_BLOB_URL   gs://bucket/prefix for GCS as the service account of the Google Cloud metadata server;
-                     unset stores files in ./data/blobs
-  ARCHIVE_GOOGLE     https://<client id>:<client secret>@accounts.google.com
-  ARCHIVE_MICROSOFT  https://<client id>:<client secret>@login.microsoftonline.com
-  ARCHIVE_SLACK      https://<client id>:<client secret>@slack.com
-  ARCHIVE_GITHUB     https://<client id>:<client secret>@github.com
-                     sign-in providers, with the id and secret URL-escaped; each shows on the sign-in
-                     page when it is set, and its redirect URL is
-                     <API>/auth/oidc/<google|microsoft|slack|github>/callback. Only invited people sign
-                     in, matched on an email the provider says is verified. ARCHIVE_GOOGLE also
-                     connects Gmail and Google Drive, read only, with the redirect URLs
-                     <API>/connect/gmail/callback and <API>/connect/gdrive/callback
-<connectors>                     the OAuth clients of the API connectors, from their definitions (src/connect), each
-                     with the redirect URL <API>/connect/<connector>/callback.
-                     The MCP connectors, like Notion and Linear, need none: Archive registers itself at
-                     their servers; ARCHIVE_MCP_<CONNECTOR> points one at another server
-  ARCHIVE_LIVE_KEY   key the API announces live changes with to the app Worker on the API's /live/announce
-                     (apps/web/worker.js), which tells every open web app what moved; unset, serve holds
-                     the web app's /live sockets itself and other archive commands on this machine tell
-                     it; ARCHIVE_LIVE_URL sends the announces to another address, like wrangler dev's
-  ANTHROPIC_API_KEY  key for the agent behind POST /api/chat, which can only call the run tool, in
-                     every workspace; ANTHROPIC_BASE_URL points it at another
-                     Messages API endpoint
-
-  ARCHIVE_GMAIL_TOPIC projects/<project>/topics/<topic>, the Pub/Sub topic Gmail pushes a connected
-                     mailbox's changes to, which a push subscription delivers to <API>/push/gmail with the
-                     tasks account's OIDC token; unset, Gmail syncs only when asked
-
-A connection syncs into its tables only when something asks: connecting, Sync now, a push of its provider to
-<API>/push/<connector>, or its member reading them or opening the workspace while it is over 5 minutes
-old. Nothing syncs on a timer. The GitHub App, HubSpot app and Intuit app push for every account once their
-webhooks are set up to that URL; GitHub's secret and Intuit's verifier token are the hook option of their
-variable, like ?hook=<secret>. Asana's webhooks need ?push=1 on ARCHIVE_ASANA, once its app has their scopes.
-
-On Cloud Run, the Cloud Tasks queue projects/<project>/locations/<region>/queues/<service> calls
-POST <API>/tasks at each time workflows, files or connections' syncs are due, so serve can scale to zero, with the OIDC
-token of <service>-tasks@<project>.iam.gserviceaccount.com; /tasks refuses any other. Anywhere else,
-serve runs that work itself when it is due, and picks up what was due while it was stopped when it starts.
-`
-
-var cliErrUsage = errors.New("usage")
-
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err := cliRun(ctx, os.Args[1:], os.Stdin, os.Stdout)
+	err := start(ctx, os.Args[1:])
 	cancel()
-	switch {
-	case err == nil, errors.Is(err, flag.ErrHelp):
-	case errors.Is(err, cliErrUsage):
-		fmt.Fprint(os.Stderr, cliUsage)
-		os.Exit(1)
-	default:
-		cliPrintError(os.Stderr, err)
+	if err != nil && !errors.Is(err, flag.ErrHelp) {
+		fmt.Fprintln(os.Stderr, "archive:", err)
 		os.Exit(1)
 	}
 }
 
-// cliHelp is the usage, with the connectors' variables as their definitions describe them.
-func cliHelp() string {
-	var b strings.Builder
-	secrets := connect.Secrets()
-	for _, k := range slices.Sorted(maps.Keys(secrets)) {
-		fmt.Fprintf(&b, "  %-18s %s\n", k, secrets[k])
-	}
-	return strings.Replace(cliUsage, "<connectors>", b.String(), 1)
-}
-
-func cliPrintError(w io.Writer, err error) {
-	var ve *ValidationError
-	if errors.As(err, &ve) {
-		fmt.Fprintf(w, "invalid %s:\n", ve.Type)
-		for _, e := range ve.Errors {
-			fmt.Fprintf(w, "  %s: %s\n", e.Path, e.Message)
-		}
-		return
-	}
-	fmt.Fprintln(w, "archive:", err)
-}
-
-func cliRun(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
+func start(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return cliErrUsage
+		return errors.New("want serve, migrate, secrets or places")
 	}
-	cmd, args := args[0], args[1:]
-	switch cmd {
-	case "help", "-h", "-help", "--help":
-		fmt.Fprint(stdout, cliHelp())
-		return nil
+	switch args[0] {
+	case "serve":
+		fs := flag.NewFlagSet("archive serve", flag.ContinueOnError)
+		addr := fs.String("addr", ":8080", "listen address")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		h, err := Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+		return serve(ctx, h, *addr)
+	case "migrate":
+		h, err := Open(ctx)
+		if err != nil {
+			return err
+		}
+		defer h.Close()
+		return h.migrateAll(ctx)
 	case "secrets":
-		enc := json.NewEncoder(stdout)
+		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.SetEscapeHTML(false)
 		return enc.Encode(connect.Secrets())
-	case "version":
-		fmt.Fprintln(stdout, cliVersion)
-		return nil
+	case "places":
+		return connect.WritePlaces(ctx, "connect/places.json.gz")
+	case runEsbuildCommand:
+		return runEsbuildChild()
 	}
-
-	fs := flag.NewFlagSet("archive "+cmd, flag.ContinueOnError)
-	fs.Usage = func() { fmt.Fprint(fs.Output(), cliHelp()) }
-	addr := fs.String("addr", ":8080", "listen address (serve)")
-	confirm := fs.String("confirm", "", "run the migration whose dry run printed this confirm (schema migrate)")
-	typ := fs.String("type", "", "only this table, or file (search); personal, family or business (workspace add)")
-	icon := fs.String("icon", "", "one of the web app's icons, like chest or cottage (workspace add)")
-	color := fs.String("color", "", "one of the web app's tints, 0 to 7 (workspace add)")
-	limit := fs.Int("limit", 100, "page size (list)")
-	after := fs.String("after", "", "list objects after this id (list)")
-	as := fs.String("as", "", "act as this user")
-	name := fs.String("name", "", "name (user add, token create)")
-	role := fs.String("role", "", "viewer, editor or owner (user add)")
-	viewer := fs.Bool("viewer", false, "read-only token (token create)")
-	access := fs.String("access", "", "group that sees the files (file add)")
-	expires := fs.Duration("expires", 0, "token lifetime (token create)")
-	reveal := fs.Bool("reveal", false, "show secret values, to owners (list, get)")
-	output := fs.String("o", "", "write the file content here, - for stdout (file get)")
-	docs := fs.Bool("docs", false, "print the SDK documentation (run)")
-	workspace := fs.String("workspace", "", "act in this workspace")
-	from := fs.String("from", "", "only items added on or after this date (search)")
-	to := fs.String("to", "", "only items added up to this date (search)")
-	for (cmd == "-as" || cmd == "-workspace") && len(args) > 1 {
-		if cmd == "-as" {
-			*as = args[0]
-		} else {
-			*workspace = args[0]
-		}
-		cmd, args = args[1], args[2:]
-	}
-	pos, err := cliParse(fs, args)
-	if err != nil {
-		return err
-	}
-	if cmd == "run" && *docs {
-		pos = append(pos, "")
-	}
-	if err := cliCheckCommand(cmd, pos); err != nil {
-		return err
-	}
-
-	h, err := Open(ctx)
-	if err != nil {
-		return err
-	}
-	defer h.Close()
-	out := func(v any, err error) error {
-		if err != nil {
-			return err
-		}
-		return cliJSON(stdout, v)
-	}
-	switch cmd {
-	case "serve":
-		return cliServe(ctx, h, *addr)
-	case "workspace", "admin":
-		// These are this Archive's, not a workspace's: they act as an admin, the first one unless -as says.
-		ac, err := cliAdmin(ctx, h, *as, cmd+" "+pos[0])
-		if err != nil {
-			return err
-		}
-		ctx = WithActor(ctx, ac)
-		if cmd == "admin" {
-			return cliAdmins(ctx, h, pos, out)
-		}
-		var look WorkspaceLook
-		if *typ != "" {
-			look.Type = typ
-		}
-		if *icon != "" {
-			look.Icon = icon
-		}
-		if *color != "" {
-			c, err := strconv.ParseInt(*color, 10, 16)
-			if err != nil {
-				return fmt.Errorf("-color %q: want a tint from 0 to 7", *color)
-			}
-			look.Color = new(int16(c))
-		}
-		return cliWorkspace(ctx, h, cmd, pos, look, out)
-	}
-	if *workspace == "" {
-		w, err := h.q().FirstWorkspace(ctx)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return errors.New("no workspaces: an admin adds one with archive workspace add <name> <owner email>")
-		}
-		if err != nil {
-			return err
-		}
-		*workspace = w.ID.String()
-	}
-	a, release, err := h.acquire(ctx, *workspace)
-	if err != nil {
-		return err
-	}
-	defer release()
-	ac, err := a.CLIActor(ctx, *as)
-	if err != nil {
-		return err
-	}
-	if ac == nil && cmd != "types" && cmd != "user" && (cmd != "schema" || pos[0] != "show") {
-		return errors.New("no users yet: add the first owner with archive user add <email>")
-	}
-	ctx = withArchive(WithActor(ctx, ac), a)
-
-	switch cmd {
-	case "mcp":
-		return mcpServer(a, ac).Run(ctx, &mcp.StdioTransport{})
-	case "types":
-		return cliJSON(stdout, a.Catalog())
-	case "run":
-		if *docs {
-			_, err := io.WriteString(stdout, a.RunDocs(ctx))
-			return err
-		}
-		var code []byte
-		if pos[0] == "-" {
-			code, err = io.ReadAll(stdin)
-		} else {
-			code, err = os.ReadFile(pos[0])
-		}
-		if err != nil {
-			return err
-		}
-		res, err := a.Run(ctx, string(code))
-		if err != nil {
-			return err
-		}
-		if err := cliJSON(stdout, res); err != nil {
-			return err
-		}
-		if res.Error != "" {
-			return errors.New(res.Error)
-		}
-		return nil
-	case "schema":
-		return cliSchema(ctx, a, pos, *confirm, stdin, stdout, out)
-	case "file":
-		return cliFile(ctx, a, pos, *access, *output, *limit, *after, stdout, out)
-	case "user", "token":
-		return cliAuth(ctx, a, cmd, pos, *name, *role, *viewer, *expires, out)
-	case "list":
-		where := map[string]any{}
-		for _, kv := range pos[1:] {
-			k, v, ok := strings.Cut(kv, "=")
-			if !ok {
-				return fmt.Errorf("filter %q: want field=value", kv)
-			}
-			where[k] = v
-		}
-		var aid uuid.UUID
-		if *after != "" {
-			if aid, err = uuid.Parse(*after); err != nil {
-				return fmt.Errorf("-after: %w", err)
-			}
-		}
-		rs, err := a.List(ctx, pos[0], where, *limit, aid)
-		if err == nil && *reveal {
-			err = a.Reveal(ctx, pos[0], rs...)
-		}
-		return out(rs, err)
-	case "search":
-		f := SearchFilter{Type: *typ, From: *from, To: *to, Limit: *limit}
-		return out(a.Search(ctx, strings.Join(pos, " "), f))
-	case "create":
-		data, err := cliData(pos[1:], stdin)
-		if err != nil {
-			return err
-		}
-		return out(a.Create(ctx, pos[0], data))
-	}
-
-	id, err := uuid.Parse(pos[1])
-	if err != nil {
-		return fmt.Errorf("id %q: %w", pos[1], err)
-	}
-	switch cmd {
-	case "get":
-		r, err := a.Get(ctx, pos[0], id)
-		if err == nil && *reveal {
-			err = a.Reveal(ctx, pos[0], r)
-		}
-		return out(r, err)
-	case "delete":
-		return a.Delete(ctx, pos[0], id)
-	}
-	data, err := cliData(pos[2:], stdin)
-	if err != nil {
-		return err
-	}
-	if cmd == "set" {
-		return out(a.Patch(ctx, pos[0], id, data))
-	}
-	return out(a.Replace(ctx, pos[0], id, data))
+	return fmt.Errorf("unknown command %q: want serve, migrate, secrets or places", args[0])
 }
 
-func cliCheckCommand(cmd string, pos []string) error {
-	n, ok := map[string]int{
-		"serve": 0, "mcp": 0, "types": 0, "run": 1, "schema": 1, "list": 1, "create": 1,
-		"get": 2, "delete": 2, "set": 2, "update": 2,
-		"user": 2, "token": 1, "file": 1, "search": 1, "workspace": 1, "admin": 1,
-	}[cmd]
-	if !ok {
-		return fmt.Errorf("unknown command %q (see archive help)", cmd)
-	}
-	if len(pos) < n {
-		return cliErrUsage
-	}
-	return nil
-}
-
-func cliAuth(ctx context.Context, a *Archive, cmd string, pos []string, name, role string, viewer bool, expires time.Duration, out func(any, error) error) error {
-	switch cmd + " " + pos[0] {
-	case "user add":
-		return out(a.AddUser(ctx, pos[1], name, role))
-	case "user remove":
-		return a.RemoveUser(ctx, pos[1])
-	case "token create":
-		return out(a.CreateToken(ctx, name, expires, viewer))
-	case "token list":
-		return out(a.Tokens(ctx))
-	case "token revoke":
-		if len(pos) > 1 {
-			id, err := uuid.Parse(pos[1])
-			if err != nil {
-				return err
-			}
-			return a.RevokeToken(ctx, id)
-		}
-	}
-	return cliErrUsage
-}
-
-// cliAdmin is who an instance command acts as: the user with the email, or the first admin. While this Archive
-// has no admin, as when its first workspace's owners had no users when it moved, archive admin add makes one,
-// since the command line already has the database.
-func cliAdmin(ctx context.Context, h *Hub, email, cmd string) (*Actor, error) {
-	var u generated.ArchiveUser
-	var err error
-	if email == "" {
-		u, err = h.q().FirstAdmin(ctx)
-	} else if email, err = authEmail(email); err == nil {
-		u, err = h.q().UserByEmail(ctx, email)
-	}
-	if errors.Is(err, pgx.ErrNoRows) && email == "" {
-		if cmd != "admin add" {
-			return nil, errors.New("this Archive has no admin yet: add the first owner with archive user add <email>, or name one with archive admin add <email>")
-		}
-		return nil, nil
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &Actor{UserID: u.ID, Email: u.Email, Name: u.Name}, nil
-}
-
-func cliAdmins(ctx context.Context, h *Hub, pos []string, out func(any, error) error) error {
-	switch {
-	case pos[0] == "list":
-		return out(h.Admins(ctx))
-	case len(pos) < 2:
-	case pos[0] == "add" && ActorFrom(ctx) == nil:
-		email, err := authEmail(pos[1])
-		if err != nil {
-			return err
-		}
-		u, err := h.q().UserByEmail(ctx, email)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("user %s: %w; add them to a workspace first", email, ErrNotFound)
-		}
-		if err == nil {
-			err = h.q().AdminIfNone(ctx, u.ID)
-		}
-		if err != nil {
-			return err
-		}
-		return out(userBy(ctx, h, (*generated.Queries).UserByID, u.ID))
-	case pos[0] == "add":
-		return out(h.SetAdmin(ctx, pos[1], true))
-	case pos[0] == "remove":
-		return out(h.SetAdmin(ctx, pos[1], false))
-	}
-	return cliErrUsage
-}
-
-func cliWorkspace(ctx context.Context, h *Hub, cmd string, pos []string, look WorkspaceLook, out func(any, error) error) error {
-	switch cmd + " " + pos[0] {
-	case "workspace add":
-		if len(pos) > 2 {
-			return out(h.AddWorkspace(ctx, pos[1], pos[2], look))
-		}
-	case "workspace list":
-		return out(h.Workspaces(ctx))
-	case "workspace delete":
-		if len(pos) > 1 {
-			return h.DeleteWorkspace(ctx, pos[1])
-		}
-	}
-	return cliErrUsage
-}
-
-func cliFile(ctx context.Context, a *Archive, pos []string, access, output string, limit int, after string, stdout io.Writer, out func(any, error) error) error {
-	if pos[0] == "list" {
-		var aid uuid.UUID
-		if after != "" {
-			var err error
-			if aid, err = uuid.Parse(after); err != nil {
-				return fmt.Errorf("-after: %w", err)
-			}
-		}
-		return out(a.Files(ctx, limit, aid))
-	}
-	if len(pos) < 2 {
-		return cliErrUsage
-	}
-	switch pos[0] {
-	case "add":
-		var fs []*File
-		for _, p := range pos[1:] {
-			fh, err := os.Open(p)
-			if err != nil {
-				return err
-			}
-			f, err := a.AddFile(ctx, access, filepath.Base(p), fh)
-			fh.Close()
-			if err != nil {
-				return fmt.Errorf("%s: %w", p, err)
-			}
-			fs = append(fs, f)
-		}
-		if len(fs) == 1 {
-			return out(fs[0], nil)
-		}
-		return out(fs, nil)
-	case "get":
-		id, err := uuid.Parse(pos[1])
-		if err != nil {
-			return fmt.Errorf("id %q: %w", pos[1], err)
-		}
-		if output == "" {
-			return out(a.GetFile(ctx, id))
-		}
-		_, rc, err := a.OpenFile(ctx, id)
-		if err != nil {
-			return err
-		}
-		defer rc.Close()
-		w := stdout
-		if output != "-" {
-			fh, err := os.Create(output)
-			if err != nil {
-				return err
-			}
-			defer fh.Close()
-			w = fh
-		}
-		_, err = io.Copy(w, rc)
-		return err
-	}
-	return cliErrUsage
-}
-
-func cliParse(fs *flag.FlagSet, args []string) ([]string, error) {
-	var pos []string
-	for {
-		if err := fs.Parse(args); err != nil {
-			return nil, err
-		}
-		if args = fs.Args(); len(args) == 0 {
-			return pos, nil
-		}
-		pos, args = append(pos, args[0]), args[1:]
-	}
-}
-
-func cliData(args []string, stdin io.Reader) (map[string]any, error) {
-	var r io.Reader = stdin
-	if len(args) > 0 && args[0] != "-" {
-		r = strings.NewReader(args[0])
-	}
-	var data map[string]any
-	if err := json.NewDecoder(r).Decode(&data); err != nil {
-		return nil, fmt.Errorf("reading object JSON: %w", err)
-	}
-	return data, nil
-}
-
-func cliJSON(w io.Writer, v any) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(v)
-}
-
-func cliSchema(ctx context.Context, a *Archive, pos []string, confirm string, stdin io.Reader, stdout io.Writer, out func(any, error) error) error {
-	switch {
-	case pos[0] == "show":
-		ddl, err := a.st.Schema(ctx)
-		if err != nil {
-			return err
-		}
-		names := specKeys(ddl)
-		if len(pos) > 1 {
-			if ddl[pos[1]] == "" {
-				return fmt.Errorf("no table, view, type or function %q; there are %s: %w", pos[1], strings.Join(names, ", "), ErrNotFound)
-			}
-			names = pos[1:2]
-		}
-		for _, name := range names {
-			fmt.Fprintf(stdout, "-- %s\n%s\n", name, strings.TrimRight(ddl[name], "\n"))
-		}
-		return nil
-	case pos[0] == "revisions":
-		return out(a.SchemaRevisions(ctx, 100))
-	case pos[0] == "migrate" && len(pos) > 1 && pos[1] == "-":
-		b, err := io.ReadAll(stdin)
-		if err != nil {
-			return err
-		}
-		ms, err := cliMigrate(ctx, a, [][2]string{{string(b), ""}}, confirm)
-		if err != nil {
-			return err
-		}
-		return out(ms[0], nil)
-	case pos[0] == "migrate" && len(pos) > 1:
-		paths := []string{pos[1]}
-		if st, err := os.Stat(pos[1]); err != nil {
-			return err
-		} else if st.IsDir() {
-			if paths, err = filepath.Glob(filepath.Join(pos[1], "*.sql")); err != nil {
-				return err
-			}
-			slices.Sort(paths)
-		}
-		var srcs [][2]string
-		for _, p := range paths {
-			b, err := os.ReadFile(p)
-			if err != nil {
-				return err
-			}
-			srcs = append(srcs, [2]string{string(b), filepath.Base(p)})
-		}
-		return out(cliMigrate(ctx, a, srcs, confirm))
-	}
-	return cliErrUsage
-}
-
-// cliMigrate runs the migrations, each named or not, one after the other in one transaction, so each sees the
-// ones before, and rolls them all back unless confirm is theirs: one migration's own, or a hash of several.
-func cliMigrate(ctx context.Context, a *Archive, srcs [][2]string, confirm string) ([]*SchemaMigration, error) {
-	ms, sums, sum := []*SchemaMigration{}, []string{}, ""
-	errDry := errors.New("dry run")
-	err := a.as(ctx, func(ctx context.Context) error {
-		for _, src := range srcs {
-			m, err := a.Migrate(ctx, src[0], src[1], "")
-			if err == nil && !m.Skipped {
-				sums = append(sums, m.Confirm)
-				m, err = a.Migrate(ctx, src[0], src[1], m.Confirm)
-			}
-			if err != nil && src[1] != "" {
-				return fmt.Errorf("%s: %w", src[1], err)
-			} else if err != nil {
-				return err
-			}
-			ms = append(ms, m)
-		}
-		if sum = strings.Join(sums, ""); len(sums) > 1 {
-			h := sha256.Sum256([]byte(strings.Join(sums, "\n")))
-			sum = hex.EncodeToString(h[:])
-		}
-		if sum == "" || sum == confirm {
-			return nil
-		}
-		return errDry
-	})
-	if !errors.Is(err, errDry) {
-		return ms, err
-	}
-	if confirm != "" {
-		return nil, fmt.Errorf("the schema or the migrations changed since their dry run; dry-run them again for a new confirm: %w", ErrConflict)
-	}
-	for _, m := range ms {
-		if !m.Skipped {
-			m.Applied, m.Revision, m.Confirm = false, nil, sum
-		}
-	}
-	return ms, nil
-}
-
-func cliServe(ctx context.Context, h *Hub, addr string) error {
+func serve(ctx context.Context, h *Hub, addr string) error {
 	_, port, _ := net.SplitHostPort(addr)
 	if err := h.urls(cmp.Or(port, "80")); err != nil {
 		return err
@@ -720,15 +80,10 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := h.q().FirstAdmin(ctx); errors.Is(err, pgx.ErrNoRows) {
-		fmt.Fprintln(os.Stderr, "archive: no users yet; add the first owner, who is this Archive's admin, with archive user add <email>")
-	} else if err != nil {
-		return err
-	}
 	if h.localApp() {
 		fmt.Fprintf(os.Stderr, "archive: %s is on this machine, so requests from this machine are signed in as the first admin\n", h.app)
 	} else if len(si.configs) == 0 {
-		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE, ARCHIVE_MICROSOFT, ARCHIVE_SLACK or ARCHIVE_GITHUB (see archive help)")
+		fmt.Fprintln(os.Stderr, "archive: no sign-in provider is set, so nobody can sign in to the web app; set ARCHIVE_GOOGLE, ARCHIVE_MICROSOFT, ARCHIVE_SLACK or ARCHIVE_GITHUB")
 	}
 	if err := h.wakeAll(ctx); err != nil {
 		return err
@@ -736,8 +91,8 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", h.httpAuth((*Archive).handler))
 	tus := h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.tus) })
-	mux.Handle("/api/files/tus", tus)
-	mux.Handle("/api/files/tus/", tus)
+	mux.Handle("/api/file/tus", tus)
+	mux.Handle("/api/file/tus/", tus)
 	mux.HandleFunc("GET /files/{workspace}/{id}", h.inWorkspace((*Archive).fileSigned))
 	mux.HandleFunc("POST /hooks/run/{workspace}/{token}", h.inWorkspace((*Archive).workflowHook))
 	mux.Handle("/auth/", si.handler())
@@ -746,17 +101,19 @@ func cliServe(ctx context.Context, h *Hub, addr string) error {
 	h.mcpRoutes(mux, false)
 	mux.HandleFunc("POST /tasks", h.tasksHTTP)
 	mux.HandleFunc("POST /push/{id}", h.pushHTTP)
-	h.live.serving()
+	mux.HandleFunc("GET /push/{id}", h.pushHTTP)
+	mux.HandleFunc("GET /device/attest", h.device(false, h.deviceChallenge))
+	mux.HandleFunc("POST /device/attest", h.device(false, h.deviceAttest))
+	mux.HandleFunc("POST /device/files", h.device(false, h.deviceSave))
+	mux.HandleFunc("POST /device/ask", h.device(true, h.deviceAsk))
+	mux.HandleFunc("PUT /device/originals", h.device(true, h.deviceOriginal))
+	mux.HandleFunc("POST /device/{stream}", h.device(true, h.deviceRecords))
+	mux.HandleFunc("POST /email", h.emailHTTP)
 	mux.HandleFunc("GET /live", h.liveHTTP)
-	mux.HandleFunc("POST /live/announce", h.liveAnnounceHTTP)
-	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
-	// MCP's own host is the same service, and serves MCP and its OAuth and nothing else (mcp.go).
 	own := http.NewServeMux()
 	h.mcpRoutes(own, true)
 	api, mcpOwn := h.cors(mux), mcpCORS(own)
 	hs := &http.Server{Addr: addr, ReadHeaderTimeout: 10 * time.Second, Handler: h.live.after(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Nothing the API serves is for a frame, so no other site can lay sign-in or an MCP client's grant
-		// (/auth/oauth/*) under a decoy; the web app's own pages say the same (apps/web/public/_headers).
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "frame-ancestors 'none'")
 		if h.mcpHost(r) {
@@ -796,7 +153,6 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Vary", "Origin")
 		first, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
-		// MCP and its OAuth take bearer tokens from anywhere, and never a cookie.
 		if first == "mcp" || first == "oauth" || first == ".well-known" {
 			mcp.ServeHTTP(w, r)
 			return
@@ -807,7 +163,8 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 		case split && origin == app && (first == "api" || first == "auth" || first == "connect"):
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
-			headers = "Content-Type, Archive-Workspace"
+			headers = "Content-Type, Archive-Workspace, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata"
+			w.Header().Set("Access-Control-Expose-Headers", "Location, Upload-Offset, Archive-File-Id")
 		case !h.localApp():
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}
@@ -849,7 +206,14 @@ func httpHandle(mux *http.ServeMux, pattern string, f func(r *http.Request) (int
 
 func httpHandler(a *Archive) http.Handler {
 	mux := http.NewServeMux()
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
+	handle := func(pattern string, f func(r *http.Request) (int, any, error)) {
+		httpHandle(mux, pattern, func(r *http.Request) (int, any, error) {
+			if r.Method == http.MethodGet {
+				r = r.WithContext(context.WithValue(r.Context(), storeReadKey{}, true))
+			}
+			return f(r)
+		})
+	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
 	handle("POST /api/run", func(r *http.Request) (int, any, error) {
@@ -862,69 +226,25 @@ func httpHandler(a *Archive) http.Handler {
 		if body.Code == "" {
 			return 0, nil, fmt.Errorf("code: want the TypeScript to run: %w", httpErrBadRequest)
 		}
-		return ok(a.Run(r.Context(), body.Code))
+		return ok(a.Run(context.WithValue(r.Context(), runFreshKey{}, true), body.Code))
 	})
-	mux.HandleFunc("POST /api/chat", a.chat)
-	handle("GET /api/chats", func(r *http.Request) (int, any, error) {
-		return ok(a.Chats(r.Context()))
+	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
+		return ok(a.boot(r.Context(), r.URL.Query().Get("only")))
 	})
-	handle("GET /api/chats/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return ok(a.Chat(r.Context(), id))
+	mux.HandleFunc("POST /api/turn", a.turn)
+	handle("GET /api/docs", func(r *http.Request) (int, any, error) {
+		return ok(a.RunDocs(r.Context()), nil)
 	})
-	handle("PATCH /api/chats/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var body struct {
-			Title string `json:"title"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.RenameChat(r.Context(), id, body.Title))
-	})
-	handle("DELETE /api/chats/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		return http.StatusNoContent, nil, a.DeleteChat(r.Context(), id)
-	})
-	mux.HandleFunc("GET /api/run/docs", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		io.WriteString(w, a.RunDocs(r.Context()))
-	})
-	handle("GET /api/types", func(r *http.Request) (int, any, error) {
-		return ok(a.Catalog(), nil)
-	})
-	handle("GET /api/schema", func(r *http.Request) (int, any, error) {
-		return ok(a.Schema(r.Context(), r.URL.Query().Get("name")))
-	})
-	handle("POST /api/schema/migrate", func(r *http.Request) (int, any, error) {
-		var body struct {
-			SQL     string `json:"sql"`
-			Name    string `json:"name"`
-			Confirm string `json:"confirm"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		return ok(a.Migrate(r.Context(), body.SQL, body.Name, body.Confirm))
-	})
-	handle("GET /api/schema/revisions", func(r *http.Request) (int, any, error) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		revs, err := a.SchemaRevisions(r.Context(), limit)
-		return ok(map[string]any{"revisions": revs}, err)
-	})
-
-	a.fileRoutes(mux)
+	mux.HandleFunc("GET /api/file/{id}/{part...}", a.filePart)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
+		if q.Has("provider") {
+			p, err := a.hub.connector(q.Get("provider"))
+			if err != nil {
+				return 0, nil, err
+			}
+			return ok(p.Places(q.Get("q"), 20), nil)
+		}
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		f := SearchFilter{Type: q.Get("type"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
@@ -942,17 +262,21 @@ func httpHandler(a *Archive) http.Handler {
 		}
 		where := map[string]any{}
 		for k, v := range q {
-			if k != "limit" && k != "after" && k != "reveal" {
+			switch {
+			case k == "limit" || k == "after" || k == "desc":
+			case v[0] == "":
+				where[k] = nil
+			default:
 				where[k] = v[0]
 			}
 		}
-		rs, err := a.List(r.Context(), r.PathValue("type"), where, limit, after)
-		if err == nil && q.Get("reveal") == "true" {
-			err = a.Reveal(r.Context(), r.PathValue("type"), rs...)
-		}
-		return ok(rs, err)
+		return ok(a.List(r.Context(), r.PathValue("type"), where, limit, after, q.Has("desc")))
 	})
 	handle("POST /api/{type}", func(r *http.Request) (int, any, error) {
+		if r.PathValue("type") == "file" && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/") {
+			f, err := a.fileUpload(r)
+			return http.StatusCreated, f, err
+		}
 		var data map[string]any
 		if err := httpDecode(r, &data); err != nil {
 			return 0, nil, err
@@ -960,33 +284,24 @@ func httpHandler(a *Archive) http.Handler {
 		rec, err := a.Create(r.Context(), r.PathValue("type"), data)
 		return http.StatusCreated, rec, err
 	})
-	object := func(f func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error)) func(r *http.Request) (int, any, error) {
-		return func(r *http.Request) (int, any, error) {
-			id, err := httpID(r)
-			if err != nil {
-				return 0, nil, err
-			}
-			return ok(f(r.Context(), r.PathValue("type"), id, r))
+	handle("GET /api/{type}/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
 		}
-	}
-	withData := func(f func(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error)) func(r *http.Request) (int, any, error) {
-		return object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-			var data map[string]any
-			if err := httpDecode(r, &data); err != nil {
-				return nil, err
-			}
-			return f(ctx, typ, id, data)
-		})
-	}
-	handle("GET /api/{type}/{id}", object(func(ctx context.Context, typ string, id uuid.UUID, r *http.Request) (any, error) {
-		rec, err := a.Get(ctx, typ, id)
-		if err == nil && r.URL.Query().Get("reveal") == "true" {
-			err = a.Reveal(ctx, typ, rec)
+		return ok(a.Get(r.Context(), r.PathValue("type"), id))
+	})
+	handle("PATCH /api/{type}/{id}", func(r *http.Request) (int, any, error) {
+		id, err := httpID(r)
+		if err != nil {
+			return 0, nil, err
 		}
-		return rec, err
-	}))
-	handle("PUT /api/{type}/{id}", withData(a.Replace))
-	handle("PATCH /api/{type}/{id}", withData(a.Patch))
+		var data map[string]any
+		if err := httpDecode(r, &data); err != nil {
+			return 0, nil, err
+		}
+		return ok(a.Patch(r.Context(), r.PathValue("type"), id, data))
+	})
 	handle("DELETE /api/{type}/{id}", func(r *http.Request) (int, any, error) {
 		id, err := httpID(r)
 		if err != nil {
@@ -1040,10 +355,8 @@ type mcpRunInput struct {
 	Code string `json:"code" jsonschema:"TypeScript to run inside Archive against the archive SDK in the tool description"`
 }
 
-// mcpServer is the MCP server of the member ac, whose run tool's docs are the workspace's tables and their own
-// actions, made again on every tools/list that finds them changed.
 func mcpServer(a *Archive, ac *Actor) *mcp.Server {
-	s := mcp.NewServer(&mcp.Implementation{Name: "archive", Title: "Archive", Version: cliVersion}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "archive", Title: "Archive", Version: "0.1.0"}, nil)
 	var mu sync.Mutex
 	var seen string
 	tool := func(ctx context.Context) {

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"regexp"
@@ -27,9 +28,6 @@ import (
 	"golang.org/x/text/language"
 )
 
-// An Archive is one workspace as code sees it: rows listed, read, written and searched as the person signed in,
-// so row-level security decides each of them. Its store, pgStore below, is the workspace's Postgres database:
-// its pools, its roles and the transaction a call runs in.
 type Archive struct {
 	hub    *Hub
 	ws     generated.ArchiveWorkspace
@@ -41,6 +39,7 @@ type Archive struct {
 
 	blobs   blobStore
 	linkKey []byte
+	reading sync.Mutex
 
 	mu  sync.RWMutex
 	cat *Catalog
@@ -48,11 +47,8 @@ type Archive struct {
 	hmu  sync.Mutex
 	api  http.Handler
 	mcph http.Handler
-	// mcps are the MCP servers of the members that called /mcp, each describing its run tool with their own
-	// actions.
 	mcps map[uuid.UUID]*mcp.Server
 
-	// conns are the access tokens and tools of connections that runs used (connection.go).
 	conns archiveConns
 }
 
@@ -67,6 +63,15 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 	return a.st.As(ctx, ac.Role, func(ctx context.Context) error {
 		if err := fn(ctx); err != nil {
 			return err
+		}
+		if err := a.workflowGuard(ctx); err != nil {
+			return err
+		}
+		if wrote, ok := ctx.Value(runWroteKey{}).(*bool); ok && !*wrote {
+			return nil
+		}
+		if ctx.Value(storeReadKey{}) != nil {
+			return nil
 		}
 		tx, err := a.st.db(ctx).TxWrote(ctx)
 		if tx.Members {
@@ -114,7 +119,6 @@ func (a *Archive) Catalog() *Catalog {
 	return a.cat
 }
 
-// catalog is the catalog the transaction in ctx sees: its own when it changed the schema.
 func (a *Archive) catalog(ctx context.Context) *Catalog {
 	if c := a.st.txCatalog(ctx); c != nil {
 		return c
@@ -132,14 +136,11 @@ func (a *Archive) reload(ctx context.Context) error {
 	return err
 }
 
-func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID) ([]map[string]any, error) {
+func (a *Archive) List(ctx context.Context, typ string, where map[string]any, limit int, after uuid.UUID, desc bool) ([]map[string]any, error) {
 	cat := a.catalog(ctx)
 	tb, err := cat.table(typ)
 	if err != nil {
 		return nil, err
-	}
-	if tb.synced() {
-		a.syncOnRead(ctx)
 	}
 	verr := &ValidationError{Type: typ}
 	norm := map[string]any{}
@@ -150,6 +151,7 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "unknown field"})
 		case cat.secret(col) != nil:
 			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "secret fields cannot be filtered"})
+		case where[k] == nil:
 		default:
 			if v, ok := cat.clean(k, col, where[k], a.hints, &verr.Errors); ok {
 				norm[k] = v
@@ -167,12 +169,19 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 			return nil, err
 		}
 		q := `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
-		args := []any{norm, after}
-		for _, k := range specKeys(norm) {
-			q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
+		order := " ORDER BY t.id LIMIT $3"
+		if desc {
+			q = `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE ($2 = '00000000-0000-0000-0000-000000000000'::uuid OR t.id < $2)`
+			order = " ORDER BY t.id DESC LIMIT $3"
 		}
-		args = append(args, limit)
-		rs, err := storeRows(ctx, a.st, q+fmt.Sprintf(" ORDER BY t.id LIMIT $%d", len(args)), args...)
+		for _, k := range specKeys(where) {
+			if where[k] == nil {
+				q += " AND t." + pgIdent(k) + " IS NULL"
+			} else {
+				q += " AND t." + pgIdent(k) + " = w." + pgIdent(k)
+			}
+		}
+		rs, err := storeRows(ctx, a.st, q+order, norm, after, limit)
 		if tb.isWorkflow() {
 			a.workflowRows(ctx, rs...)
 		}
@@ -205,19 +214,52 @@ func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[str
 	return rs[0], nil
 }
 
+type write struct {
+	create func(a *Archive, ctx context.Context, data map[string]any) (map[string]any, error)
+	update func(a *Archive, ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error)
+	delete func(a *Archive, ctx context.Context, id uuid.UUID) error
+	save   func(a *Archive, ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error)
+	remove func(a *Archive, ctx context.Context, id uuid.UUID) error
+}
+
+var writes map[string]write
+
+func init() {
+	writes = map[string]write{
+		"file":       {create: (*Archive).fileCreate, update: (*Archive).fileUpdate, delete: (*Archive).fileDelete},
+		"workflow":   {save: (*Archive).workflowSave, remove: (*Archive).workflowDelete},
+		"connection": {save: (*Archive).connectionSave, remove: (*Archive).connectionRemove},
+		"agreement":  {create: (*Archive).agreementCreate},
+		"billing":    {save: (*Archive).billingSave},
+	}
+}
+
+func (t *Table) write() write {
+	if t.Schema != "archive" {
+		return write{}
+	}
+	return writes[t.Name]
+}
+
 func (a *Archive) Create(ctx context.Context, typ string, data map[string]any) (map[string]any, error) {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
-	if tb.isWorkflow() {
-		return a.workflowSave(ctx, tb, uuid.Nil, data, true)
+	w := tb.write()
+	if w.save != nil {
+		return w.save(a, ctx, uuid.Nil, data)
+	}
+	if w.create != nil {
+		if data, err = w.create(a, ctx, data); err != nil {
+			return nil, err
+		}
 	}
 	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) { return a.coreCreate(ctx, tb, data) })
 }
 
 func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any) (map[string]any, error) {
-	out, seal, err := a.prepare(ctx, tb, data, true, nil)
+	out, err := a.prepare(ctx, tb, data, true)
 	if err != nil {
 		return nil, err
 	}
@@ -236,42 +278,28 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	if err != nil {
 		return nil, err
 	}
-	row := rs[0]
-	return row, a.secretsPut(ctx, tb, row, seal)
-}
-
-// coreAccess is a row's access, the id of the group that sees it; nil for the whole workspace.
-func coreAccess(v any) *uuid.UUID {
-	if s, ok := v.(string); ok {
-		if id, err := uuid.Parse(s); err == nil {
-			return &id
-		}
-	}
-	return nil
-}
-
-func (a *Archive) Replace(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
-	return a.coreWrite(ctx, typ, id, data, true)
+	return rs[0], nil
 }
 
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
-	return a.coreWrite(ctx, typ, id, data, false)
-}
-
-func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data map[string]any, full bool) (map[string]any, error) {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
 		return nil, err
 	}
-	if tb.isWorkflow() {
-		return a.workflowSave(ctx, tb, id, data, full)
+	w := tb.write()
+	if w.save != nil {
+		return w.save(a, ctx, id, data)
 	}
-	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
-		old, err := a.coreGet(ctx, tb, id)
-		if err != nil {
+	if w.update != nil {
+		if data, err = w.update(a, ctx, id, data); err != nil {
 			return nil, err
 		}
-		out, seal, err := a.prepare(ctx, tb, data, full, old)
+	}
+	return coreDo(a, ctx, func(ctx context.Context) (map[string]any, error) {
+		if _, err := a.coreGet(ctx, tb, id); err != nil {
+			return nil, err
+		}
+		out, err := a.prepare(ctx, tb, data, false)
 		if err != nil {
 			return nil, err
 		}
@@ -286,51 +314,36 @@ func (a *Archive) coreWrite(ctx context.Context, typ string, id uuid.UUID, data 
 		if len(rs) == 0 {
 			return nil, fmt.Errorf("you cannot change this row: %w", ErrForbidden)
 		}
-		return rs[0], a.secretsPut(ctx, tb, rs[0], seal)
+		return rs[0], nil
 	})
 }
 
-func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, full bool, old map[string]any) (map[string]any, map[string]any, error) {
-	cat := a.catalog(ctx)
-	in, keep := map[string]any{}, map[string]any{}
-	for k, v := range data {
-		if str, ok := v.(string); ok && old != nil && old[k] == str && tb.col(k) != nil && cat.secret(tb.col(k)) != nil {
-			keep[k] = v
-			continue
-		}
-		in[k] = v
-	}
+func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, full bool) (map[string]any, error) {
+	in := maps.Clone(data)
 	if err := a.groupNames(ctx, tb, in); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	out, err := cat.Normalize(tb, in, a.hints, full)
+	out, err := a.catalog(ctx).Normalize(tb, in, a.hints, full)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := a.refCheck(ctx, tb, out); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := a.pgCheck(ctx, tb, out); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	seal := map[string]any{}
-	for k, v := range out {
-		if s := cat.secret(tb.col(k)); s != nil {
-			seal[k] = v
-			if v != nil {
-				out[k] = secretMask(s, v)
-			}
-		}
-	}
-	for k, v := range keep {
-		out[k] = v
-		delete(seal, k)
-	}
-	return out, seal, nil
+	return out, nil
 }
 
 func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) error {
 	verr := &ValidationError{Type: tb.Name}
+	type ref struct {
+		target, path string
+		id           uuid.UUID
+	}
+	var refs []ref
+	wanted := map[string][]uuid.UUID{}
 	for _, k := range specKeys(out) {
 		col := tb.col(k)
 		target := col.target()
@@ -342,20 +355,30 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 			vals, _ = specList(out[k])
 			path = func(i int) string { return fmt.Sprintf("%s[%d]", k, i) }
 		}
-		schema, name, _ := strings.Cut(target, ".")
 		for i, v := range vals {
 			s, _ := v.(string)
-			id, err := uuid.Parse(s)
-			if err != nil {
-				continue
+			if id, err := uuid.Parse(s); err == nil {
+				refs = append(refs, ref{target, path(i), id})
+				wanted[target] = append(wanted[target], id)
 			}
-			var ok bool
-			if err := a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM `+pgIdent(schema, name)+` WHERE id = $1)`, id).Scan(&ok); err != nil {
-				return err
-			}
-			if !ok {
-				verr.Errors = append(verr.Errors, FieldError{Path: path(i), Message: "no " + name + " " + s})
-			}
+		}
+	}
+	found := map[uuid.UUID]bool{}
+	for _, target := range specKeys(wanted) {
+		schema, name, _ := strings.Cut(target, ".")
+		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id FROM `+pgIdent(schema, name)+` WHERE id = ANY($1)`, wanted[target])
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			found[id] = true
+		}
+	}
+	for _, r := range refs {
+		if !found[r.id] {
+			_, name, _ := strings.Cut(r.target, ".")
+			verr.Errors = append(verr.Errors, FieldError{Path: r.path, Message: "no " + name + " " + r.id.String()})
 		}
 	}
 	return verr.err()
@@ -392,8 +415,14 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if tb.isWorkflow() {
-		return a.workflowDelete(ctx, id)
+	w := tb.write()
+	if w.remove != nil {
+		return w.remove(a, ctx, id)
+	}
+	if w.delete != nil {
+		if err := w.delete(a, ctx, id); err != nil {
+			return err
+		}
 	}
 	return a.as(ctx, func(ctx context.Context) error {
 		if _, err := a.coreGet(ctx, tb, id); err != nil {
@@ -406,27 +435,22 @@ func (a *Archive) Delete(ctx context.Context, typ string, id uuid.UUID) error {
 		if tag.RowsAffected() == 0 {
 			return fmt.Errorf("you cannot delete this row: %w", ErrForbidden)
 		}
-		return a.st.db(ctx).ClearSecrets(ctx, tb.Name, id, nil)
+		return nil
 	})
 }
 
-// Schema is each table and view of the public schema as the transaction in ctx sees it, with its columns and
-// DDL; with a name, only that one.
 func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
-	ddl, err := a.st.Schema(ctx)
+	ddl, err := a.st.Schema(ctx, a.Catalog().stamp)
 	if err != nil {
 		return nil, err
 	}
 	cat := a.catalog(ctx)
-	out, names := []runTable{}, []string{}
+	out := []runTable{}
 	for _, t := range runTables(cat) {
-		if cat.Tables[t.Name].Schema != "public" {
-			continue
-		}
-		if names = append(names, t.Name); name == "" || t.Name == name {
+		if t.Name == name || name == "" && cat.Tables[t.Name].Schema == "public" {
 			t.DDL = ddl[t.Name]
 			out = append(out, t)
 		}
@@ -437,18 +461,16 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	case len(out) == 1:
 		return out[0], nil
 	}
-	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(names, ", "), ErrNotFound)
+	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(cat.names(), ", "), ErrNotFound)
 }
 
-// Migrate dry-runs a migration, or with its dry run's confirm runs it, in the transaction in ctx or one of its
-// own: a run that migrates and then fails changes nothing. A named migration runs once.
-func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*SchemaMigration, error) {
+func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string, breaks bool) (*SchemaMigration, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !a.owner(ctx, ac.Role) {
-		return nil, fmt.Errorf("only owners change the schema: %w", ErrForbidden)
+	if !a.has(ctx, ac.Role, a.prefix+"_manager") {
+		return nil, fmt.Errorf("only managers, engineers and the owner change the schema: %w", ErrForbidden)
 	}
 	author := ac.Email
 	if ac.TokenName != "" {
@@ -456,7 +478,7 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	}
 	var m *SchemaMigration
 	err = a.as(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.Migrate(ctx, sql, name, author, confirm)
+		m, err = a.st.Migrate(ctx, sql, name, author, confirm, breaks)
 		if err == nil && m.Applied {
 			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
 		}
@@ -464,15 +486,6 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	})
 	return m, err
 }
-
-func (a *Archive) SchemaRevisions(ctx context.Context, limit int) ([]SchemaRevision, error) {
-	if _, err := signedIn(ctx); err != nil {
-		return nil, err
-	}
-	return a.st.Revisions(ctx, cmp.Or(min(max(limit, 0), 100), 20))
-}
-
-func coreRowID(row map[string]any) uuid.UUID { return coreUUID(row, "id") }
 
 func coreUUID(row map[string]any, key string) uuid.UUID {
 	s, _ := row[key].(string)
@@ -521,7 +534,7 @@ type SearchHit struct {
 }
 
 const searchFile = `SELECT 'file' AS kind, 'file' AS type, f.id, f.created_at, jsonb_build_object('id', f.id, 'name', f.name, 'mime', f.mime,
-		'size', f.size, 'sha256', f.hash, 'access', f.access, 'created_at', f.created_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
+		'size', f.size, 'hash', f.hash, 'access', f.access, 'created_at', f.created_at, 'kind', f.kind, 'parent', f.parent, 'connection', f.connection, 'url', f.url, 'status', f.status, 'error', f.error, 'edited_at', f.edited_at) AS data, ts_rank(f.search, q.q, 1) AS rank,
 		CASE WHEN f.text <> '' THEN ts_headline('simple', left(f.text, 100000), q.q, 'MaxFragments=1, MaxWords=30, MinWords=10, StartSel=**, StopSel=**') ELSE '' END AS snippet
 	FROM archive.file f, q WHERE f.search @@ q.q`
 
@@ -593,15 +606,11 @@ func searchTime(name, s string, end bool) (*time.Time, error) {
 	return &t, nil
 }
 
-// storeSQLFile is Archive's own schema of a workspace and, after it, the sqlc queries; only the schema is applied.
-//
 //go:embed archive.sql
 var storeSQLFile string
 
 var storeSchema, _, _ = strings.Cut(storeSQLFile, "\n-- name:")
 
-// mainSQLFile is the main database's schema and, after it, the Hub's sqlc queries (Hub.migrate).
-//
 //go:embed main.sql
 var mainSQLFile string
 
@@ -615,11 +624,21 @@ const storeRoles = `DO $$ BEGIN
         CREATE ROLE "{p}_viewer" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_editor') THEN
-        CREATE ROLE "{p}_editor" NOLOGIN IN ROLE "{p}_viewer";
+        CREATE ROLE "{p}_editor" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_manager') THEN
+        CREATE ROLE "{p}_manager" NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_engineer') THEN
+        CREATE ROLE "{p}_engineer" NOLOGIN;
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_owner') THEN
-        CREATE ROLE "{p}_owner" NOLOGIN IN ROLE "{p}_editor";
+        CREATE ROLE "{p}_owner" NOLOGIN;
     END IF;
+    GRANT "{p}_viewer" TO "{p}_editor";
+    GRANT "{p}_editor" TO "{p}_manager";
+    GRANT "{p}_manager" TO "{p}_engineer";
+    GRANT "{p}_engineer" TO "{p}_owner";
     IF NOT EXISTS (SELECT FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE d.datname = current_database() AND s.setrole = 0) THEN
         EXECUTE format('ALTER DATABASE %I SET search_path = archive, public', current_database());
         EXECUTE format('ALTER DATABASE %I SET timezone = %L', current_database(), 'UTC');
@@ -640,6 +659,8 @@ type storeQ interface {
 }
 
 type storeTxKey struct{}
+
+type storeReadKey struct{}
 
 type storeTx struct {
 	tx    pgx.Tx
@@ -665,9 +686,6 @@ func storeCommitted(after *[]func(), err error) error {
 	return err
 }
 
-// A request runs as its caller's role, logged in as it (pgStore.As), so what it runs cannot become another role:
-// Postgres lets a session set only the roles its login is a member of. The authenticator, which app logs in
-// as, is a member of none.
 type pgStore struct {
 	app, sys *pgxpool.Pool
 	cfg      *pgx.ConnConfig
@@ -677,16 +695,17 @@ type pgStore struct {
 	moved    func(table, id string)
 	mu       sync.Mutex
 	roles    map[string]*pgxpool.Pool
+	ddlStamp string
+	ddl      map[string]string
 }
 
-// OpenStore opens a workspace's store; moved hears what each of its transactions committed (livePool).
-func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, moved func(table, id string)) (*pgStore, error) {
+func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, migrate bool, moved func(table, id string)) (*pgStore, error) {
 	cfg := pg.Copy()
 	cfg.RuntimeParams["search_path"] = "public"
 	s := &pgStore{cfg: cfg, prefix: prefix, password: password, base: pg, moved: moved, roles: map[string]*pgxpool.Pool{}}
 	var err error
 	if s.sys, err = storePool(ctx, pg, storeSysConns, moved, nil); err == nil {
-		err = s.bootstrap(ctx, password)
+		err = s.bootstrap(ctx, password, migrate)
 	}
 	if err == nil {
 		auth := prefix + "_authenticator"
@@ -699,13 +718,11 @@ func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string,
 	return s, nil
 }
 
-// A process holds the hub's pool and, per open workspace, its system and app pools, and two revisions overlap
-// while a deploy rolls out: these keep that well inside the database's connections.
 const (
 	storeAppConns  = 6
 	storeSysConns  = 3
 	storeRoleConns = 2
-	storeIdle      = time.Minute
+	storePing      = time.Minute
 )
 
 func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved func(table, id string), fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
@@ -716,7 +733,8 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	cfg.ConnConfig = base.Copy()
 	cfg.ConnConfig.RuntimeParams["search_path"] = "archive, public"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
-	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
+	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, hubIdle
+	cfg.ShouldPing = func(_ context.Context, p pgxpool.ShouldPingParams) bool { return p.IdleDuration > storePing }
 	if fn != nil {
 		fn(cfg.ConnConfig)
 	}
@@ -726,31 +744,76 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	return pgxpool.NewWithConfig(ctx, cfg)
 }
 
-// bootstrap makes the store's roles and sets the authenticator's password. Processes opening the same store at
-// once would race on those roles' catalog rows, so it holds the store lock while it does.
-func (s *pgStore) bootstrap(ctx context.Context, password string) error {
-	tx, err := s.sys.Begin(ctx)
+func (s *pgStore) bootstrap(ctx context.Context, password string, migrate bool) error {
+	rev, err := generated.New(s.sys).Revision(ctx)
+	if err != nil && !storeUndefined(err) && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if rev != "" && !migrate {
+		return nil
+	}
+	err = pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, s.expand(storeRoles)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'")
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
-		return err
+	if !strings.HasSuffix(rev, ":"+s.hash()) {
+		if err := s.migrate(ctx); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.Exec(ctx, s.expand(storeRoles)); err != nil {
-		return err
+	if migrate {
+		if err := s.settle(ctx); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'"); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	rev, _ := generated.New(s.sys).Revision(ctx)
-	if strings.HasSuffix(rev, ":"+s.hash()) {
+	return s.logins(ctx, true)
+}
+
+func (s *pgStore) settle(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		q := generated.New(tx)
+		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL lock_timeout = '1min'", storeMigrateAccess} {
+			if _, err := tx.Exec(ctx, st); err != nil {
+				return fmt.Errorf("row policies: %w", err)
+			}
+		}
+		return q.StoreCatalog(ctx)
+	})
+}
+
+func (s *pgStore) logins(ctx context.Context, every bool) error {
+	return pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		q := generated.New(tx)
+		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		roles, err := q.LoginlessRoles(ctx, s.prefix, every)
+		if err != nil {
+			return err
+		}
+		for _, role := range roles {
+			if _, err := tx.Exec(ctx, s.login(role)); err != nil {
+				return fmt.Errorf("logging in as %s: %w", role, err)
+			}
+		}
 		return nil
-	}
-	return s.migrate(ctx)
+	})
+}
+
+func (s *pgStore) login(role string) string {
+	return "ALTER ROLE " + pgIdent(role) + " LOGIN PASSWORD '" + s.rolePassword(role) + "'"
 }
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
@@ -772,48 +835,55 @@ var (
 	storeIdentRe  = regexp.MustCompile(`[A-Za-z0-9_$]`)
 )
 
+func storeSkip(src string, i int) (int, bool) {
+	switch c := src[i]; {
+	case c == '-' && strings.HasPrefix(src[i:], "--"):
+		if n := strings.IndexByte(src[i:], '\n'); n >= 0 {
+			return i + n, true
+		}
+		return len(src), true
+	case c == '/' && strings.HasPrefix(src[i:], "/*"):
+		for d := 0; i < len(src); i++ {
+			if strings.HasPrefix(src[i:], "/*") {
+				d, i = d+1, i+1
+			} else if strings.HasPrefix(src[i:], "*/") {
+				if d, i = d-1, i+1; d == 0 {
+					return i, true
+				}
+			}
+		}
+		return len(src), true
+	case c == '\'' || c == '"':
+		esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e') && (i == 1 || !storeIdentRe.MatchString(src[i-2:i-1]))
+		for i++; i < len(src) && src[i] != c; i++ {
+			if esc && src[i] == '\\' {
+				i++
+			}
+		}
+		return i, false
+	case c == '$':
+		if m := storeDollarRe.FindString(src[i:]); m != "" && (i == 0 || !storeIdentRe.MatchString(src[i-1:i])) {
+			if n := strings.Index(src[i+len(m):], m); n >= 0 {
+				return i + len(m) + n + len(m) - 1, false
+			}
+			return len(src), false
+		}
+	}
+	return i, false
+}
+
 func storeSplit(src string) []string {
 	var out []string
 	start := 0
 	for i := 0; i < len(src); i++ {
-		switch c := src[i]; {
-		case c == '-' && strings.HasPrefix(src[i:], "--"):
-			if n := strings.IndexByte(src[i:], '\n'); n >= 0 {
-				i += n
-			} else {
-				i = len(src)
-			}
-		case c == '/' && strings.HasPrefix(src[i:], "/*"):
-			for d := 0; i < len(src); i++ {
-				if strings.HasPrefix(src[i:], "/*") {
-					d, i = d+1, i+1
-				} else if strings.HasPrefix(src[i:], "*/") {
-					if d, i = d-1, i+1; d == 0 {
-						break
-					}
-				}
-			}
-		case c == '\'' || c == '"':
-			esc := c == '\'' && i > 0 && (src[i-1] == 'E' || src[i-1] == 'e')
-			for i++; i < len(src) && src[i] != c; i++ {
-				if esc && src[i] == '\\' {
-					i++
-				}
-			}
-		case c == '$':
-			if m := storeDollarRe.FindString(src[i:]); m != "" && (i == 0 || !storeIdentRe.MatchString(src[i-1:i])) {
-				if n := strings.Index(src[i+len(m):], m); n >= 0 {
-					i += len(m) + n + len(m) - 1
-				} else {
-					i = len(src)
-				}
-			}
-		case c == ';':
+		if src[i] == ';' {
 			if st := strings.TrimSpace(src[start:i]); st != "" {
 				out = append(out, st)
 			}
 			start = i + 1
+			continue
 		}
+		i, _ = storeSkip(src, i)
 	}
 	if st := strings.TrimSpace(src[start:]); st != "" {
 		out = append(out, st)
@@ -822,18 +892,13 @@ func storeSplit(src string) []string {
 }
 
 func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
-	q := generated.New(s.sys)
-	b, err := q.Catalog(ctx)
+	r, err := generated.New(s.sys).StoredCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rev, err := q.Revision(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c, err := catalogParse(b)
+	c, err := catalogParse(r.Catalog)
 	if c != nil {
-		c.stamp = rev
+		c.stamp = r.Revision
 	}
 	return c, err
 }
@@ -869,18 +934,16 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	if err != nil {
 		return err
 	}
+	opts := pgx.TxOptions{}
+	if ctx.Value(storeReadKey{}) != nil {
+		opts.AccessMode = pgx.ReadOnly
+	}
 	after := &[]func(){}
-	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		// The role it is already, said so, as the SQL that asks which role is writing reads it.
-		if err := generated.New(tx).SetLocal(ctx, "role", role); err != nil {
-			return err
-		}
+	return storeCommitted(after, storeErr(pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after, &schemaTx{}}))
 	})))
 }
 
-// rolePool is the pool that logs in as role, made the first time this process runs as it: the role may log in
-// from then on, with a password only this Archive's key makes.
 func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -890,18 +953,7 @@ func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, err
 	if !strings.HasPrefix(role, s.prefix+"_") {
 		return nil, fmt.Errorf("role %s is not this workspace's: %w", role, ErrForbidden)
 	}
-	password := s.rolePassword(role)
-	err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(role)+" LOGIN PASSWORD '"+password+"'")
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("logging in as %s: %w", role, err)
-	}
-	p, err := storePool(ctx, s.base, storeRoleConns, s.moved, func(c *pgx.ConnConfig) { c.User, c.Password = role, password })
+	p, err := storePool(ctx, s.base, storeRoleConns, s.moved, func(c *pgx.ConnConfig) { c.User, c.Password = role, s.rolePassword(role) })
 	if err != nil {
 		return nil, err
 	}
@@ -909,7 +961,6 @@ func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, err
 	return p, nil
 }
 
-// rolePassword is role's password, from the authenticator's, which the Archive's key makes.
 func (s *pgStore) rolePassword(role string) string {
 	sum := sha256.Sum256([]byte(s.password + "\x00" + role))
 	return hex.EncodeToString(sum[:])
@@ -935,6 +986,8 @@ func storeErr(err error) error {
 		return fmt.Errorf("%s; change the schema with archive.migrate: %w", pe.Message, ErrForbidden)
 	case pe.Code == "42501":
 		return fmt.Errorf("%s: %w", pe.Message, ErrForbidden)
+	case pe.Code == "23505" && pe.ConstraintName == "file_key":
+		return fmt.Errorf("a file by that name with the same content is already there: %w", ErrConflict)
 	case pe.Code == "23503" || pe.Code == "23001" || pe.Code == "23505":
 		return fmt.Errorf("%s: %w", cmp.Or(pe.Detail, pe.Message), ErrConflict)
 	case pe.Code == "23502" && pe.ColumnName != "":
