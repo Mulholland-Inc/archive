@@ -108,7 +108,6 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	mux.HandleFunc("POST /device/{stream}", h.device(true, h.deviceRecords))
 	mux.HandleFunc("POST /email", h.emailHTTP)
 	mux.HandleFunc("GET /live", h.liveHTTP)
-	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
 	own := http.NewServeMux()
 	h.mcpRoutes(own, true)
 	api, mcpOwn := h.cors(mux), mcpCORS(own)
@@ -228,17 +227,11 @@ func httpHandler(a *Archive) http.Handler {
 		return ok(a.Run(context.WithValue(r.Context(), runFreshKey{}, true), body.Code))
 	})
 	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
-		return ok(a.boot(r.Context()))
+		return ok(a.boot(r.Context(), r.URL.Query().Get("only")))
 	})
 	mux.HandleFunc("POST /api/turn", a.turn)
-	handle("GET /api/types", func(r *http.Request) (int, any, error) {
-		return ok(a.types(r.Context()))
-	})
 	handle("GET /api/docs", func(r *http.Request) (int, any, error) {
 		return ok(a.RunDocs(r.Context()), nil)
-	})
-	handle("GET /api/terms", func(r *http.Request) (int, any, error) {
-		return ok(a.onboarding(r.Context()))
 	})
 	mux.HandleFunc("GET /api/file/{id}/{part...}", a.filePart)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {

@@ -9,9 +9,10 @@ locals {
   mcp_url = "https://mcp.${var.domain}"
 
   secrets = merge(jsondecode(file("${path.module}/secrets.json")), {
+    ARCHIVE_ENV        = "A JSON object of secret names and their values, read before the env var of each name. A space leaves it empty."
     DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
     ARCHIVE_SECRET_KEY = "32 random bytes, hex or base64, wrapping every workspace's data key."
-    ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with; the image workflow sets it on the Worker as LIVE_KEY."
+    ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with and signs its WebSocket tickets with; the image workflow sets it on the Worker as LIVE_KEY."
     ANTHROPIC_API_KEY  = "Key of the in-app agent and archive.browse. A space leaves the agent off."
     TYPESAFE_API_KEY   = "TypeSafe key of archive.browse. A space leaves browse off."
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
@@ -375,6 +376,15 @@ resource "google_cloud_run_v2_service" "this" {
               version = "latest"
             }
           }
+        }
+      }
+
+      startup_probe {
+        period_seconds    = 1
+        timeout_seconds   = 1
+        failure_threshold = 240
+        tcp_socket {
+          port = 8080
         }
       }
 

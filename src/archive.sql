@@ -6,7 +6,8 @@ CREATE TABLE archive.revision (
     created_at timestamptz NOT NULL DEFAULT now(),
     author     text NOT NULL DEFAULT '',
     name       text UNIQUE,
-    statements jsonb NOT NULL DEFAULT '[]'
+    statements jsonb NOT NULL DEFAULT '[]',
+    catalog    jsonb
 );
 
 CREATE TABLE archive.ddl_key (
@@ -49,6 +50,11 @@ $$;
 CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT g IS NULL OR pg_has_role(current_user, '{p}_manager', 'USAGE')
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
+$$;
+
+CREATE FUNCTION archive.groups() RETURNS uuid[] LANGUAGE sql STABLE AS $$
+    SELECT ARRAY(SELECT g.id FROM archive."group" g WHERE pg_has_role(current_user, '{p}_manager', 'USAGE')
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g.id) AND pg_has_role(current_user, r.oid, 'USAGE')))
 $$;
 
 CREATE FUNCTION archive.uses(target regclass, id uuid) RETURNS TABLE ("schema" text, "table" text, "column" text, total bigint, "rows" jsonb, restricts bool) LANGUAGE plpgsql STABLE AS $$
@@ -4243,7 +4249,7 @@ CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF hash, name, mime, size, metadata, text, status, error, access, kind, parent, connection, stream, source_id, source, url, drive, owner, owner_name, editor, editor_name, made_at, edited_at ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
 
 CREATE FUNCTION archive.ddl_allowed(k text) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 BEGIN
@@ -4377,21 +4383,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer"
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
 ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-CREATE POLICY see ON archive.file FOR SELECT USING (archive.can(access) AND (connection IS NULL OR EXISTS (SELECT FROM archive.connection c WHERE c.id = file.connection)));
-CREATE POLICY add ON archive.file FOR INSERT WITH CHECK (archive.can(access) AND connection IS NULL);
-CREATE POLICY change ON archive.file FOR UPDATE USING (archive.can(access) AND connection IS NULL) WITH CHECK (archive.can(access) AND connection IS NULL);
-CREATE POLICY remove ON archive.file FOR DELETE USING (archive.can(access) AND connection IS NULL);
+CREATE POLICY see ON archive.file FOR SELECT USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND (connection IS NULL OR EXISTS (SELECT FROM archive.connection c WHERE c.id = file.connection)));
+CREATE POLICY add ON archive.file FOR INSERT WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
+CREATE POLICY change ON archive.file FOR UPDATE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL) WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
+CREATE POLICY remove ON archive.file FOR DELETE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
 
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
-CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
+CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])));
+CREATE POLICY shared ON archive.workflow FOR SELECT USING (access = ANY((SELECT archive.groups())::uuid[]));
 
 ALTER TABLE archive.agent ENABLE ROW LEVEL SECURITY;
-CREATE POLICY access ON archive.agent USING (archive.can(access)) WITH CHECK (archive.can(access));
+CREATE POLICY access ON archive.agent USING (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) WITH CHECK (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[]));
 
 ALTER TABLE archive.inbox ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.inbox FOR SELECT USING (archive.can(access));
+CREATE POLICY mine ON archive.inbox FOR SELECT USING (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[]));
 ALTER TABLE archive.turn ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.turn FOR SELECT USING (archive.mine(member));
 
@@ -4402,7 +4408,7 @@ ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
 
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND archive.can(access));
+CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])));
 
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
@@ -4431,7 +4437,7 @@ BEGIN
         WHERE c.contype = 'f' AND c.confrelid = 'archive.connection'::regclass AND a.attname = 'connection' AND a.attnotnull LOOP
         EXECUTE format('GRANT SELECT ON %s TO %I', t, '{p}_viewer');
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('CREATE POLICY mine ON %s FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = %s.connection))', t, t);
+        EXECUTE format('CREATE POLICY mine ON %s FOR SELECT USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = %s.connection))', t, t);
         EXECUTE format('CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION archive.object_name()', t);
         FOR k IN SELECT a.attname, v.text FROM pg_catalog.pg_attribute a JOIN (VALUES
             ('access', 'Group that sees it, its connection''s: null for everyone who sees the connection'),
@@ -4476,6 +4482,76 @@ COMMENT ON COLUMN archive.workflow_list.last IS 'Its last run: id, workflow, at,
 
 GRANT SELECT ON archive.agent_list, archive.workflow_list TO "{p}_viewer";
 
+CREATE FUNCTION archive.catalog() RETURNS jsonb LANGUAGE sql STABLE SET search_path = archive, public SET jit = off AS $$
+    WITH col AS (
+        SELECT a.attrelid AS rel, jsonb_agg(jsonb_build_object(
+            'name', a.attname,
+            'description', coalesce(d.description, ''),
+            'type', e.typname,
+            'schema', e.typnamespace::regnamespace::text,
+            'reg', format_type(e.oid, a.atttypmod),
+            'list', t.typcategory = 'A' AND t.typelem <> 0,
+            'not_null', a.attnotnull,
+            'default', a.atthasdef,
+            'generated', a.attgenerated <> '',
+            'pk', EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.conrelid = a.attrelid AND k.contype = 'p' AND k.conkey = ARRAY[a.attnum]),
+            'ref', coalesce((SELECT r.relnamespace::regnamespace::text || '.' || r.relname FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class r ON r.oid = k.confrelid
+                WHERE k.conrelid = a.attrelid AND k.contype = 'f' AND k.conkey = ARRAY[a.attnum] LIMIT 1), '')) ORDER BY a.attnum) AS cols
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
+        JOIN pg_catalog.pg_type e ON e.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0 THEN t.typelem ELSE t.oid END
+        LEFT JOIN pg_catalog.pg_description d ON d.classoid = 'pg_catalog.pg_class'::regclass AND d.objoid = a.attrelid AND d.objsubid = a.attnum
+        WHERE c.relnamespace IN ('archive'::regnamespace, 'public'::regnamespace) AND a.attnum > 0 AND NOT a.attisdropped
+        GROUP BY a.attrelid
+    )
+    SELECT jsonb_build_object(
+        'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
+            'name', c.relname,
+            'schema', c.relnamespace::regnamespace::text,
+            'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
+            'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
+            'rls', c.relrowsecurity,
+            'force', c.relforcerowsecurity,
+            'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
+            'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
+            'partitioned', c.relkind = 'p' OR c.relispartition,
+            'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+                AND pg_get_expr(p.polqual, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))'
+                AND pg_get_expr(p.polwithcheck, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))')
+                FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
+            'columns', col.cols))
+            FROM pg_catalog.pg_class c LEFT JOIN col ON col.rel = c.oid
+            WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
+                AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
+        'sync', coalesce((SELECT jsonb_object_agg(c.relname, col.cols)
+            FROM pg_catalog.pg_class c LEFT JOIN col ON col.rel = c.oid
+            WHERE c.relnamespace = 'archive'::regnamespace AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_constraint k
+                JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)
+                WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive.connection'::regclass AND a.attname = 'connection')), '{}'),
+        'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
+            'name', t.typname,
+            'schema', t.typnamespace::regnamespace::text,
+            'kind', t.typtype,
+            'description', coalesce(obj_description(t.oid, 'pg_type'), ''),
+            'base', coalesce((SELECT b.typname FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
+            'base_schema', coalesce((SELECT b.typnamespace::regnamespace::text FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
+            'enum', coalesce((SELECT jsonb_agg(l.enumlabel ORDER BY l.enumsortorder) FROM pg_catalog.pg_enum l WHERE l.enumtypid = t.oid), '[]'),
+            'attrs', coalesce(col.cols, '[]')))
+            FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid LEFT JOIN col ON col.rel = t.typrelid
+            WHERE t.typnamespace IN ('archive'::regnamespace, 'public'::regnamespace)
+              AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND r.relkind = 'c')), '{}'))
+$$;
+
+CREATE FUNCTION archive.revision_catalog() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE archive.revision SET catalog = NULL WHERE catalog IS NOT NULL;
+    NEW.catalog := archive.catalog();
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER revision_catalog BEFORE INSERT ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.revision_catalog();
+
 -- name: LoginlessRoles :many
 SELECT rolname::text FROM pg_catalog.pg_roles WHERE (starts_with(rolname, sqlc.arg(prefix)::text || '_u') OR starts_with(rolname, sqlc.arg(prefix)::text || '_t')) AND (NOT rolcanlogin OR sqlc.arg(every)::bool);
 
@@ -4489,7 +4565,7 @@ SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::n
 SELECT NOT EXISTS (SELECT FROM archive.member);
 
 -- name: MemberEntry :one
-SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
+SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
 
 -- name: Members :many
 SELECT id, email::text AS email, role::text AS role, "group", name FROM archive.member ORDER BY email;
@@ -4647,7 +4723,7 @@ UPDATE archive.upload SET parts = $2 WHERE id = $1;
 DELETE FROM archive.upload WHERE id = $1;
 
 -- name: Revision :one
-SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text;
+SELECT coalesce((SELECT id::text || ':' || hash FROM archive.revision ORDER BY id DESC LIMIT 1), '')::text;
 
 -- name: InsertRevision :exec
 INSERT INTO archive.revision (hash) VALUES ($1);
@@ -4693,59 +4769,13 @@ SELECT pg_advisory_unlock(sqlc.arg(key));
 SELECT pg_advisory_xact_lock(sqlc.arg(key));
 
 -- name: Catalog :one
-WITH col AS (
-    SELECT a.attrelid AS rel, a.attnum AS num, jsonb_build_object(
-        'name', a.attname,
-        'description', coalesce(col_description(a.attrelid, a.attnum), ''),
-        'type', e.typname,
-        'schema', e.typnamespace::regnamespace::text,
-        'reg', format_type(e.oid, a.atttypmod),
-        'list', t.typcategory = 'A' AND t.typelem <> 0,
-        'not_null', a.attnotnull,
-        'default', a.atthasdef,
-        'generated', a.attgenerated <> '',
-        'pk', EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.conrelid = a.attrelid AND k.contype = 'p' AND k.conkey = ARRAY[a.attnum]),
-        'ref', coalesce((SELECT r.relnamespace::regnamespace::text || '.' || r.relname FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class r ON r.oid = k.confrelid
-            WHERE k.conrelid = a.attrelid AND k.contype = 'f' AND k.conkey = ARRAY[a.attnum] LIMIT 1), '')) AS c
-    FROM pg_catalog.pg_attribute a
-    JOIN pg_catalog.pg_type t ON t.oid = a.atttypid
-    JOIN pg_catalog.pg_type e ON e.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0 THEN t.typelem ELSE t.oid END
-    WHERE a.attnum > 0 AND NOT a.attisdropped
-)
-SELECT jsonb_build_object(
-    'tables', coalesce((SELECT jsonb_object_agg(c.relname, jsonb_build_object(
-        'name', c.relname,
-        'schema', c.relnamespace::regnamespace::text,
-        'kind', CASE c.relkind WHEN 'v' THEN 'view' ELSE 'table' END,
-        'description', coalesce(obj_description(c.oid, 'pg_class'), ''),
-        'rls', c.relrowsecurity,
-        'force', c.relforcerowsecurity,
-        'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
-        'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
-        'partitioned', c.relkind = 'p' OR c.relispartition,
-        'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
-            AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
-            AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
-            FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
-        'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
-            AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
-    'sync', coalesce((SELECT jsonb_object_agg(c.relname, (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid))
-        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'archive'::regnamespace AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_constraint k
-            JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)
-            WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive.connection'::regclass AND a.attname = 'connection')), '{}'),
-    'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
-        'name', t.typname,
-        'schema', t.typnamespace::regnamespace::text,
-        'kind', t.typtype,
-        'description', coalesce(obj_description(t.oid, 'pg_type'), ''),
-        'base', coalesce((SELECT b.typname FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
-        'base_schema', coalesce((SELECT b.typnamespace::regnamespace::text FROM pg_catalog.pg_type b WHERE b.oid = t.typbasetype), ''),
-        'enum', coalesce((SELECT jsonb_agg(l.enumlabel ORDER BY l.enumsortorder) FROM pg_catalog.pg_enum l WHERE l.enumtypid = t.oid), '[]'),
-        'attrs', coalesce((SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = t.typrelid), '[]')))
-        FROM pg_catalog.pg_type t LEFT JOIN pg_catalog.pg_class r ON r.oid = t.typrelid
-        WHERE t.typnamespace IN ('archive'::regnamespace, 'public'::regnamespace)
-          AND (t.typtype IN ('d', 'e') OR t.typtype = 'c' AND r.relkind = 'c')), '{}'));
+SELECT archive.catalog();
+
+-- name: StoredCatalog :one
+SELECT (id::text || ':' || hash)::text AS revision, catalog FROM archive.revision ORDER BY id DESC LIMIT 1;
+
+-- name: StoreCatalog :exec
+UPDATE archive.revision SET catalog = archive.catalog() WHERE id = (SELECT r.id FROM archive.revision r ORDER BY r.id DESC LIMIT 1);
 
 -- name: WorkflowNames :many
 SELECT name FROM archive.workflow WHERE user_id = $1 ORDER BY name;

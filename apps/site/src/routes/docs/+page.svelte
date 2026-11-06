@@ -630,8 +630,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /api/types</code></td><td>The catalog: your tables and views with their columns and DDL, and every connector.</td></tr>
-<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: who you are, agents, workflows, members, types and onboarding status.</td></tr>
+<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: <code>me</code>, <code>agents</code>, <code>workflows</code>, <code>members</code>, <code>types</code> and <code>signup</code>. <code>?only=me,types</code> asks for just those. <code>me</code> is who you are, your <code>role</code>, your <code>group</code>, the current <code>workspace</code> and all your <code>workspaces</code>. <code>types</code> is the catalog: your tables and views with their columns and DDL, and every connector; a field that is false or empty is left out. <code>?only=signup</code> adds the agreement texts.</td></tr>
 <tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>; with <code>provider</code>, the places a connector offers.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
 <tr><td><code>POST /api/turn</code></td><td>Talks with an agent, as a stream: <code>&#123;"agent", "text"&#125;</code>. <code>&#123;"agent", "clear": true&#125;</code> clears your conversation with it.</td></tr>
@@ -644,7 +643,6 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>GET /auth/me</code></td><td>Who you are, your <code>role</code>, your <code>group</code>, the current <code>workspace</code> and all your <code>workspaces</code>.</td></tr>
 <tr><td><code>GET</code>, <code>POST /api/member</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
 <tr><td><code>DELETE /api/member/&#123;id&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
 <tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
@@ -692,7 +690,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
 
 <h3 id="people-security">Row-level security</h3>
-<p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
+<p>Every table has one policy, <code>access</code>, that checks each row against the groups you are in, <code>archive.groups()</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
 
 <h2 id="groups">Groups</h2>
 <p>A group, like <code>hr</code> or <code>finance</code>, is a set of people, and each person is in one group at most. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>

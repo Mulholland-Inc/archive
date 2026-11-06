@@ -100,7 +100,7 @@ func (h *Hub) device(signed bool, f func(w http.ResponseWriter, d *device) (any,
 	}
 }
 
-func deviceApp() string { return strings.TrimSpace(os.Getenv("ARCHIVE_IOS_APP")) }
+func deviceApp() string { return strings.TrimSpace(secretEnv("ARCHIVE_IOS_APP")) }
 
 // read reads the body, up to max bytes, into a temporary file, and checks it is what the install signed, where it signs.
 func (d *device) read(w http.ResponseWriter, max int64) (*os.File, error) {

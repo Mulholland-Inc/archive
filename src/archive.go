@@ -722,7 +722,7 @@ const (
 	storeAppConns  = 6
 	storeSysConns  = 3
 	storeRoleConns = 2
-	storeIdle      = time.Minute
+	storePing      = time.Minute
 )
 
 func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved func(table, id string), fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
@@ -733,7 +733,8 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	cfg.ConnConfig = base.Copy()
 	cfg.ConnConfig.RuntimeParams["search_path"] = "archive, public"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
-	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
+	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, hubIdle
+	cfg.ShouldPing = func(_ context.Context, p pgxpool.ShouldPingParams) bool { return p.IdleDuration > storePing }
 	if fn != nil {
 		fn(cfg.ConnConfig)
 	}
@@ -769,7 +770,27 @@ func (s *pgStore) bootstrap(ctx context.Context, password string, migrate bool) 
 			return err
 		}
 	}
+	if migrate {
+		if err := s.settle(ctx); err != nil {
+			return err
+		}
+	}
 	return s.logins(ctx, true)
+}
+
+func (s *pgStore) settle(ctx context.Context) error {
+	return pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		q := generated.New(tx)
+		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL lock_timeout = '1min'", storeMigrateAccess} {
+			if _, err := tx.Exec(ctx, st); err != nil {
+				return fmt.Errorf("row policies: %w", err)
+			}
+		}
+		return q.StoreCatalog(ctx)
+	})
 }
 
 func (s *pgStore) logins(ctx context.Context, every bool) error {
@@ -871,18 +892,13 @@ func storeSplit(src string) []string {
 }
 
 func (s *pgStore) Catalog(ctx context.Context) (*Catalog, error) {
-	q := generated.New(s.sys)
-	b, err := q.Catalog(ctx)
+	r, err := generated.New(s.sys).StoredCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
-	rev, err := q.Revision(ctx)
-	if err != nil {
-		return nil, err
-	}
-	c, err := catalogParse(b)
+	c, err := catalogParse(r.Catalog)
 	if c != nil {
-		c.stamp = rev
+		c.stamp = r.Revision
 	}
 	return c, err
 }

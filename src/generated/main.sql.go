@@ -22,19 +22,38 @@ func (q *Queries) AdminIfNone(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const againDue = `-- name: AgainDue :execrows
+UPDATE archive.due d SET again = false
+WHERE d.workspace = $1 AND d.kind = $2 AND d.at = $3::timestamptz AND d.again
+`
+
+func (q *Queries) AgainDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, againDue, iD, kind, claimed)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const allDue = `-- name: AllDue :many
 SELECT workspace, kind, at FROM archive.due
 `
 
-func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
+type AllDueRow struct {
+	Workspace uuid.UUID
+	Kind      string
+	At        time.Time
+}
+
+func (q *Queries) AllDue(ctx context.Context) ([]AllDueRow, error) {
 	rows, err := q.db.Query(ctx, allDue)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ArchiveDue
+	var items []AllDueRow
 	for rows.Next() {
-		var i ArchiveDue
+		var i AllDueRow
 		if err := rows.Scan(&i.Workspace, &i.Kind, &i.At); err != nil {
 			return nil, err
 		}
@@ -119,7 +138,7 @@ func (q *Queries) Authenticate(ctx context.Context, hash string, kinds []string)
 }
 
 const claimDueFor = `-- name: ClaimDueFor :one
-UPDATE archive.due d SET at = $1::timestamptz
+UPDATE archive.due d SET at = $1::timestamptz, lease = $1::timestamptz, again = false
 WHERE d.workspace = $2 AND d.kind = $3 AND d.at <= now()
 RETURNING d.at
 `
@@ -131,14 +150,17 @@ func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID
 	return at, err
 }
 
-const clearDue = `-- name: ClearDue :exec
+const clearDue = `-- name: ClearDue :execrows
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz
+WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz AND NOT d.again
 `
 
-func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) error {
-	_, err := q.db.Exec(ctx, clearDue, iD, kind, claimed)
-	return err
+func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, clearDue, iD, kind, claimed)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const clearUnread = `-- name: ClearUnread :exec
@@ -782,8 +804,8 @@ func (q *Queries) SaveWatch(ctx context.Context, arg SaveWatchParams) error {
 }
 
 const setDue = `-- name: SetDue :execrows
-UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz
+UPDATE archive.due d SET at = $1::timestamptz, lease = NULL FROM archive.workspace w
+WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz AND NOT d.again
 `
 
 type SetDueParams struct {
@@ -837,7 +859,9 @@ func (q *Queries) SignOut(ctx context.Context, hash string) error {
 const soonDue = `-- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = $1 AND x.kind = $2)
 INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+ON CONFLICT (workspace, kind) DO UPDATE SET
+    at = CASE WHEN archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease THEN archive.due.at ELSE least(archive.due.at, EXCLUDED.at) END,
+    again = archive.due.again OR (archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed
 `
 

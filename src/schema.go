@@ -36,15 +36,15 @@ type Table struct {
 	Name        string    `json:"name"`
 	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
+	Description string    `json:"description,omitempty"`
 	Layout      string    `json:"layout,omitempty"`
 	By          string    `json:"by,omitempty"`
 	Icon        string    `json:"icon,omitempty"`
-	RLS         bool      `json:"rls"`
-	Force       bool      `json:"force"`
+	RLS         bool      `json:"rls,omitempty"`
+	Force       bool      `json:"force,omitempty"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
-	Policy      bool      `json:"policy"`
-	Object      bool      `json:"object"`
+	Policy      bool      `json:"policy,omitempty"`
+	Object      bool      `json:"object,omitempty"`
 	Partitioned bool      `json:"partitioned,omitempty"`
 	Columns     []*Column `json:"columns"`
 	meta        [][2]string
@@ -53,27 +53,27 @@ type Table struct {
 
 type Column struct {
 	Name        string `json:"name"`
-	Description string `json:"description"`
+	Description string `json:"description,omitempty"`
 	Type        string `json:"type"`
 	Schema      string `json:"schema"`
 	Reg         string `json:"reg"`
-	List        bool   `json:"list"`
-	NotNull     bool   `json:"not_null"`
-	Default     bool   `json:"default"`
-	Generated   bool   `json:"generated"`
-	PK          bool   `json:"pk"`
-	Ref         string `json:"ref"`
+	List        bool   `json:"list,omitempty"`
+	NotNull     bool   `json:"not_null,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+	Generated   bool   `json:"generated,omitempty"`
+	PK          bool   `json:"pk,omitempty"`
+	Ref         string `json:"ref,omitempty"`
 }
 
 type PgType struct {
 	Name        string    `json:"name"`
 	Schema      string    `json:"schema"`
 	Kind        string    `json:"kind"`
-	Description string    `json:"description"`
-	Base        string    `json:"base"`
-	BaseSchema  string    `json:"base_schema"`
-	Enum        []string  `json:"enum"`
-	Attrs       []*Column `json:"attrs"`
+	Description string    `json:"description,omitempty"`
+	Base        string    `json:"base,omitempty"`
+	BaseSchema  string    `json:"base_schema,omitempty"`
+	Enum        []string  `json:"enum,omitempty"`
+	Attrs       []*Column `json:"attrs,omitempty"`
 }
 
 type Hints struct {
@@ -249,11 +249,11 @@ var catalogLayouts = []string{"table", "board", "calendar", "list", "map", "gall
 
 var (
 	catalogSystem   = map[string]bool{"id": true, "created_at": true, "updated_at": true}
-	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true, "types": true,
+	catalogReserved = map[string]bool{"boot": true, "files": true, "views": true, "search": true, "schema": true,
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
 		"business": true, "agreement": true, "billing": true,
-		"docs": true, "terms": true, "work": true, "agent_list": true, "workflow_list": true}
+		"docs": true, "work": true, "agent_list": true, "workflow_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )
@@ -380,7 +380,7 @@ func (c *Catalog) Check() error {
 			}
 		}
 		if !t.RLS || !t.Force || !t.Policy {
-			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, CREATE POLICY access ON "+name+" USING (archive.can(access)) WITH CHECK (archive.can(access))")
+			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, which Archive adds when a table has none: CREATE POLICY access ON "+name+" USING ("+schemaAccess+") WITH CHECK ("+schemaAccess+")")
 		}
 		for _, col := range t.Columns {
 			if tg := col.target(); col.Ref == "" && tg != "" && c.Tables[strings.TrimPrefix(tg, "public.")] == nil {
@@ -1165,6 +1165,8 @@ func (c *Catalog) texty(schema, name string) bool {
 	return false
 }
 
+const schemaAccess = "access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])"
+
 func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[string]bool, prefix string, cols bool) ([]string, error) {
 	policed := map[string]bool{}
 	rows, err := tx.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
@@ -1238,7 +1240,7 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 			out = append(out, "ALTER TABLE "+id+" FORCE ROW LEVEL SECURITY")
 		}
 		if !policed[name] {
-			out = append(out, "CREATE POLICY access ON "+id+" USING (archive.can(access)) WITH CHECK (archive.can(access))")
+			out = append(out, "CREATE POLICY access ON "+id+" USING ("+schemaAccess+") WITH CHECK ("+schemaAccess+")")
 		}
 	}
 	if cols {
@@ -1411,6 +1413,22 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	}
 	return syncCheckSQL(ctx, conn)
 }
+
+const storeMigrateAccess = `DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN SELECT c.oid::regclass AS ident, c.relowner::regrole AS owner FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        WHERE c.relnamespace = 'public'::regnamespace AND p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+          AND regexp_replace(pg_catalog.pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
+          AND regexp_replace(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)'
+          AND EXISTS (SELECT FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+              WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND a.attname = 'access') LOOP
+        EXECUTE format('SET LOCAL ROLE %s', r.owner);
+        EXECUTE format('ALTER POLICY access ON %s USING (%s) WITH CHECK (%s)', r.ident, '` + schemaAccess + `', '` + schemaAccess + `');
+        SET LOCAL ROLE NONE;
+    END LOOP;
+END $$`
 
 const storeMigrateAs = `DO $$
 BEGIN

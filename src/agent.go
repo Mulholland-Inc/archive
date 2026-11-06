@@ -58,37 +58,73 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 	return err
 }
 
-func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
-	out := map[string]any{}
-	err := a.as(ctx, func(ctx context.Context) error {
-		for key, typ := range map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"} {
-			rows, err := a.List(ctx, typ, nil, 1000, uuid.Nil, false)
-			if err != nil {
-				return err
-			}
-			out[key] = rows
+var bootLists = map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"}
+
+func (a *Archive) boot(ctx context.Context, only string) (map[string]any, error) {
+	want := map[string]bool{}
+	for _, k := range strings.Split(only, ",") {
+		switch {
+		case k == "":
+		case k == "me" || k == "types" || k == "signup" || k == "live" || bootLists[k] != "":
+			want[k] = true
+		default:
+			return nil, fmt.Errorf("only: no %q; want me, agents, workflows, members, types, signup or live: %w", k, httpErrBadRequest)
 		}
-		var err error
-		out["signup"], err = a.signup(ctx, func(r map[string]any) error { return nil })
-		return err
-	})
+	}
+	all := len(want) == 0
+	lists := []string{}
+	for key := range bootLists {
+		if all || want[key] {
+			lists = append(lists, key)
+		}
+	}
+	out := map[string]any{}
+	var err error
+	if len(lists) > 0 || all {
+		err = a.as(ctx, func(ctx context.Context) error {
+			for _, key := range lists {
+				rows, err := a.List(ctx, bootLists[key], nil, 1000, uuid.Nil, false)
+				if err != nil {
+					return err
+				}
+				out[key] = rows
+			}
+			if !all {
+				return nil
+			}
+			var err error
+			out["signup"], err = a.signup(ctx, func(r map[string]any) error { return nil })
+			return err
+		})
+	}
+	if err == nil && want["signup"] {
+		out["signup"], err = a.onboarding(ctx)
+	}
+	if err == nil && (all || want["me"]) {
+		out["me"], err = a.me(ctx)
+	}
+	if err == nil && (all || want["types"]) {
+		out["types"], err = a.types(ctx)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if out["me"], err = a.me(ctx); err != nil {
-		return nil, err
+	if (all || want["live"]) && a.hub.live.on() {
+		out["live"] = a.hub.live.ticket(a.ws.ID.String(), ActorFrom(ctx).UserID.String())
 	}
-	out["types"], err = a.types(ctx)
-	return out, err
+	return out, nil
 }
 
 func (a *Archive) types(ctx context.Context) (map[string]any, error) {
-	schema, err := a.Schema(ctx, "")
-	if err != nil {
+	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
 	cat := a.Catalog()
-	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": schema}, nil
+	ddl, err := a.st.Schema(ctx, cat.stamp)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"tables": cat.Tables, "types": cat.Types, "connectors": a.connectors(), "schema": ddl}, nil
 }
 
 func (a *Archive) turnCreate(ctx context.Context, agent, member uuid.UUID, text string, first agentMessage) (uuid.UUID, error) {
@@ -154,7 +190,7 @@ func (a *Archive) turn(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, http.StatusNoContent, nil, a.ClearTurns(r.Context(), body.Agent))
 		return
 	}
-	key := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	key := strings.TrimSpace(secretEnv("ANTHROPIC_API_KEY"))
 	if key == "" {
 		httpWrite(w, http.StatusServiceUnavailable, map[string]string{"error": "the agent needs ANTHROPIC_API_KEY set on the server"}, nil)
 		return
@@ -969,7 +1005,7 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 			}
 		}
 	}
-	key := strings.TrimSpace(os.Getenv("ARCHIVE_EMAIL"))
+	key := strings.TrimSpace(secretEnv("ARCHIVE_EMAIL"))
 	if key == "" {
 		return nil, fmt.Errorf("this server does not send email: ARCHIVE_EMAIL is not set: %w", ErrForbidden)
 	}
@@ -1044,7 +1080,7 @@ func emailPost(ctx context.Context, key, from, name, to, subject, text string) (
 }
 
 func (h *Hub) emailHTTP(w http.ResponseWriter, r *http.Request) {
-	key := strings.TrimSpace(os.Getenv("ARCHIVE_EMAIL_KEY"))
+	key := strings.TrimSpace(secretEnv("ARCHIVE_EMAIL_KEY"))
 	if key == "" {
 		http.NotFound(w, r)
 		return

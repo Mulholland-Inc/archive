@@ -53,6 +53,7 @@ type Actor struct {
 	Role      string    `json:"-"`
 	UserRole  string    `json:"-"`
 	member    uuid.UUID
+	entry     generated.MemberEntryRow
 	scoped    bool
 }
 
@@ -198,12 +199,9 @@ func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberE
 
 func (a *Archive) me(ctx context.Context) (map[string]any, error) {
 	ac := ActorFrom(ctx)
-	m, err := a.memberOf(ctx, ac.Email)
-	if err != nil {
-		return nil, err
-	}
+	role := ac.entry.Role
 	if ac.Role != ac.UserRole {
-		m.Role = "viewer"
+		role = "viewer"
 	}
 	rows, err := a.hub.q().UserWorkspaces(ctx, ac.UserID)
 	if err != nil {
@@ -221,7 +219,7 @@ func (a *Archive) me(ctx context.Context) (map[string]any, error) {
 			all = append(all, w)
 		}
 	}
-	return map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
+	return map[string]any{"actor": ac, "role": role, "group": ac.entry.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {
@@ -624,7 +622,7 @@ func newSignin(h *Hub) (*signin, error) {
 	}
 	for _, c := range signinBuiltin {
 		env := "ARCHIVE_" + strings.ToUpper(c.ID)
-		raw := strings.TrimSpace(os.Getenv(env))
+		raw := strings.TrimSpace(secretEnv(env))
 		if raw == "" {
 			continue
 		}
@@ -720,9 +718,6 @@ func (s *signin) handler() http.Handler {
 		s.setSession(w, secret)
 		u, err := userBy(r.Context(), h, (*generated.Queries).UserByID, t.UserID)
 		return ok(map[string]*User{"user": u}, err)
-	})
-	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).me(r.Context()))
 	})
 	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)
@@ -1376,7 +1371,7 @@ func signinNext(next string) string {
 }
 
 func secretLoadKey(dir string) ([]byte, error) {
-	if s := strings.TrimSpace(os.Getenv("ARCHIVE_SECRET_KEY")); s != "" {
+	if s := strings.TrimSpace(secretEnv("ARCHIVE_SECRET_KEY")); s != "" {
 		for _, dec := range []func(string) ([]byte, error){hex.DecodeString, base64.StdEncoding.DecodeString, base64.RawURLEncoding.DecodeString} {
 			if k, err := dec(s); err == nil && len(k) == 32 {
 				return k, nil

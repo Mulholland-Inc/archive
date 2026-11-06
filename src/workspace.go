@@ -132,8 +132,31 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 	return context.WithValue(ctx, archiveKey{}, a)
 }
 
+var secretEnvs = map[string]string{}
+
+func secretsLoad() error {
+	raw := strings.TrimSpace(os.Getenv("ARCHIVE_ENV"))
+	if raw == "" {
+		return nil
+	}
+	if json.Unmarshal([]byte(raw), &secretEnvs) != nil {
+		return errors.New("ARCHIVE_ENV: want a JSON object of secret names and their values")
+	}
+	return nil
+}
+
+func secretEnv(name string) string {
+	if v, ok := secretEnvs[name]; ok {
+		return v
+	}
+	return os.Getenv(name)
+}
+
 func Open(ctx context.Context) (*Hub, error) {
-	return openHub(ctx, os.Getenv("DATABASE_URL"), "./data")
+	if err := secretsLoad(); err != nil {
+		return nil, err
+	}
+	return openHub(ctx, secretEnv("DATABASE_URL"), "./data")
 }
 
 func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
@@ -160,7 +183,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	conns, err := connect.Load(os.Getenv)
+	conns, err := connect.Load(secretEnv)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +191,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
-	h.live = newLive(h.api)
+	h.live = newLive(h.api, key)
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
@@ -683,10 +706,12 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls, blobs or opens: %w", httpErrBadRequest))
 		return
 	}
+	start := time.Now()
 	err := h.work(r.Context(), body.Workspace, kind)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s %s: %v\n", body.Workspace, body.Work, err)
 	}
+	fmt.Fprintf(os.Stderr, "archive: tasks kind=%s workspace=%s ms=%d\n", kind, body.Workspace, time.Since(start).Milliseconds())
 	httpWrite(w, http.StatusNoContent, nil, err)
 }
 
@@ -711,7 +736,7 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if at, err = q.DueAt(ctx, ws, kind); err == nil && at.After(time.Now()) {
+	if at, err = q.DueAt(ctx, ws, kind); err == nil {
 		return h.wakeClaimed(ctx, ws, kind, at)
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -762,7 +787,8 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 	bg := context.WithoutCancel(ctx)
 	a, release, err := h.acquire(ctx, ws.String())
 	if errors.Is(err, ErrNotFound) {
-		return h.q().ClearDue(bg, ws, kind, claimed)
+		_, err = h.q().ClearDue(bg, ws, kind, claimed)
+		return err
 	}
 	if err != nil {
 		return err
@@ -791,18 +817,30 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 			break
 		}
 	}
-	next, err := a.nextDue(bg, kind)
-	if err != nil {
-		return err
+	for {
+		next, err := a.nextDue(bg, kind)
+		if err != nil {
+			return err
+		}
+		var n int64
+		if next == nil {
+			n, err = h.q().ClearDue(bg, ws, kind, claimed)
+		} else {
+			n, err = h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: ws, Kind: kind, Claimed: claimed})
+		}
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			if next == nil {
+				return nil
+			}
+			return h.wake(bg, ws, kind, *next)
+		}
+		if n, err = h.q().AgainDue(bg, ws, kind, claimed); err != nil || n == 0 {
+			return err
+		}
 	}
-	if next == nil {
-		return h.q().ClearDue(bg, ws, kind, claimed)
-	}
-	n, err := h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: ws, Kind: kind, Claimed: claimed})
-	if err != nil || n == 0 {
-		return err
-	}
-	return h.wake(bg, ws, kind, *next)
 }
 
 func (h *Hub) secret(r *http.Request) (string, error) {
@@ -900,7 +938,7 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		return nil, nil, nil, err
 	}
 	role := a.roleID("u", m.ID)
-	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID}
+	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID, entry: m}
 	ac.scoped = t.Workspace != ""
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
@@ -1516,7 +1554,7 @@ func (a *Archive) onboarding(ctx context.Context) (any, error) {
 type stripeAPI struct{ base, secret, publishable string }
 
 func stripeEnv() (*stripeAPI, error) {
-	raw := strings.TrimSpace(os.Getenv("ARCHIVE_STRIPE"))
+	raw := strings.TrimSpace(secretEnv("ARCHIVE_STRIPE"))
 	if raw == "" {
 		return nil, fmt.Errorf("this server does not link cards: ARCHIVE_STRIPE is not set: %w", ErrForbidden)
 	}

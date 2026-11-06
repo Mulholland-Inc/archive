@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +31,7 @@ const (
 	liveSettle  = 2 * time.Second
 	liveSockets = 512
 	liveFrame   = 1024
+	liveTicket  = 5 * time.Minute
 )
 
 type liveChange struct {
@@ -49,6 +52,7 @@ type livePending struct {
 
 type liveHub struct {
 	to, key string
+	secret  []byte
 	serve   bool
 	client  *http.Client
 
@@ -61,15 +65,51 @@ type liveHub struct {
 	socks map[string]map[*liveSocket]bool
 }
 
-func newLive(api string) *liveHub {
-	l := &liveHub{key: strings.TrimSpace(os.Getenv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
+func newLive(api string, key []byte) *liveHub {
+	l := &liveHub{key: strings.TrimSpace(secretEnv("ARCHIVE_LIVE_KEY")), client: &http.Client{Timeout: 5 * time.Second},
 		pending: map[string]*livePending{}, socks: map[string]map[*liveSocket]bool{}}
 	if l.key != "" {
 		l.to = strings.TrimRight(coreEnv("ARCHIVE_LIVE_URL", api), "/") + "/live/announce"
+		l.secret = []byte(l.key)
 	} else {
 		l.serve = os.Getenv("K_REVISION") == ""
+		l.secret = secretDerive(key, "live")
 	}
 	return l
+}
+
+type liveClaims struct {
+	User      string `json:"user"`
+	Workspace string `json:"workspace"`
+	Exp       int64  `json:"exp"`
+}
+
+func (l *liveHub) sign(claims string) string {
+	m := hmac.New(sha256.New, l.secret)
+	m.Write([]byte("live ticket " + claims))
+	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
+}
+
+func (l *liveHub) ticket(ws, user string) string {
+	b, _ := json.Marshal(liveClaims{User: user, Workspace: ws, Exp: time.Now().Add(liveTicket).Unix()})
+	claims := base64.RawURLEncoding.EncodeToString(b)
+	return claims + "." + l.sign(claims)
+}
+
+func (l *liveHub) verify(ticket string) (liveClaims, error) {
+	var c liveClaims
+	claims, sig, _ := strings.Cut(ticket, ".")
+	if !hmac.Equal([]byte(sig), []byte(l.sign(claims))) {
+		return c, fmt.Errorf("want a ticket from /api/boot?only=live: %w", ErrUnauthorized)
+	}
+	b, err := base64.RawURLEncoding.DecodeString(claims)
+	if err == nil {
+		err = json.Unmarshal(b, &c)
+	}
+	if err != nil || c.Exp <= time.Now().Unix() {
+		return c, fmt.Errorf("this ticket has expired; get a new one from /api/boot?only=live: %w", ErrUnauthorized)
+	}
+	return c, nil
 }
 
 func (l *liveHub) on() bool { return l != nil && (l.serve || l.to != "") }
@@ -260,6 +300,7 @@ func (h *Hub) liveMembers(ctx context.Context, ws uuid.UUID) func() {
 type liveSocket struct {
 	c    *websocket.Conn
 	user string
+	exp  int64
 	wmu  sync.Mutex
 }
 
@@ -289,34 +330,15 @@ func (l *liveHub) relay(a liveAnnounce) {
 			s.c.Close()
 			continue
 		}
-		if len(a.Changes) > 0 {
-			s.send(frame)
+		if len(a.Changes) == 0 {
+			continue
 		}
+		if s.exp <= time.Now().Unix() {
+			s.c.Close()
+			continue
+		}
+		s.send(frame)
 	}
-}
-
-func (h *Hub) liveReader(r *http.Request) (ws, user string, err error) {
-	want := cmp.Or(r.URL.Query().Get("workspace"), r.Header.Get("Archive-Workspace"))
-	var a *Archive
-	var ac *Actor
-	var release func()
-	secret, err := h.secret(r)
-	if err == nil {
-		a, ac, release, err = h.authenticate(r.Context(), secret, want)
-	}
-	if errors.Is(err, ErrUnauthorized) && r.Header.Get("Authorization") == "" && h.local(r) {
-		a, ac, release, err = h.localUser(r.Context(), want)
-	}
-	if err != nil {
-		return "", "", err
-	}
-	release()
-	return a.ws.ID.String(), ac.UserID.String(), nil
-}
-
-func (h *Hub) liveCheckHTTP(w http.ResponseWriter, r *http.Request) {
-	ws, user, err := h.liveReader(r)
-	httpWrite(w, http.StatusOK, map[string]string{"workspace": ws, "user": user}, err)
 }
 
 func (h *Hub) liveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -328,11 +350,12 @@ func (h *Hub) liveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "this origin may not listen", http.StatusForbidden)
 		return
 	}
-	ws, user, err := h.liveReader(r)
+	t, err := h.live.verify(r.URL.Query().Get("ticket"))
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
 	}
+	ws := t.Workspace
 	h.live.smu.Lock()
 	full := len(h.live.socks[ws]) >= liveSockets
 	h.live.smu.Unlock()
@@ -344,7 +367,7 @@ func (h *Hub) liveHTTP(w http.ResponseWriter, r *http.Request) {
 		Handshake: func(*websocket.Config, *http.Request) error { return nil },
 		Handler: func(c *websocket.Conn) {
 			c.MaxPayloadBytes = liveFrame
-			s := &liveSocket{c: c, user: user}
+			s := &liveSocket{c: c, user: t.User, exp: t.Exp}
 			h.live.smu.Lock()
 			if h.live.socks[ws] == nil {
 				h.live.socks[ws] = map[*liveSocket]bool{}

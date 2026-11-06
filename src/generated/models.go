@@ -93,12 +93,6 @@ type ArchiveConnection struct {
 	Items int64
 }
 
-type ArchiveDue struct {
-	Workspace uuid.UUID
-	Kind      string
-	At        time.Time
-}
-
 type ArchiveMcpClient struct {
 	ID           uuid.UUID
 	Name         string
