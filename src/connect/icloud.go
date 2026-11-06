@@ -1,7 +1,6 @@
 package connect
 
 import (
-	"bytes"
 	"cmp"
 	"crypto/tls"
 	"errors"
@@ -20,8 +19,6 @@ import (
 	"github.com/emersion/go-ical"
 	"github.com/emersion/go-imap"
 	imapclient "github.com/emersion/go-imap/client"
-	_ "github.com/emersion/go-message/charset"
-	gomail "github.com/emersion/go-message/mail"
 	"github.com/emersion/go-vcard"
 	"github.com/emersion/go-webdav"
 	"github.com/emersion/go-webdav/caldav"
@@ -360,74 +357,40 @@ func icloudLabels(box string, flags []string) []string {
 
 func icloudMessage(c *Client, raw []byte, headOnly bool) map[string]any {
 	out := map[string]any{"attachments": []any{}, "parties": []any{}}
-	mr, err := gomail.CreateReader(bytes.NewReader(raw))
-	if err != nil && mr == nil {
+	m, err := ParseMail(raw)
+	if err != nil {
 		return out
 	}
-	h := mr.Header
-	out["subject"], _ = h.Subject()
-	if t, err := h.Date(); err == nil && !t.IsZero() {
+	out["subject"] = m.Head("Subject")
+	if t, err := m.Header.Date(); err == nil && !t.IsZero() {
 		out["sent"] = t.UTC().Format(time.RFC3339)
 	}
-	id, _ := h.MessageID()
-	out["messageId"] = id
-	thread := id
-	if refs, _ := h.MsgIDList("References"); len(refs) > 0 {
-		thread = refs[0]
-	} else if irt, _ := h.MsgIDList("In-Reply-To"); len(irt) > 0 {
-		thread = irt[0]
-	}
-	out["threadId"] = thread
-	parties := []any{}
-	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
-		as, _ := h.AddressList(strings.ReplaceAll(role, "_", "-"))
-		for _, a := range as {
-			parties = append(parties, map[string]any{"role": role, "name": a.Name, "address": a.Address})
-		}
-	}
-	out["parties"] = parties
+	out["messageId"] = m.ID()
+	out["threadId"] = m.Thread()
+	out["parties"] = m.Parties()
 	if headOnly {
 		out["text"] = "(This message is over 25 MB, so Archive kept only who it is from and to and its subject.)"
 		return out
 	}
-	var plain, html strings.Builder
 	atts := []any{}
-	for {
-		p, err := mr.NextPart()
-		if err != nil {
-			break
+	for _, p := range m.Attachments {
+		if p.Inline {
+			continue
 		}
-		switch ph := p.Header.(type) {
-		case *gomail.InlineHeader:
-			kind, _, _ := ph.ContentType()
-			b, _ := io.ReadAll(io.LimitReader(p.Body, 4*maxText))
-			switch kind {
-			case "text/plain":
-				plain.Write(b)
-			case "text/html":
-				html.Write(b)
-			}
-		case *gomail.AttachmentHeader:
-			name, _ := ph.Filename()
-			kind, _, _ := ph.ContentType()
-			if kind == "" {
-				kind = mime.TypeByExtension(path.Ext(name))
-			}
-			b, _ := io.ReadAll(io.LimitReader(p.Body, icloudFile+1))
-			a := map[string]any{"filename": name, "mimeType": kind, "size": len(b)}
-			if len(b) <= icloudFile {
-				a["text"] = bytesText(name, kind, b)
-				if fid, err := c.keep(name, b); err == nil && fid != "" {
-					a["file"] = fid
-				}
-			}
-			atts = append(atts, a)
+		kind := p.Mime
+		if kind == "" {
+			kind = mime.TypeByExtension(path.Ext(p.Name))
 		}
+		a := map[string]any{"filename": p.Name, "mimeType": kind, "size": len(p.Data)}
+		if len(p.Data) <= icloudFile {
+			a["text"] = bytesText(p.Name, kind, p.Data)
+			if fid, err := c.keep(p.Name, p.Data); err == nil && fid != "" {
+				a["file"] = fid
+			}
+		}
+		atts = append(atts, a)
 	}
-	words := plain.String()
-	if strings.TrimSpace(words) == "" {
-		words = htmlText(html.String())
-	}
+	words := m.Words()
 	out["text"] = clip(words, maxText)
 	out["snippet"] = clip(strings.Join(strings.Fields(words), " "), 200)
 	out["attachments"] = atts

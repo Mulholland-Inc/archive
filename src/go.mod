@@ -9,7 +9,6 @@ require (
 	github.com/dop251/goja v0.0.0-20261026132650-6b6a90e51946
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-imap v1.2.1
-	github.com/emersion/go-message v0.18.2
 	github.com/emersion/go-vcard v0.1.0
 	github.com/emersion/go-webdav v0.7.0
 	github.com/evanw/esbuild v0.28.2

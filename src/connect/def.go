@@ -2752,7 +2752,7 @@ var (
 		}
 		return string(b), nil
 	}}
-	Words        = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
+	Words        = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
 	SQLReads     = &Codec{"sql_reads", sqlReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
@@ -2971,7 +2971,7 @@ func mimeWords(v any) (any, error) {
 	m := mimeRead(v, true)
 	words := m["text"].(string)
 	if words == "" {
-		words = htmlText(m["html"].(string))
+		words = HTMLText(m["html"].(string))
 	}
 	m["text"] = clip(words, maxText)
 	delete(m, "html")

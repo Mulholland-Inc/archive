@@ -13,9 +13,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"mime"
-	"mime/multipart"
-	"mime/quotedprintable"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -26,11 +23,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/net/html/charset"
 )
 
 const (
@@ -1113,31 +1110,19 @@ func (h *Hub) emailHTTP(w http.ResponseWriter, r *http.Request) {
 
 func emailParse(raw []byte, envelope string) (generated.ReceiveParams, error) {
 	var in generated.ReceiveParams
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	m, err := connect.ParseMail(raw)
 	if err != nil {
 		return in, err
 	}
-	dec := &mime.WordDecoder{CharsetReader: charset.NewReaderLabel}
-	subject, err := dec.DecodeHeader(msg.Header.Get("Subject"))
-	if err != nil {
-		subject = msg.Header.Get("Subject")
-	}
-	in.Name = cmp.Or(emailClean(subject, 998), "No subject")
+	in.Name = cmp.Or(emailClean(m.Head("Subject"), 998), "No subject")
 	in.Sender = emailClean(envelope, 320)
-	parser := mail.AddressParser{WordDecoder: dec}
-	if from, err := parser.Parse(msg.Header.Get("From")); err == nil {
-		in.Sender = emailClean(from.Address, 320)
+	if from := m.Addresses("From"); len(from) > 0 {
+		in.Sender = emailClean(from[0].Address, 320)
 	}
-	if at, err := msg.Header.Date(); err == nil {
+	if at, err := m.Header.Date(); err == nil {
 		in.SentAt = &at
 	}
-	var plain, rich []byte
-	emailBody(msg.Header, msg.Body, 0, &plain, &rich)
-	if len(bytes.TrimSpace(plain)) == 0 {
-		in.Text = emailClean(mediaHTML(rich), emailKept)
-	} else {
-		in.Text = emailClean(string(plain), emailKept)
-	}
+	in.Text = emailClean(m.Words(), emailKept)
 	return in, nil
 }
 
@@ -1146,45 +1131,4 @@ func emailClean(s string, most int) string {
 		s = s[:most]
 	}
 	return strings.TrimSpace(strings.ReplaceAll(strings.ToValidUTF8(s, ""), "\x00", ""))
-}
-
-func emailBody(h interface{ Get(string) string }, body io.Reader, depth int, plain, rich *[]byte) {
-	kind, params, err := mime.ParseMediaType(h.Get("Content-Type"))
-	if err != nil {
-		kind, params = "text/plain", nil
-	}
-	disposition, _, _ := mime.ParseMediaType(h.Get("Content-Disposition"))
-	var dst *[]byte
-	switch {
-	case disposition == "attachment" || depth > 8:
-		return
-	case strings.HasPrefix(kind, "multipart/") && params["boundary"] != "":
-		parts := multipart.NewReader(body, params["boundary"])
-		for {
-			p, err := parts.NextRawPart()
-			if err != nil {
-				return
-			}
-			emailBody(p.Header, p, depth+1, plain, rich)
-		}
-	case kind == "text/plain" && len(*plain) == 0:
-		dst = plain
-	case kind == "text/html" && len(*rich) == 0:
-		dst = rich
-	default:
-		return
-	}
-	var r io.Reader = body
-	switch strings.ToLower(strings.TrimSpace(h.Get("Content-Transfer-Encoding"))) {
-	case "base64":
-		r = base64.NewDecoder(base64.StdEncoding, r)
-	case "quoted-printable":
-		r = quotedprintable.NewReader(r)
-	}
-	if label := params["charset"]; label != "" {
-		if c, err := charset.NewReaderLabel(label, r); err == nil {
-			r = c
-		}
-	}
-	*dst, _ = io.ReadAll(io.LimitReader(r, emailRaw))
 }

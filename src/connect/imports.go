@@ -1016,120 +1016,101 @@ func importMbox(x *importRun, m *importMember, r io.Reader, from int64) error {
 }
 
 func importMail(raw []byte) map[string]any {
-	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	m, err := ParseMail(raw)
 	if err != nil {
 		return nil
 	}
-	h := msg.Header
-	dec := &mime.WordDecoder{CharsetReader: charset.NewReaderLabel}
-	word := func(s string) string {
-		if d, err := dec.DecodeHeader(s); err == nil {
-			return strings.TrimSpace(d)
-		}
-		return strings.TrimSpace(s)
-	}
-	id := strings.Trim(strings.TrimSpace(h.Get("Message-Id")), "<>")
+	id := m.ID()
 	if id == "" {
 		id = importID(string(raw[:min(len(raw), 64<<10)]))
 	}
-	rec := map[string]any{"id": id, "subject": word(h.Get("Subject"))}
-	if t, err := h.Date(); err == nil {
+	rec := map[string]any{"id": id, "subject": m.Head("Subject")}
+	if t, err := m.Header.Date(); err == nil {
 		rec["sent"] = t.UTC().Format(time.RFC3339)
 	}
-	thread := strings.TrimSpace(h.Get("X-Gm-Thrid"))
-	if thread == "" {
-		if refs := strings.Fields(h.Get("References")); len(refs) > 0 {
-			thread = strings.Trim(refs[0], "<>")
-		} else if irt := strings.Trim(strings.TrimSpace(h.Get("In-Reply-To")), "<>"); irt != "" {
-			thread = irt
-		} else {
-			thread = id
-		}
-	}
-	rec["thread"] = thread
-	if l := h.Get("X-Gmail-Labels"); l != "" {
+	rec["thread"] = cmp.Or(strings.TrimSpace(m.Header.Get("X-Gm-Thrid")), m.Thread(), id)
+	if l := m.Head("X-Gmail-Labels"); l != "" {
 		var labels []string
-		for _, s := range strings.Split(word(l), ",") {
+		for _, s := range strings.Split(l, ",") {
 			if s = strings.TrimSpace(s); s != "" {
 				labels = append(labels, s)
 			}
 		}
 		rec["labels"] = labels
 	}
-	parties := []map[string]any{}
-	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
-		v := h.Get(strings.ReplaceAll(role, "_", "-"))
-		if v == "" {
-			continue
-		}
-		addrs, err := (&mail.AddressParser{WordDecoder: dec}).ParseList(v)
-		if err != nil {
-			for _, part := range strings.Split(v, ",") {
-				if a, err := (&mail.AddressParser{WordDecoder: dec}).Parse(part); err == nil {
-					addrs = append(addrs, a)
-				}
+	rec["parties"] = m.Parties()
+	files := []map[string]any{}
+	for _, a := range m.Attachments {
+		f := map[string]any{"filename": a.Name, "mime": a.Mime, "size": len(a.Data)}
+		if len(a.Data) <= importWords && Extract != nil {
+			if t := Extract(a.Name, a.Mime, a.Data); t != "" {
+				f["text"] = clip(t, importText)
 			}
 		}
-		for _, a := range addrs {
-			parties = append(parties, map[string]any{"role": role, "name": a.Name, "address": strings.ToLower(a.Address)})
-		}
+		files = append(files, f)
 	}
-	rec["parties"] = parties
-	parts := &importParts{files: []map[string]any{}}
-	importWalk(h, msg.Body, parts, 0)
-	body := parts.text
-	if strings.TrimSpace(body) == "" && parts.html != "" {
-		body = htmlText(parts.html)
-	}
+	body := m.Words()
 	rec["text"] = clip(body, importText)
 	rec["snippet"] = clip(strings.Join(strings.Fields(body), " "), 200)
-	rec["attachments"] = parts.files
+	rec["attachments"] = files
 	return rec
 }
 
-type importParts struct {
-	text, html string
-	files      []map[string]any
+// Mail is a message as one RFC 5322 reader sees it, for whichever way it came: pushed to an agent, in a mailbox or in an export.
+type Mail struct {
+	Header      mail.Header
+	Text, HTML  string
+	Attachments []MailPart
 }
 
-type importHeader interface{ Get(string) string }
+// MailPart is a file of a message; Inline when the message shows it in place, like a logo.
+type MailPart struct {
+	Name, Mime string
+	Inline     bool
+	Data       []byte
+}
 
-func importWalk(h importHeader, body io.Reader, out *importParts, depth int) {
+// ParseMail reads a message or only its header. A part it cannot decode keeps what it could read, and an unknown charset its bytes.
+func ParseMail(raw []byte) (*Mail, error) {
+	msg, err := mail.ReadMessage(bytes.NewReader(raw))
+	if errors.Is(err, io.EOF) {
+		msg, err = mail.ReadMessage(io.MultiReader(bytes.NewReader(raw), strings.NewReader("\r\n\r\n")))
+	}
+	if err != nil {
+		return nil, err
+	}
+	m := &Mail{Header: msg.Header}
+	m.walk(msg.Header, msg.Body, 0)
+	return m, nil
+}
+
+func (m *Mail) walk(h interface{ Get(string) string }, body io.Reader, depth int) {
 	ct := h.Get("Content-Type")
 	mt, params, err := mime.ParseMediaType(ct)
 	if err != nil || ct == "" {
 		mt, params = "text/plain", map[string]string{}
 	}
 	if strings.HasPrefix(mt, "multipart/") && depth < 8 {
-		mr := multipart.NewReader(body, params["boundary"])
+		parts := multipart.NewReader(body, params["boundary"])
 		for {
-			p, err := mr.NextRawPart()
+			p, err := parts.NextRawPart()
 			if err != nil {
 				return
 			}
-			importWalk(p.Header, p, out, depth+1)
+			m.walk(p.Header, p, depth+1)
 		}
 	}
-	switch strings.ToLower(h.Get("Content-Transfer-Encoding")) {
+	switch strings.ToLower(strings.TrimSpace(h.Get("Content-Transfer-Encoding"))) {
 	case "base64":
-		body = base64Lines(body)
+		body = base64.NewDecoder(base64.StdEncoding, body)
 	case "quoted-printable":
 		body = quotedprintable.NewReader(body)
 	}
 	disp, dparams, _ := mime.ParseMediaType(h.Get("Content-Disposition"))
 	name := cmp.Or(dparams["filename"], params["name"])
 	if name != "" || disp == "attachment" || !strings.HasPrefix(mt, "text/") && mt != "message/rfc822" {
-		b, _ := io.ReadAll(io.LimitReader(body, importWords+1))
-		f := map[string]any{"filename": name, "mime": mt, "size": len(b)}
-		if len(b) <= importWords && Extract != nil {
-			if t := Extract(name, mt, b); t != "" {
-				f["text"] = clip(t, importText)
-			}
-		}
-		if n, _ := io.Copy(io.Discard, body); n > 0 {
-			f["size"] = int64(len(b)) + n
-		}
-		out.files = append(out.files, f)
+		b, _ := io.ReadAll(body)
+		m.Attachments = append(m.Attachments, MailPart{Name: name, Mime: mt, Inline: disp != "attachment", Data: b})
 		return
 	}
 	if cs := params["charset"]; cs != "" && !strings.EqualFold(cs, "utf-8") && !strings.EqualFold(cs, "us-ascii") {
@@ -1137,17 +1118,73 @@ func importWalk(h importHeader, body io.Reader, out *importParts, depth int) {
 			body = r
 		}
 	}
-	b, _ := io.ReadAll(io.LimitReader(body, 4<<20))
-	switch {
-	case mt == "text/html" && out.html == "":
-		out.html = string(b)
-	case mt == "text/plain" && out.text == "":
-		out.text = string(b)
+	b, _ := io.ReadAll(body)
+	switch mt {
+	case "text/html":
+		m.HTML = strings.TrimPrefix(m.HTML+"\n"+string(b), "\n")
+	case "text/plain":
+		m.Text = strings.TrimPrefix(m.Text+"\n"+string(b), "\n")
 	}
 }
 
-// base64Lines decodes base64 broken into lines, as mail sends it.
-func base64Lines(r io.Reader) io.Reader { return base64.NewDecoder(base64.StdEncoding, r) }
+// Words is what the message says: its text, or the words of its HTML when it has none.
+func (m *Mail) Words() string {
+	if strings.TrimSpace(m.Text) != "" {
+		return m.Text
+	}
+	return HTMLText(m.HTML)
+}
+
+var mailWord = &mime.WordDecoder{CharsetReader: charset.NewReaderLabel}
+
+// Head is a header with its encoded words decoded.
+func (m *Mail) Head(key string) string {
+	s := m.Header.Get(key)
+	if d, err := mailWord.DecodeHeader(s); err == nil {
+		s = d
+	}
+	return strings.TrimSpace(s)
+}
+
+// ID is its Message-Id without the brackets.
+func (m *Mail) ID() string { return strings.Trim(strings.TrimSpace(m.Header.Get("Message-Id")), "<>") }
+
+// Thread is the id of the message its conversation began with, its own when it began one.
+func (m *Mail) Thread() string {
+	if refs := strings.Fields(m.Header.Get("References")); len(refs) > 0 {
+		return strings.Trim(refs[0], "<>")
+	}
+	return cmp.Or(strings.Trim(strings.TrimSpace(m.Header.Get("In-Reply-To")), "<>"), m.ID())
+}
+
+// Addresses reads an address header, keeping the addresses it can when the list as a whole does not parse.
+func (m *Mail) Addresses(key string) []*mail.Address {
+	v := m.Header.Get(key)
+	if v == "" {
+		return nil
+	}
+	p := &mail.AddressParser{WordDecoder: mailWord}
+	addrs, err := p.ParseList(v)
+	if err != nil {
+		for _, part := range strings.Split(v, ",") {
+			if a, err := p.Parse(part); err == nil {
+				addrs = append(addrs, a)
+			}
+		}
+	}
+	return addrs
+}
+
+// Parties is who it is from and to, as a stream's rows want them.
+func (m *Mail) Parties() []any {
+	out := []any{}
+	for _, role := range []string{"from", "to", "cc", "bcc", "reply_to"} {
+		for _, a := range m.Addresses(strings.ReplaceAll(role, "_", "-")) {
+			out = append(out, map[string]any{"role": role, "name": a.Name, "address": strings.ToLower(a.Address)})
+		}
+	}
+	return out
+}
 
 // iCalendar
 
@@ -1752,7 +1789,7 @@ func importGemini(x *importRun, m *importMember, r io.Reader, from int64) error 
 		ok := x.put(importID("gemini", t, "you"), map[string]any{"channel": "Gemini", "thread": thread, "sender": "You", "text": prompt, "at": t}, at)
 		var answer []string
 		for _, h := range listOf(v["safeHtmlItem"]) {
-			if s := htmlText(importStr(h, "html")); s != "" {
+			if s := HTMLText(importStr(h, "html")); s != "" {
 				answer = append(answer, s)
 			}
 		}
