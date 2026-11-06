@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,6 +24,18 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+var appBuild = func() string {
+	info, _ := debug.ReadBuildInfo()
+	if info != nil {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				return s.Value
+			}
+		}
+	}
+	return ""
+}()
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -164,7 +177,8 @@ func (h *Hub) cors(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", app)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			headers = "Content-Type, Archive-Workspace, Tus-Resumable, Upload-Length, Upload-Offset, Upload-Metadata"
-			w.Header().Set("Access-Control-Expose-Headers", "Location, Upload-Offset, Archive-File-Id")
+			w.Header().Set("Access-Control-Expose-Headers", "Location, Upload-Offset, Archive-File-Id, Archive-Build")
+			w.Header().Set("Archive-Build", appBuild)
 		case !h.localApp():
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}

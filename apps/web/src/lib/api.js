@@ -53,7 +53,46 @@ const clearDrafts = () => queue(() => {
   for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) store(key, '');
 });
 
-export async function send(path, { method = 'GET', body, raw, signal, headers = {}, workspace: named } = {}) {
+const BUILD = __BUILD__;
+let newer = '';
+let busy = 0;
+
+const once = (build) => {
+  if (sessionStorage.getItem('build') === build) return false;
+  sessionStorage.setItem('build', build);
+  return true;
+};
+
+export function refresh(path) {
+  if (!newer || busy || document.querySelector('dialog[open]') || !once(newer)) return false;
+  if (path) location.assign(path);
+  else location.reload();
+  return true;
+}
+
+const away = () => {
+  if (document.hidden) refresh();
+};
+
+document.addEventListener('visibilitychange', away);
+
+addEventListener('vite:preloadError', (e) => {
+  if (!BUILD || !once(BUILD)) return;
+  e.preventDefault();
+  location.reload();
+});
+
+async function hold(work) {
+  busy++;
+  try {
+    return await work();
+  } finally {
+    busy--;
+    away();
+  }
+}
+
+export function send(path, { method = 'GET', body, raw, signal, headers = {}, workspace: named } = {}) {
   const init = { method, headers: { ...headers }, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (raw !== undefined) init.body = raw;
@@ -61,10 +100,13 @@ export async function send(path, { method = 'GET', body, raw, signal, headers = 
     init.body = JSON.stringify(body);
     init.headers['Content-Type'] = 'application/json';
   }
-  return answer(await fetch(API + path, init));
+  return hold(async () => answer(await fetch(API + path, init)));
 }
 
 async function answer(r) {
+  const build = r.headers.get('Archive-Build');
+  if (BUILD && build) newer = build === BUILD ? '' : build;
+  away();
   if (r.status === 401) throw new Unauthorized('Signed out');
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));
@@ -82,16 +124,22 @@ export async function api(path, opts) {
 }
 
 export async function* turnStream(body, signal) {
-  const r = await send('/api/turn', { method: 'POST', body, signal });
-  const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
-  let buf = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += value;
-    const lines = buf.split('\n');
-    buf = lines.pop();
-    for (const line of lines) if (line) yield JSON.parse(line);
+  busy++;
+  try {
+    const r = await send('/api/turn', { method: 'POST', body, signal });
+    const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) if (line) yield JSON.parse(line);
+    }
+  } finally {
+    busy--;
+    away();
   }
 }
 
@@ -115,7 +163,9 @@ export async function upload(file, access, parent) {
 const TUS = { 'Tus-Resumable': '1.0.0' };
 const PART = 16 << 20;
 
-export async function uploadLarge(file, progress = () => {}) {
+export const uploadLarge = (file, progress = () => {}) => hold(() => tus(file, progress));
+
+async function tus(file, progress) {
   const meta = `filename ${btoa(Array.from(new TextEncoder().encode(file.name), (b) => String.fromCharCode(b)).join(''))}`;
   const made = await send('/api/file/tus', { method: 'POST', headers: { ...TUS, 'Upload-Length': String(file.size), 'Upload-Metadata': meta } });
   const done = made.headers.get('Archive-File-Id');

@@ -1,3 +1,4 @@
+import { refresh } from './api.js';
 
 function parse() {
   const path = location.pathname || '/';
@@ -55,6 +56,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function go(path) {
+  if (refresh(path)) return;
   history.pushState(null, '', path);
   sync();
 }
