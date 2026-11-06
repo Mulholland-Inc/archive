@@ -796,6 +796,8 @@ type SchemaMigration struct {
 
 type schemaTurnKey struct{}
 
+type schemaFlowKey struct{}
+
 type schemaTx struct {
 	n      int
 	cats   map[string]*Catalog
@@ -881,7 +883,8 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if out.Confirm = hex.EncodeToString(h[:]); from != "" {
 		out.Confirm = from + "." + out.Confirm
 	}
-	if confirm != "" && confirm != out.Confirm {
+	agreed, shown, _ := strings.Cut(confirm, "~")
+	if confirm != "" && agreed != out.Confirm {
 		return nil, fmt.Errorf("the schema or this migration changed since its dry run; dry-run it again for a new confirm: %w", ErrConflict)
 	}
 	run := func(what, st string) error {
@@ -970,8 +973,17 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if out.Breaks, out.Unfollowed, err = flowBreaks(ctx, sp, key, cat, t.sch.before, seen); err != nil {
 		return nil, err
 	}
+	sb, err := json.Marshal(out.Breaks)
+	if err != nil {
+		return nil, err
+	}
+	bh := sha256.Sum256(sb)
+	out.Confirm += "~" + hex.EncodeToString(bh[:])
 	if confirm == "" {
 		return out, nil
+	}
+	if flow, _ := ctx.Value(schemaFlowKey{}).(bool); flow && (len(out.Drops) > 0 || breaks && len(out.Breaks) > 0) {
+		return nil, fmt.Errorf("a saved workflow runs with nobody to agree, so it cannot delete data or stop workflows: migrate this from a plain run or a conversation: %w", ErrForbidden)
 	}
 	if len(out.Drops) > 0 && turn != "" && from == turn {
 		names := make([]string, len(out.Drops))
@@ -983,7 +995,10 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if breaks && len(out.Breaks) > 0 && turn != "" && from == turn {
 		return nil, fmt.Errorf("this migration stops %d workflows until they are saved clean: tell the person which and confirm with breaks only after they agree, in a later turn: %w", len(out.Breaks), ErrForbidden)
 	}
-	t.sch.stop = t.sch.stop || breaks
+	if breaks && len(out.Breaks) > 0 && shown != hex.EncodeToString(bh[:]) {
+		return nil, fmt.Errorf("what this migration breaks changed since its dry run; dry-run it again, show the person, and use the new confirm: %w", ErrConflict)
+	}
+	t.sch.stop = t.sch.stop || breaks && len(out.Breaks) > 0
 	sj, _ := json.Marshal(out.Statements)
 	id, err := q.DDLRevision(ctx, generated.DDLRevisionParams{Key: key, Hash: s.hash(), Author: author, Name: name, Statements: sj})
 	if err != nil {

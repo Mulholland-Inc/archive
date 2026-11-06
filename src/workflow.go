@@ -353,6 +353,9 @@ func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[strin
 				verr.Errors = append(verr.Errors, FieldError{Path: "source", Message: e.text(), Line: e.line, Column: e.col})
 			}
 		}
+		if _, sent := data["source"]; sent && old != nil && old.Broken != nil && source == old.Source {
+			bad("source", "this is the source a migration stopped, so saving it again does not start it: "+*old.Broken)
+		}
 		if err := verr.err(); err != nil {
 			return nil, err
 		}
@@ -531,7 +534,7 @@ func (a *Archive) workflowExec(ctx context.Context, w generated.ArchiveWorkflow,
 				return WorkflowRun{}, err
 			}
 		}
-		if o, t, err := a.run(WithActor(ctx, ac), w.Source, in, true); err != nil {
+		if o, t, err := a.run(context.WithValue(WithActor(ctx, ac), schemaFlowKey{}, true), w.Source, in, true); err != nil {
 			out.Error = err.Error()
 		} else {
 			out, at = o, t
@@ -575,9 +578,6 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	fail := func(err error) error {
 		_, rerr := a.workflowRecord(ctx, w.ID, "table", time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, 0)
 		return errors.Join(rerr, wait())
-	}
-	if w.Broken != nil {
-		return fail(workflowStopped(w))
 	}
 	if w.CursorAt == nil || w.CursorID == nil {
 		return fail(errors.New("this workflow has no table cursor; save it again with archive.update"))
@@ -718,6 +718,8 @@ func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 	switch {
 	case err != nil:
 		httpWrite(rw, 0, nil, err)
+	case w.Broken != nil:
+		httpWrite(rw, http.StatusServiceUnavailable, map[string]string{"error": "this workflow is stopped until it is saved clean"}, nil)
 	case rec.Error != "":
 		msg, _, _ := strings.Cut(rec.Error, "\n  at: ")
 		httpWrite(rw, http.StatusInternalServerError, map[string]string{"error": msg}, nil)

@@ -174,7 +174,7 @@ type ArchiveWorkflow struct {
 	Member *uuid.UUID
 	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
 	On json.RawMessage
-	// Why a migration stopped it, with line and column; it does not run until a save passes the checks, which clears this. Read only
+	// Why a migration stopped it, with line and column; it does not run until a save changes its source and passes the checks, which clears this. Read only
 	Broken *string
 }
 

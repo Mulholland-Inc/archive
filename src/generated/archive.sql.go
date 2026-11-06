@@ -303,7 +303,7 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 
 const claimWorkflow = `-- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = $1::timestamptz
-WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() AND w.broken IS NULL ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING id, name, access, created_at, updated_at, user_id, role, source, trigger, hook, next_at, cursor_at, cursor_id, member, "on", broken
 `
 
@@ -2569,7 +2569,7 @@ func (q *Queries) UncountedConnections(ctx context.Context) ([]UncountedConnecti
 
 const updateWorkflow = `-- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4,
-    next_at = $5, cursor_at = $6, cursor_id = $7, access = $8, broken = NULL, updated_at = now()
+    next_at = $5, cursor_at = $6, cursor_id = $7, access = $8, broken = CASE WHEN source = $2 THEN broken END, updated_at = now()
 WHERE id = $9
 `
 

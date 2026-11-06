@@ -392,7 +392,7 @@ COMMENT ON COLUMN archive.workflow.source IS 'Its TypeScript, written like a run
 COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run';
 COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, who alone changes, runs or deletes it';
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
-COMMENT ON COLUMN archive.workflow.broken IS 'Why a migration stopped it, with line and column; it does not run until a save passes the checks, which clears this. Read only';
+COMMENT ON COLUMN archive.workflow.broken IS 'Why a migration stopped it, with line and column; it does not run until a save changes its source and passes the checks, which clears this. Read only';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
 CREATE TABLE archive.agent (
@@ -4461,7 +4461,7 @@ SELECT 'pull', (SELECT coalesce(f.retry_at, now()) FROM archive.file f JOIN arch
 UNION ALL
 SELECT 'blob', (SELECT min(b.at) FROM archive.blob_gone b)
 UNION ALL
-SELECT 'workflow', (SELECT min(w.next_at) FROM archive.workflow w)
+SELECT 'workflow', (SELECT min(w.next_at) FROM archive.workflow w WHERE w.broken IS NULL)
 UNION ALL
 SELECT 'file', CASE WHEN EXISTS (SELECT FROM archive.file f WHERE f.status = 'pending' AND f.connection IS NULL) THEN now() + interval '10 seconds' END;
 
@@ -4797,7 +4797,7 @@ RETURNING id;
 
 -- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = sqlc.arg(name), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger),
-    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), broken = NULL, updated_at = now()
+    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), broken = CASE WHEN source = sqlc.arg(source) THEN broken END, updated_at = now()
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteWorkflow :execrows
@@ -4805,7 +4805,7 @@ DELETE FROM archive.workflow WHERE id = $1;
 
 -- name: ClaimWorkflow :one
 UPDATE archive.workflow SET next_at = sqlc.arg(lease)::timestamptz
-WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+WHERE id = (SELECT w.id FROM archive.workflow w WHERE w.next_at <= now() AND w.broken IS NULL ORDER BY w.next_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
 
 -- name: SetWorkflowNext :exec

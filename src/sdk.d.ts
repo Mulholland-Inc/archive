@@ -41,8 +41,9 @@
  *   migrate and fix them with archive.update("workflow", id, { source }); if breaks remain, the whole run fails and nothing is saved.
  *   breaks has id only for your own workflows. Someone else's private workflow shows only its name and location: you cannot fix
  *   it, so stop it instead: archive.migrate(sql, { confirm, breaks: true }) commits and sets broken on each one until its owner
- *   saves it clean. breaks: true follows the same rule as drops: confirm it only when the people you work for agreed after you
- *   showed them, and talking with an agent it throws forbidden until a later turn. A workflow that passes rows on whole, by
+ *   saves a changed source that passes the checks; saving the same source again is refused. breaks: true follows the same rule as
+ *   drops: confirm it only when the people you work for agreed after you showed them, with the confirm from the dry run that showed
+ *   them, and talking with an agent it throws forbidden until a later turn. A saved workflow cannot drop data or use breaks. A workflow that passes rows on whole, by
  *   returning them or handing them to a helper, counts as reading every column; read the columns by name to depend on fewer.
  * - unfollowed in the report counts places in saved workflows the check could not follow, such as rows handed to a helper.
  *   Those reads are not checked: a column that is gone reads undefined.
