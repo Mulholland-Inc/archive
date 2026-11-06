@@ -104,7 +104,7 @@ export async function sendMessage(id, { text = '', attachments = [] }) {
         if (ev.description) c.description = ev.description;
         if (ev.type === 'run') c.state = 'running';
         if (ev.type === 'result') {
-          Object.assign(c, { state: 'done', logs: ev.logs ?? [], error: ev.error ?? '' });
+          Object.assign(c, { state: 'done', logs: ev.logs ?? [], result: ev.result, error: ev.error ?? '', files: ev.files });
           changed(live, ev.files);
         }
         const i = live.steps.findIndex((s) => s.id === ev.id);

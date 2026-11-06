@@ -32,6 +32,7 @@ export const app = $state({
   help: false,
   pending: null,
   muted: false,
+  developer: typeof localStorage !== 'undefined' && localStorage.getItem('archive.developer') === 'on',
   settings: { open: false, section: null, sub: null },
   apiKey: null,
   archiveKeys: {},
@@ -910,6 +911,11 @@ export function toggleSidebar() {
   }
   app.collapsed = !app.collapsed;
   localStorage.setItem('archive.sidebar', app.collapsed ? 'collapsed' : 'open');
+}
+
+export function toggleDeveloper() {
+  app.developer = !app.developer;
+  localStorage.setItem('archive.developer', app.developer ? 'on' : 'off');
 }
 
 function removeAt(list, predicate, after) {
