@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"cmp"
 	"context"
@@ -19,9 +20,10 @@ import (
 	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
-	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/fault"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
+	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/validate"
 	"golang.org/x/oauth2/google"
 )
 
@@ -72,7 +74,7 @@ var modelProviders = map[string]modelProvider{
 	"claude-": modelClaude,
 }
 
-func init() { api.DisableConfigDir() }
+func init() { model.ConfigPath = "disable" }
 
 func (r *runner) modelSDK(o *goja.Object) {
 	o.Set("model", func(call goja.FunctionCall) goja.Value { return r.promise(r.model(call)) })
@@ -189,8 +191,15 @@ func (r *runner) modelFiles(files []modelFile) ([]modelPart, error) {
 	return parts, nil
 }
 
-func modelPage(data []byte, page int) ([]byte, error) {
-	ctx, err := api.ReadValidateAndOptimize(bytes.NewReader(data), model.NewDefaultConfiguration())
+func modelPage(data []byte, page int) (out []byte, err error) {
+	defer fault.Catch(&err)
+	ctx, err := pdfcpu.Read(bytes.NewReader(data), model.NewDefaultConfiguration())
+	if err == nil {
+		err = validate.XRefTable(ctx)
+	}
+	if err == nil {
+		err = pdfcpu.OptimizeXRefTable(ctx)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("not a readable PDF: %v", err)
 	}
@@ -202,7 +211,11 @@ func modelPage(data []byte, page int) ([]byte, error) {
 		return nil, err
 	}
 	var b bytes.Buffer
-	if err := api.WriteContext(one, &b); err != nil {
+	one.Write.Writer = bufio.NewWriter(&b)
+	if err := pdfcpu.WriteContext(one); err != nil {
+		return nil, err
+	}
+	if err := one.Write.Flush(); err != nil {
 		return nil, err
 	}
 	return b.Bytes(), nil
