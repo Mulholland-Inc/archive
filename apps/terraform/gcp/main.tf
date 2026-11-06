@@ -378,6 +378,15 @@ resource "google_cloud_run_v2_service" "this" {
         }
       }
 
+      startup_probe {
+        period_seconds    = 1
+        timeout_seconds   = 1
+        failure_threshold = 240
+        tcp_socket {
+          port = 8080
+        }
+      }
+
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"
