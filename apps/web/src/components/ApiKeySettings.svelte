@@ -1,30 +1,26 @@
 <script>
   import { Eye, EyeOff, Copy, RefreshCw, Sparkles } from '@lucide/svelte';
   import SettingsPane from './SettingsPane.svelte';
-  import OwnerNotice from './OwnerNotice.svelte';
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
   import IconButton from './IconButton.svelte';
   import Button from './Button.svelte';
-  import { app, ws, archiveKey, rotateKey, isArchiveOwner, tokens, archiveApps, revokeApp } from '../lib/app.svelte.js';
+  import { app, ws, archiveKey, rotateKey, tokens, revokeApp } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
   import { apiPrompt } from '../lib/apiprompt.js';
 
-  let { scope = 'user', onback, backNarrow = true } = $props();
+  let { personal = false, onback, backNarrow = true } = $props();
 
   let shown = $state(false);
-  const archive = $derived(scope === 'archive');
-  const key = $derived(archive ? archiveKey() : app.apiKey);
-  const locked = $derived(archive && !isArchiveOwner());
+  const key = $derived(personal ? app.apiKey : archiveKey());
   const secret = $derived(key?.secret ?? '');
   const masked = $derived(secret ? `${secret.slice(0, secret.lastIndexOf('_') + 1)}${'•'.repeat(12)}${secret.slice(-4)}` : key ? `arc_${'•'.repeat(16)}` : 'No key yet');
 
-  tokens.use(() => archive && app.archive);
+  tokens.use(() => app.archive);
 
-  // The key to copy: the one there is, or, when there is none or its secret cannot be read, a new one.
   async function current() {
-    if (!secret) await rotateKey(scope);
-    return (archive ? archiveKey() : app.apiKey)?.secret ?? '';
+    if (!secret) await rotateKey(personal);
+    return (personal ? app.apiKey : archiveKey())?.secret ?? '';
   }
 
   async function copy() {
@@ -32,44 +28,43 @@
   }
 
   async function copyPrompt() {
-    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: archive ? ws() : null })).catch(() => {});
+    await navigator.clipboard?.writeText(apiPrompt({ key: await current(), archive: personal ? null : ws(), archives: app.archives })).catch(() => {});
   }
 
   const since = (t) => `Connected ${new Date(t.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
 
   async function disconnect(t) {
-    if (await confirmDialog({ title: `Disconnect ${t.name}?`, body: `It loses access to ${ws().name} right away.`, confirm: 'Disconnect' })) await revokeApp(t.id);
+    if (await confirmDialog({ title: `Disconnect ${t.name}?`, body: `It loses access to ${t.workspace_name} right away.`, confirm: 'Disconnect' })) await revokeApp(t.id);
   }
 
   async function rotate() {
     if (!key || (await confirmDialog({ title: 'Rotate this key?', body: 'The old key stops working right away.', confirm: 'Rotate' }))) {
-      await rotateKey(scope);
-      shown = archive;
+      await rotateKey(personal);
+      shown = true;
     }
   }
 </script>
 
 <SettingsPane {onback} {backNarrow}>
   <div class="page">
-    <div class="art"><Art name={archive ? 'security' : 'tokens'} /></div>
-    <Heading size="xl" wrap="normal" step>{archive ? 'Archive API key' : 'Your API key'}</Heading>
-    <p class="sub">{archive ? `Only for ${ws().name}, with your access. Copy it whenever you need it.` : 'Works across every archive you’re in, with your access. Treat it like a password.'}</p>
-    {#if locked}<div class="notice"><OwnerNotice what="the archive API key" ask="if you need it" /></div>{/if}
+    <div class="art"><Art name={personal ? 'tokens' : 'security'} /></div>
+    <Heading size="xl" wrap="normal" step>{personal ? 'Your API key' : 'Archive API key'}</Heading>
+    <p class="sub">{personal ? 'Works in every archive you’re in' : `Only for ${ws().name}`}, with your access. Copy it whenever you need it.</p>
     <div class="key">
-      <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && !locked && secret ? secret : masked}</span>
-      <IconButton icon={shown ? EyeOff : Eye} label={shown ? 'Hide key' : 'Show key'} size="sm" disabled={locked || !secret} onclick={() => (shown = !shown)} />
-      <IconButton icon={RefreshCw} label={key ? 'Rotate key' : 'Make a key'} size="sm" disabled={locked} onclick={rotate} />
-      <IconButton icon={Copy} label="Copy key" size="sm" disabled={locked} onclick={copy} />
+      <span class="value" aria-label={shown ? 'API key' : 'API key, hidden'}>{shown && secret ? secret : masked}</span>
+      <IconButton icon={shown ? EyeOff : Eye} label={shown ? 'Hide key' : 'Show key'} size="sm" disabled={!secret} onclick={() => (shown = !shown)} />
+      <IconButton icon={RefreshCw} label={key ? 'Rotate key' : 'Make a key'} size="sm" onclick={rotate} />
+      <IconButton icon={Copy} label="Copy key" size="sm" onclick={copy} />
     </div>
     <div class="setup">
-      <Button variant="primary" icon={Sparkles} disabled={locked} onclick={copyPrompt}>Copy setup prompt</Button>
+      <Button variant="primary" icon={Sparkles} onclick={copyPrompt}>Copy setup prompt</Button>
     </div>
-    {#if archive && archiveApps().length}
+    {#if personal && app.apps.length}
       <div class="apps">
         <Heading level={3} size="sm" serif={false}>Connected apps</Heading>
-        {#each archiveApps() as t (t.id)}
+        {#each app.apps as t (t.id)}
           <div class="app">
-            <span class="app-name">{t.name}<small>{since(t)}, as you</small></span>
+            <span class="app-name">{t.name}<small>{since(t)} to {t.workspace_name}, as you</small></span>
             <Button size="sm" variant="ghost" onclick={() => disconnect(t)}>Disconnect</Button>
           </div>
         {/each}
@@ -104,12 +99,6 @@
     margin-block: var(--space-2) var(--space-6);
     color: var(--color-text-secondary);
     font-size: var(--text-md);
-  }
-
-  .notice {
-    width: 100%;
-    max-width: var(--measure-sm);
-    text-align: start;
   }
 
   .key {

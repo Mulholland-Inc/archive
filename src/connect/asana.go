@@ -6,19 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Asana, read only: workspaces, projects and tasks. It reads ARCHIVE_ASANA, an app of the Asana developer
-// console distributed to any workspace, whose redirect URLs list <API>/connect/asana/callback and whose OAuth
-// permission scopes include the Scopes here; with webhooks:read, webhooks:write and webhooks:delete too, and
-// ?push=1 on the variable, it asks for those, which its pushes need. It syncs nothing until its
-// tasks have tables in archive.sql. Asana's MCP server lets no client register itself, so
-// this is its REST API. Revoking takes the client's credentials with the refresh token.
-//
-// It pushes through a webhook on each project of the account that is not archived, pushing to Archive's URL with a
-// key of the connection's, the project and a nonce, which only Asana learns. Asana creates one only once its
-// handshake, posted to that URL with X-Hook-Secret, is answered with the same header; Archive keeps that secret
-// by the key, and a push after is signed with it: X-Hook-Signature, the hex HMAC-SHA256 of the body. Asana
-// deletes a webhook that fails for a day, so the first sync a week after checks each is still there. A push
-// without events is Asana's heartbeat, and starts nothing.
 func init() {
 	Register(&Connector{
 		ID: "asana", Name: "Asana", Integration: true, Env: "ARCHIVE_ASANA", Options: "?push=1 once the app has the webhooks scopes",
@@ -66,8 +53,7 @@ func init() {
 			}),
 		},
 		Listen: &Listen{Renew: 6 * 24 * time.Hour, Lasts: 7 * 24 * time.Hour,
-			Over: &Parts{Req: Req{URL: "/workspaces", Query: asanaAll}, Items: "data", Page: asanaPage,
-				Under: &Parts{Req: Req{URL: "/projects", Query: Q{"archived": "false", "opt_fields": "name", "workspace": "{up/gid}", "limit": "100", "offset": "{page}"}}, Items: "data", Page: asanaPage, ID: "{gid}"}},
+			Over:     asanaProjects,
 			Mint:     "{conn}/{part}/{nonce}",
 			Watch:    Req{Method: POST, URL: "/webhooks", Body: Obj{"data": Obj{"resource": "{part}", "target": "{hook}"}}},
 			Resource: "{answer/data/gid}",
@@ -79,12 +65,27 @@ func init() {
 			Signs:   []Sign{{Header: "X-Hook-Signature", Kept: true, Enc: Hex, Of: "{body}"}},
 			Only:    Test{At: "events/0"},
 		},
+		Sync: []*Sync{{Name: "tasks", Gap: time.Second, Parts: asanaProjects, Req: Req{URL: "/tasks", Query: asanaTasks}, Items: "data", ID: "gid", Updated: "modified_at", Page: asanaPage,
+			Change: SinceTime{Req: Req{URL: "/tasks", Query: asanaChanged}}, Set: Obj{"project": "{in/name}"}, Restart: []int{400},
+			Doc: "Every task of each project that is not archived, completed ones too, by its gid, with its assignee, dates and description: listed whole the first time and a week after, " +
+				"100 a page and a project at a time, which deletes those gone, and in between those modified since the sync before. A task in no project, and a subtask, is not listed.",
+			To: Map{Table: "work_item",
+				Cols: map[string]SQL{"title": "data->>'name'", "type": "data->>'project'", "status": "CASE data->>'completed' WHEN 'true' THEN 'completed' ELSE 'open' END",
+					"assignee_name": "data#>>'{assignee,name}'", "starts_on": "archive.sync_day(data->>'start_on')", "due_on": "archive.sync_day(data->>'due_on')",
+					"done_on": "archive.sync_at(data->>'completed_at')::date", "description": "archive.sync_clip(data->>'notes', 65536)", "url": "data->>'permalink_url'",
+					"made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'modified_at')"},
+				People: map[string]SQL{"assignee": "data#>>'{assignee,email}'"}}}},
 	})
 }
 
 var (
-	asanaAll  = Q{"opt_fields": "name", "limit": "100", "offset": "{page}"}
-	asanaPage = Cursor{At: "next_page/offset"}
+	asanaAll      = Q{"opt_fields": "name", "limit": "100", "offset": "{page}"}
+	asanaPage     = Cursor{At: "next_page/offset"}
+	asanaProjects = &Parts{Req: Req{URL: "/workspaces", Query: asanaAll}, Items: "data", Page: asanaPage,
+		Under: &Parts{Req: Req{URL: "/projects", Query: Q{"archived": "false", "opt_fields": "name", "workspace": "{up/gid}", "limit": "100", "offset": "{page}"}}, Items: "data", Page: asanaPage, ID: "{gid}", Vals: Obj{"name": "{name}"}}}
+	asanaFields  = "name,notes,completed,completed_at,assignee.name,assignee.email,start_on,due_on,permalink_url,created_at,modified_at"
+	asanaTasks   = Q{"project": "{part}", "limit": "100", "offset": "{page}", "opt_fields": asanaFields}
+	asanaChanged = Q{"project": "{part}", "limit": "100", "offset": "{page}", "opt_fields": asanaFields, "modified_since": "{since}"}
 )
 
 type (

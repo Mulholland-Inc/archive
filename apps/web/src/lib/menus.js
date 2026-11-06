@@ -1,56 +1,70 @@
-import { Pin, PinOff, Pencil, Trash2, Plus, ExternalLink, MessageSquarePlus, Share, Download, Eye, Play, RotateCcw, Copy, UserPlus, UserMinus, Users, Ban, Settings, ArrowRightLeft } from '@lucide/svelte';
+import { Pencil, Trash2, ExternalLink, MessageSquarePlus, Download, Eye, Play, RotateCcw, Copy, Users, Settings, ArrowRightLeft, FolderInput, PackageOpen } from '@lucide/svelte';
 import { SEPARATOR } from './contextmenu.svelte.js';
-import { app, deleteGroup, groupUses, updateGroup, toggleGroup, createGroup, isArchiveOwner, ws, togglePin, removeChat, renameChat, newChat, renameFile, removeFile, downloadFile, openShare, runWorkflow, removeWorkflow, removeMember, invite, stopSharing, removeGuest, switchArchive, openArchiveSettings, deleteArchive } from './app.svelte.js';
+import { app, deleteGroup, groupUses, updateGroup, createGroup, atLeast, ws, removeAgent, askAgent, renameFile, removeFile, downloadFile, runWorkflow, removeWorkflow, removeMember, switchArchive, openSettings, deleteArchive, connectKeys } from './app.svelte.js';
 import { prompt, confirmDialog, notify } from './dialogs.svelte.js';
+import { clearAgent } from './agent.svelte.js';
 import { go } from './router.svelte.js';
 
-export async function copyText(text) {
+async function copyText(text) {
   await navigator.clipboard?.writeText(text).catch(() => {});
 }
 
-export async function renameChatPrompt(chat) {
-  const next = await prompt({ title: 'Rename chat', label: 'Title', value: chat.title });
-  if (next) renameChat(chat.id, next);
+async function deleteAgent(agent) {
+  if (await confirmDialog({ title: `Delete ${agent.name}?`, body: 'Everyone’s conversations with it go too.', confirm: 'Delete' })) removeAgent(agent.id);
 }
 
-export async function deleteChat(chat) {
-  if (await confirmDialog({ title: 'Delete this chat?', body: `“${chat.title}” will be removed.`, confirm: 'Delete' })) removeChat(chat.id);
+export async function clearConversation(agent) {
+  if (!(await confirmDialog({ title: `Clear your conversation with ${agent.name}?`, body: 'It forgets everything you said to it. Nobody else’s conversation changes.', confirm: 'Clear' }))) return;
+  try {
+    await clearAgent(agent.id);
+  } catch (e) {
+    notify({ title: 'Couldn’t clear the conversation', body: e.message });
+  }
 }
 
-export function chatItems(chat, { open = true, unpin = true, rename = () => renameChatPrompt(chat) } = {}) {
+export function agentItems(agent) {
+  if (!atLeast('manager')) return [];
   return [
-    open && { label: 'Open', icon: ExternalLink, onselect: () => go(`/chat/${chat.id}`) },
-    (!chat.pinned || unpin) && { label: chat.pinned ? 'Unpin' : 'Pin', icon: chat.pinned ? PinOff : Pin, onselect: () => togglePin(chat.id) },
-    rename && { label: 'Rename', icon: Pencil, onselect: rename },
+    { label: 'Settings', icon: Settings, onselect: () => (app.agentDialog = agent.id) },
     SEPARATOR,
-    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteChat(chat) }
+    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteAgent(agent) }
   ];
 }
 
 export function askAboutFile(file) {
-  go(`/chat/${newChat(`About ${file.name}`, { text: `What is in ${file.name}?`, attachments: [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone, real: true }] })}`);
+  go(askAgent(`What is in ${file.name}?`, [{ id: file.id, name: file.name, kind: file.kind, size: file.size, tone: file.tone }]));
 }
 
 export async function renameFilePrompt(file) {
   const name = await prompt({ title: 'Rename file', label: 'Name', value: file.name });
-  if (name) renameFile(file.id, name);
+  renameFile(file, name);
 }
 
-export function fileItems(file, { onopen } = {}) {
+// Files a service's export comes as, which the Import connector reads
+const EXPORT = /\.(zip|json|ged|gedcom|csv|txt|mbox|ics|vcf|db)$/i;
+
+export async function importFile(file) {
+  if (!file.connection && !(await confirmDialog({ title: `Import ${file.name}?`, body: 'Archive reads what is in it. The file moves under the import, so only you see it, and it goes if you disconnect the import.', confirm: 'Import' }))) return;
+  if (await connectKeys('import', { file: file.id })) go('/settings/connectors/import');
+}
+
+export function fileItems(file, { onopen, onmove, onaccess } = {}) {
   return [
     onopen && { label: 'Open', icon: Eye, onselect: () => onopen(file) },
     { label: 'Ask about this', icon: MessageSquarePlus, onselect: () => askAboutFile(file) },
     SEPARATOR,
-    { label: 'Rename', icon: Pencil, onselect: () => renameFilePrompt(file) },
-    { label: 'Share', icon: Share, onselect: () => openShare('file', file.id) },
-    { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
-    SEPARATOR,
-    { label: 'Move to trash', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
-  ];
+    !file.connection && { label: 'Rename', icon: Pencil, onselect: () => renameFilePrompt(file) },
+    !file.connection && onmove && { label: 'Move', icon: FolderInput, onselect: () => onmove(file) },
+    !file.connection && file.kind === 'folder' && onaccess && { label: 'Who sees it', icon: Users, onselect: () => onaccess(file) },
+    file.held && file.kind !== 'folder' && { label: 'Download', icon: Download, onselect: () => downloadFile(file) },
+    file.held && file.kind !== 'folder' && EXPORT.test(file.name) && { label: 'Import', icon: PackageOpen, onselect: () => importFile(file) },
+    !file.connection && SEPARATOR,
+    !file.connection && { label: 'Delete', icon: Trash2, danger: true, onselect: () => removeFile(file.id) }
+  ].filter(Boolean);
 }
 
 export function askAboutTable(table) {
-  go(`/chat/${newChat(`About ${table.name}`, { text: `What is in the ${table.name} table?` })}`);
+  go(askAgent(`What is in the ${table.name} table?`));
 }
 
 export function tableItems(table) {
@@ -58,7 +72,6 @@ export function tableItems(table) {
     { label: 'Open', icon: ExternalLink, onselect: () => go(`/database/${table.id}`) },
     { label: 'Ask about this', icon: MessageSquarePlus, onselect: () => askAboutTable(table) },
     SEPARATOR,
-    { label: 'Share', icon: Share, onselect: () => openShare('table', table.id) },
     { label: 'Copy name', icon: Copy, onselect: () => copyText(table.id) }
   ];
 }
@@ -77,40 +90,26 @@ export function workflowItems(workflow, { open = true, onrun, ondelete = () => d
     open && { label: 'Open', icon: ExternalLink, onselect: () => go(`/workflows/${workflow.id}`) },
     ...runItems(workflow.runs[0], workflow, onrun && { onrun }),
     SEPARATOR,
-    { label: 'Share', icon: Share, onselect: () => openShare('workflow', workflow.id) },
-    SEPARATOR,
     { label: 'Delete', icon: Trash2, danger: true, onselect: ondelete }
   ];
 }
 
-export function memberItems(member, { roles = [], onrole } = {}) {
+export async function removeMemberConfirm(member) {
   const invited = member.status === 'invited';
-  return [
-    { heading: 'Role' },
-    ...roles.map((r) => ({ label: r.label, checked: member.role === r.value, onselect: () => member.role !== r.value && onrole?.(member, r.value) })),
-    SEPARATOR,
-    ...memberGroupItems(member),
-    SEPARATOR,
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(member.email) },
-    SEPARATOR,
-    { label: invited ? 'Revoke invitation' : 'Remove from archive', icon: Trash2, danger: true, onselect: () => removeMember(member.id) }
-  ];
+  if (await confirmDialog({ title: invited ? `Revoke ${member.name}’s invitation?` : `Remove ${member.name}?`, body: invited ? 'The invitation stops working.' : 'They lose access to this archive.', confirm: invited ? 'Revoke' : 'Remove' })) removeMember(member.id);
 }
 
-// usesText says where a group is used, like 3 rows in invoice and 1 in file.
 export function usesText(uses) {
   return uses.map((u, i) => `${u.rows} ${i === 0 ? (u.rows === 1 ? 'row' : 'rows') + ' ' : ''}in ${u.table}`).join(', ');
 }
 
-// deleteGroupConfirm deletes group once you confirm, and only when no row's access is it: a row whose group went
-// would be seen by everyone, so Archive refuses, and this says where it is used instead.
 export async function deleteGroupConfirm(group) {
   const uses = await groupUses(group.id).catch(() => []);
   if (uses.length) {
     await notify({ title: `${group.name} is in use`, body: `It is the access of ${usesText(uses)}. Give them other access, then delete it.` });
     return false;
   }
-  const people = ws().members.filter((m) => m.groups.includes(group.id));
+  const people = ws().members.filter((m) => m.group === group.id);
   const left = people.length ? ` ${people.length === 1 ? '1 member leaves it.' : `Its ${people.length} members leave it.`}` : '';
   if (!(await confirmDialog({ title: `Delete ${group.name}?`, body: `No rows use it.${left}`, confirm: 'Delete group' }))) return false;
   return deleteGroup(group);
@@ -122,49 +121,11 @@ export async function renameGroupPrompt(group) {
 }
 
 export async function newGroupPrompt(people = []) {
-  const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'finance', confirm: 'Create' });
+  const name = await prompt({ title: 'New group', label: 'Name', placeholder: 'Finance team', confirm: 'Create' });
   return name ? createGroup({ name, people }) : null;
 }
 
-export function groupItems(group) {
-  return [
-    { label: 'Open', icon: ExternalLink, onselect: () => go(`/access/groups/${group.id}`) },
-    { label: 'Rename', icon: Pencil, onselect: () => renameGroupPrompt(group) },
-    SEPARATOR,
-    { label: 'Delete', icon: Trash2, danger: true, onselect: () => deleteGroupConfirm(group) }
-  ];
-}
-
-// memberGroupItems are the groups a member can be in, checked when they are, for an owner to toggle, and a new
-// one to make with them in it.
-export function memberGroupItems(member) {
-  if (!isArchiveOwner()) return [];
-  return [
-    { heading: 'Groups' },
-    ...ws().groups.map((g) => ({ label: g.name, checked: member.groups.includes(g.id), keepOpen: true, onselect: () => toggleGroup(member, g.id) })),
-    { label: 'New group…', icon: Plus, onselect: () => newGroupPrompt([member.id]) }
-  ];
-}
-
-export function guestItems(guest) {
-  return [
-    { label: 'Invite to archive', icon: UserPlus, onselect: () => invite({ emails: [guest.email], role: 'viewer' }) },
-    { label: 'Copy email', icon: Copy, onselect: () => copyText(guest.email) },
-    SEPARATOR,
-    { label: 'Remove all access', icon: UserMinus, danger: true, onselect: () => removeGuest(guest.email) }
-  ];
-}
-
-export function shareItems(share, item) {
-  return [
-    { label: 'Manage sharing', icon: Users, onselect: () => openShare(share.kind, share.target) },
-    item?.path && { label: 'Open', icon: ExternalLink, onselect: () => go(item.path) },
-    SEPARATOR,
-    { label: 'Stop sharing', icon: Ban, danger: true, onselect: () => stopSharing(share.id) }
-  ];
-}
-
-export async function deleteArchiveConfirm(archive) {
+async function deleteArchiveConfirm(archive) {
   if (await confirmDialog({ title: 'Delete this archive?', body: `“${archive.name}” and everything in it will be removed.`, confirm: 'Delete' })) deleteArchive(archive.id);
 }
 
@@ -177,15 +138,14 @@ export function archiveItems(archive) {
       icon: Settings,
       onselect: () => {
         switchArchive(archive.id);
-        openArchiveSettings();
+        openSettings('general');
       }
     },
-    SEPARATOR,
-    { label: 'Delete archive', icon: Trash2, danger: true, disabled: app.archives.length < 2, onselect: () => deleteArchiveConfirm(archive) }
+    ...(current && app.role === 'owner' ? [SEPARATOR, { label: 'Delete archive', icon: Trash2, danger: true, disabled: app.archives.length < 2, onselect: () => deleteArchiveConfirm(archive) }] : [])
   ];
 }
 
-export function messageText(message) {
+function messageText(message) {
   if (message.text) return message.text;
   return (message.blocks ?? []).map((b) => b.text ?? (b.items ?? []).map((i) => `- ${i}`).join('\n')).filter(Boolean).join('\n\n');
 }

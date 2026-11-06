@@ -15,7 +15,7 @@ export function tidy(items) {
   return out;
 }
 
-export function openContextMenu(items, { x, y, keyboard = false, origin = null }) {
+function openContextMenu(items, { x, y, keyboard = false, origin = null }) {
   contextMenu.items = tidy(items);
   if (!contextMenu.items.length) return false;
   Object.assign(contextMenu, { x, y, keyboard, origin, at: Date.now() });

@@ -1,10 +1,7 @@
-// The HTTP API. On app.<domain> it is api.<domain>; anywhere else (vite dev on :5173) it is the same origin,
-// which vite proxies to `archive serve` on :8080. The session is the API host's own cookie, and the current
-// workspace goes along in the Archive-Workspace header, since one API host serves every workspace.
 
 export class Unauthorized extends Error {}
 
-export const API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
+export const API = window.API;
 
 function stored(key, fallback = '') {
   try {
@@ -34,8 +31,6 @@ export function local(key, fallback) {
 
 export const setLocal = (key, value) => store(key, JSON.stringify(value));
 
-// Composer drafts, deflated and kept at one character per byte, as near to raw bytes as localStorage gets.
-// Deflating is async, so everything runs in order: coming straight back to a chat finds the last keystroke.
 
 const DRAFT = 'draft:';
 let drafts = Promise.resolve();
@@ -54,39 +49,40 @@ export const loadDraft = (id) => queue(async () => {
   return packed && new TextDecoder().decode(await pipe(Uint8Array.from(packed, (c) => c.charCodeAt(0)), new DecompressionStream('deflate-raw')));
 });
 
-export const moveDraft = (from, to) => queue(() => {
-  store(DRAFT + to, stored(DRAFT + from));
-  store(DRAFT + from, '');
-});
-
 const clearDrafts = () => queue(() => {
   for (const key of Object.keys(localStorage)) if (key.startsWith(DRAFT)) store(key, '');
 });
 
-export async function send(path, { method = 'GET', body, raw, signal, workspace: named } = {}) {
-  const init = { method, headers: {}, signal, credentials: 'include' };
+export async function send(path, { method = 'GET', body, raw, signal, headers = {}, workspace: named } = {}) {
+  const init = { method, headers: { ...headers }, signal, credentials: 'include' };
   if (named || workspace()) init.headers['Archive-Workspace'] = named || workspace();
   if (raw !== undefined) init.body = raw;
   else if (body !== undefined) {
     init.body = JSON.stringify(body);
     init.headers['Content-Type'] = 'application/json';
   }
-  const r = await fetch(API + path, init);
+  return answer(await fetch(API + path, init));
+}
+
+async function answer(r) {
   if (r.status === 401) throw new Unauthorized('Signed out');
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));
-    throw Object.assign(new Error(out.error ?? r.statusText), { status: r.status });
+    const field = out.errors?.[0];
+    throw Object.assign(new Error(out.error ?? (field ? `${field.path}: ${field.message}` : r.statusText)), { status: r.status });
   }
   return r;
 }
+
+export const firstBoot = window.boot?.then(answer).then((r) => r.json());
 
 export async function api(path, opts) {
   const r = await send(path, opts);
   return r.status === 204 ? null : r.json();
 }
 
-export async function* chatStream(body, signal) {
-  const r = await send('/api/chat', { method: 'POST', body, signal });
+export async function* turnStream(body, signal) {
+  const r = await send('/api/turn', { method: 'POST', body, signal });
   const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
   let buf = '';
   for (;;) {
@@ -105,17 +101,46 @@ export async function run(code) {
   return out.result;
 }
 
-export async function upload(file, access) {
+export async function upload(file, access, parent) {
   const form = new FormData();
   form.append('file', file);
-  return api(`/api/files${access ? `?access=${encodeURIComponent(access)}` : ''}`, { method: 'POST', raw: form });
+  const q = new URLSearchParams();
+  if (access) q.set('access', access);
+  if (parent) q.set('parent', parent);
+  return api(`/api/file${q.size ? `?${q}` : ''}`, { method: 'POST', raw: form });
 }
 
-export const fileURL = (id, part = 'content') => `${API}/api/files/${id}/${part}`;
+// Uploads a file of any size by tus, in parts small enough for one request each, and picks up where it left off
+// after a dropped connection. Resolves to the new file's id.
+const TUS = { 'Tus-Resumable': '1.0.0' };
+const PART = 16 << 20;
 
-// An <img> or a link can't send Archive-Workspace, so file bytes are fetched with it and shown from a blob.
+export async function uploadLarge(file, progress = () => {}) {
+  const meta = `filename ${btoa(Array.from(new TextEncoder().encode(file.name), (b) => String.fromCharCode(b)).join(''))}`;
+  const made = await send('/api/file/tus', { method: 'POST', headers: { ...TUS, 'Upload-Length': String(file.size), 'Upload-Metadata': meta } });
+  const done = made.headers.get('Archive-File-Id');
+  if (done) return done;
+  const at = new URL(made.headers.get('Location'), location.origin).pathname;
+  let off = 0;
+  for (let tries = 0; ; ) {
+    try {
+      const r = await send(at, { method: 'PATCH', headers: { ...TUS, 'Upload-Offset': String(off), 'Content-Type': 'application/offset+octet-stream' }, raw: file.slice(off, off + PART) });
+      off = Number(r.headers.get('Upload-Offset'));
+      progress(off / file.size);
+      const id = r.headers.get('Archive-File-Id');
+      if (id) return id;
+      tries = 0;
+    } catch (e) {
+      if (++tries > 5 || e instanceof Unauthorized) throw e;
+      await new Promise((ok) => setTimeout(ok, 1000 * 2 ** tries));
+      off = Number((await send(at, { method: 'HEAD', headers: TUS })).headers.get('Upload-Offset'));
+    }
+  }
+}
+
+export const fileURL = (id, part = 'content') => `${API}/api/file/${id}/${part}`;
+
 const blobs = new Map();
-// Drop the cached blobs whose path starts with prefix, in every workspace, for a file whose bytes moved.
 export function forgetBlobs(prefix) {
   for (const [key, p] of blobs) {
     if (!key.slice(key.indexOf(':') + 1).startsWith(prefix)) continue;
@@ -140,8 +165,8 @@ export async function signOut() {
   clearDrafts();
 }
 
-// Passkeys: one per device, discoverable, so sign-in needs no email. The app remembers per user whether it
-// asked to add one on this device, and which users have one here, so a returning device offers it first.
+
+export const said = (e) => e.message.replace(/: (bad request|busy|conflict|forbidden)$/, '');
 
 export const passkeys = typeof PublicKeyCredential !== 'undefined';
 
@@ -168,7 +193,8 @@ export async function passkeyLogin() {
       response: { clientDataJSON: text(r.clientDataJSON), authenticatorData: text(r.authenticatorData), signature: text(r.signature), userHandle: r.userHandle ? text(r.userHandle) : null }
     }
   });
-  rememberPasskey(done.user.id, 'yes');
+  if (done.user) rememberPasskey(done.user.id, 'yes');
+  return done;
 }
 
 export async function passkeyRegister(user) {

@@ -4,7 +4,7 @@
   import { fade, pop } from '../lib/motion.js';
   import { uid } from '../lib/ids.js';
 
-  let { open = $bindable(false), title, label, size = 'md', bare = false, leading, footer, children, onclose } = $props();
+  let { open = $bindable(false), title, label, size = 'md', bare = false, fit = false, footer, children, onclose } = $props();
 
   const titleId = uid('dlg');
 
@@ -44,13 +44,12 @@
       {#if title}
         <header>
           <div class="title">
-            {#if leading}{@render leading()}{/if}
             <h2 id={titleId}>{title}</h2>
           </div>
           <IconButton icon={X} label="Close" size="sm" tooltip={false} onclick={close} />
         </header>
       {/if}
-      <div class="body">{@render children({ close })}</div>
+      <div class={['body', { fit }]}>{@render children({ close })}</div>
       {#if footer}
         <footer>{@render footer({ close })}</footer>
       {/if}
@@ -97,9 +96,9 @@
   .sm { max-width: var(--dialog-sm); }
   .lg { max-width: var(--dialog-lg); }
   .tall { max-width: var(--dialog-lg); height: min(var(--type-dialog-height), calc(100vh - var(--space-12))); }
-  .tall .body { flex: 1; overflow: hidden; }
+  .tall > .body { flex: 1; overflow: hidden; }
   .xl { max-width: min(var(--dialog-xl), calc(100vw - var(--dialog-xl-margin))); height: min(var(--dialog-xl-height), calc(100vh - var(--dialog-xl-margin))); max-height: none; }
-  .xl .body { flex: 1; gap: var(--space-0); overflow: hidden; }
+  .xl > .body { flex: 1; gap: var(--space-0); overflow: hidden; }
   .palette { max-width: var(--palette-width); align-self: start; margin-block-start: var(--dialog-offset); }
 
   .bare {
@@ -141,6 +140,10 @@
     gap: var(--space-4);
     min-height: 0;
     overflow-y: auto;
+  }
+
+  .fit {
+    overflow: hidden;
   }
 
   footer {

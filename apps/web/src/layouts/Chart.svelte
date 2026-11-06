@@ -3,13 +3,8 @@
   import { fill } from './fill.js';
   import { label, money, number, day, steps } from './format.js';
 
-  // A chart: for each value of the view's by column, the total of its first money column, or failing that its
-  // first number, or else how many rows have it, as columns over a baseline, with the same totals in a table
-  // under it. A date by gives a column for each month from the first to the last, or for each day when they are
-  // all in one month; any other by a column for each of its values, largest first, past twelve folded into Other.
   let { view, rows, shown, text } = $props();
 
-  // A column's widest and the rounding of its top, in pixels, as the marks are drawn.
   const BAR = 24;
   const ROUND = 4;
   const MOST = 12;
@@ -53,7 +48,6 @@
     return kept.map(([k, value]) => ({ key: k, short: k, long: k, value }));
   });
 
-  // The axis runs from 0 to a round number past the largest total.
   const ticks = $derived(steps(0, Math.max(0, ...bars.map((b) => b.value))));
   const top = $derived(ticks.at(-1));
 
@@ -62,7 +56,6 @@
   let hovered = $state(null);
   const band = $derived(bars.length ? width / bars.length : 0);
   const thick = $derived(Math.min(BAR, band * 0.6));
-  // A column grows from the baseline, square there and rounded at its top.
   function column(i, value) {
     const h = (value / top) * height;
     const r = Math.min(ROUND, thick / 2, h);
@@ -117,7 +110,6 @@
     gap: var(--space-8);
   }
 
-  /* The axis's numbers on the left, as wide as the widest, then the plot, and under it the columns' names. */
   .chart {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
@@ -133,7 +125,6 @@
     text-align: end;
   }
 
-  /* Every number sits in the one cell, moved up from its foot to its own gridline. */
   .ticks span {
     position: relative;
     grid-area: 1 / 1;
@@ -191,7 +182,6 @@
     text-overflow: ellipsis;
   }
 
-  /* The total of the column under the cursor, over its top. */
   .tip {
     position: absolute;
     left: var(--x);
@@ -221,7 +211,6 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* The table scrolls in its own box, its header row staying at the top. */
   .table {
     min-height: 0;
   }

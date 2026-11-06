@@ -1,5 +1,4 @@
 <script>
-  // A list of ListItem rows, pulled out so each row's text lines up with the content around it.
   let { label, children } = $props();
 </script>
 

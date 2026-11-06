@@ -14,7 +14,8 @@
           "omit_unused_structs": true,
           "query_parameter_limit": 3,
           "rename": {
-            "mime": "MIME"
+            "mime": "MIME",
+            "url": "URL"
           },
           "overrides": [
             {
@@ -48,7 +49,7 @@
               "go_type": "encoding/json.RawMessage"
             },
             {
-              "column": "archive.chat.messages",
+              "column": "archive.turn.messages",
               "go_type": "encoding/json.RawMessage"
             },
             {
@@ -83,6 +84,12 @@
             },
             {
               "column": "archive.file.metadata",
+              "go_type": {
+                "type": "map[string]any"
+              }
+            },
+            {
+              "column": "archive.file.source",
               "go_type": {
                 "type": "map[string]any"
               }

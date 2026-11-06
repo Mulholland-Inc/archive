@@ -1,6 +1,3 @@
-// Maps what the API returns onto the shapes the screens were designed with (see mock/ for the made-up
-// versions). Each mapper takes one API object and returns one screen object, so a screen can move from
-// mock to real data one piece at a time.
 
 import { fileURL } from './api.js';
 
@@ -34,7 +31,6 @@ export function elapsed(ms = 0) {
   return m ? `${m}m ${String(s % 60).padStart(2, '0')}s` : `${s}s`;
 }
 
-// One cell of a row as text: money, names, addresses and the other composite types read as people write them.
 export function show(v) {
   if (v === null || v === undefined) return '';
   if (Array.isArray(v)) return v.map(show).join(', ');
@@ -54,13 +50,24 @@ export function show(v) {
 const hash = (s = '') => [...s].reduce((n, c) => (n * 31 + c.charCodeAt(0)) >>> 0, 7);
 export const tone = (s, n = 4) => (hash(s) % n) + 1;
 
-export function fileKind(mime = '', name = '') {
+function fileKind(mime = '', name = '') {
   const ext = name.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase() ?? '';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('audio/') || mime.startsWith('video/')) return 'recording';
   if (mime === 'application/pdf' || ext === 'pdf') return 'pdf';
   if (/sheet|excel|csv/.test(mime) || ['csv', 'xls', 'xlsx', 'ods', 'numbers'].includes(ext)) return 'spreadsheet';
   return 'document';
+}
+
+const arts = [
+  [/\.(pptx?|pptm|potx|key|odp)$/i, 'presentation'],
+  [/\.(mp4|m4v|mov|webm|mkv|avi)$/i, 'video'],
+  [/\.(txt|md|json|log)$/i, 'text'],
+  [/\.(docx?|odt|rtf|pages)$/i, 'document']
+];
+export function fileArt(name = '', kind) {
+  const art = kind === 'folder' ? kind : (arts.find(([re]) => re.test(name))?.[1] ?? (['image', 'recording', 'spreadsheet', 'pdf'].includes(kind) ? kind : 'file'));
+  return `/types/file-${art}.webp`;
 }
 
 function clock(seconds) {
@@ -74,33 +81,38 @@ export function toFile(f, owner = '') {
   return {
     id: f.id,
     name: f.name,
-    kind: fileKind(f.mime, f.name),
-    ext,
+    kind: f.kind === 'folder' ? 'folder' : fileKind(f.mime, f.name),
+    parent: f.parent ?? null,
+    connection: f.connection ?? null,
+    url: f.url ?? '',
+    held: f.hash !== '',
+    hash: f.hash,
+    office: /\.(docx|docm|dotx|xlsx|xlsm|xltx|pptx|pptm|potx)$/i.test(f.name),
+    error: f.error ?? '',
+    ext: f.kind === 'folder' || ext.includes('.') ? '' : ext,
+    sub: f.kind === 'folder' ? relative(f.edited_at ?? f.created_at) : f.status === 'skipped' ? 'Not copied' : f.hash === '' ? 'Copying' : undefined,
     mime: f.mime,
     bytes: f.size,
-    size: size(f.size),
+    size: f.kind === 'folder' ? '' : size(f.size),
     duration: duration ? clock(duration) : '',
-    modified: relative(f.created_at),
-    created: f.created_at,
+    modified: relative(f.edited_at ?? f.created_at),
+    created: f.edited_at ?? f.created_at,
     owner,
     folder: f.access ?? 'Everyone',
     access: f.access,
     status: f.status,
     href: fileURL(f.id),
-    path: `/api/files/${f.id}/content`,
-    thumb: f.metadata?.thumbnail ? `/api/files/${f.id}/thumbnail` : '',
+    path: `/api/file/${f.id}/content`,
+    thumb: f.metadata?.thumbnail ? `/api/file/${f.id}/thumbnail` : '',
     tone: tone(f.id)
   };
 }
 
-export const toChat = (c, pinned = false) => ({ id: c.id, title: c.title || 'Untitled', updated: relative(c.updated_at ?? c.created_at), at: c.updated_at, pinned });
-
 export function toMember(p, me) {
   const mine = me && p.email === me.email;
-  return { id: p.id, user: mine ? me.user_id : undefined, name: p.name || p.email, email: p.email, role: p.role, groups: p.groups ?? [], active: mine ? 'Now' : '', status: 'active', tone: tone(p.email, 6) };
+  return { id: p.id, user: mine ? me.user_id : undefined, name: p.name || p.email, email: p.email, role: p.role, group: p.group ?? null, active: mine ? 'Now' : '', status: 'active', tone: tone(p.email, 6) };
 }
 
-// Markdown, as the assistant writes it, to the blocks Prose renders.
 export function markdown(src = '') {
   const blocks = [];
   const lines = src.replace(/\r/g, '').split('\n');
@@ -168,7 +180,6 @@ export function markdown(src = '') {
   return blocks;
 }
 
-// A tool call the assistant made, as a step. Its description says what it does, or else the code's first comment.
 export function step(call) {
   const said = call.description?.trim() || call.code?.match(/^\s*\/\/\s*(.+)$/m)?.[1];
   const failed = call.state === 'done' && call.error;
@@ -179,7 +190,10 @@ export function step(call) {
     detail: failed ? call.error : (call.logs ?? []).slice(-1)[0] ?? '',
     status: call.state === 'done' ? (failed ? 'failed' : 'done') : 'running',
     time: '',
-    code: call.code
+    code: call.code,
+    logs: call.logs ?? [],
+    result: call.result,
+    files: call.files ?? []
   };
 }
 
@@ -187,14 +201,27 @@ function outcome(b) {
   const raw = typeof b.content === 'string' ? b.content : (b.content ?? []).map((c) => c.text ?? '').join('');
   try {
     const o = JSON.parse(raw);
-    return { logs: o.logs ?? [], error: o.error ?? '', state: 'done' };
+    return { logs: o.logs ?? [], result: o.result, error: o.error ?? '', files: o.files, state: 'done' };
   } catch {
     return { logs: [], error: b.is_error ? raw : '', state: 'done' };
   }
 }
 
-// A saved chat's messages (Anthropic's format) to the screen's messages: one user bubble per question,
-// one assistant message per answer with its tool calls as steps and its text as prose.
+const actions = ['read', 'edited', 'created'];
+export function changed(message, files) {
+  for (const f of files ?? []) {
+    const had = message.files.find((x) => x.id === f.id);
+    if (!had) message.files.push({ ...f, kind: fileKind('', f.name) });
+    else Object.assign(had, { name: f.name, action: actions[Math.max(actions.indexOf(had.action), actions.indexOf(f.action))] });
+  }
+}
+
+function attached(text) {
+  const [said, list] = text.split(/\n*^Attached from the library:\n(?=(?:- .+ \(file [\da-f-]{36}\)\n?)+$)/m);
+  if (list === undefined) return { text };
+  return { text: said, attachments: [...list.matchAll(/^- (.+) \(file ([\da-f-]{36})\)$/gm)].map(([, name, id]) => ({ id, name, kind: fileKind('', name) })) };
+}
+
 export function toMessages(messages = []) {
   const out = [];
   const calls = {};
@@ -210,7 +237,7 @@ export function toMessages(messages = []) {
       for (const b of content) if (b.type === 'tool_result' && calls[b.tool_use_id]) Object.assign(calls[b.tool_use_id], outcome(b));
       const text = content.filter((b) => b.type === 'text').map((b) => b.text).join('\n');
       if (text) {
-        out.push({ id: `m${n++}`, role: 'user', text });
+        out.push({ id: `m${n++}`, role: 'user', ...attached(text) });
         turn = null;
       }
       continue;
@@ -225,12 +252,12 @@ export function toMessages(messages = []) {
     if (m.role !== 'assistant') continue;
     m.steps = m.calls.map(step);
     m.blocks = markdown(m.text);
+    m.files = [];
+    for (const c of m.calls) changed(m, c.files);
     delete m.calls;
   }
   return out;
 }
-
-// Workflows: rows of the workflow table, each with its last run; on says when it runs.
 
 const days = { '*': 'Every day', '1-5': 'Weekdays', 'MON-FRI': 'Weekdays', '0,6': 'Weekends', '6,0': 'Weekends', 'SAT,SUN': 'Weekends', 0: 'Sundays', 7: 'Sundays', 1: 'Mondays', 2: 'Tuesdays', 3: 'Wednesdays', 4: 'Thursdays', 5: 'Fridays', 6: 'Saturdays', SUN: 'Sundays', MON: 'Mondays', TUE: 'Tuesdays', WED: 'Wednesdays', THU: 'Thursdays', FRI: 'Fridays', SAT: 'Saturdays' };
 const named = { '@hourly': ['Every hour'], '@daily': ['Every day', '0', '0'], '@midnight': ['Every day', '0', '0'], '@weekly': ['Sundays', '0', '0'], '@monthly': ['On the 1st of every month', '0', '0'], '@yearly': ['Every January 1st', '0', '0'], '@annually': ['Every January 1st', '0', '0'] };
@@ -257,7 +284,6 @@ function schedule(spec) {
   return 'On a schedule';
 }
 
-// on is { cron, tz? }, { table, events }, { webhook: true } or null.
 export function trigger(on) {
   if (!on) return { kind: 'manual', label: 'Run by hand' };
   if (on.webhook) return { kind: 'webhook', label: 'When its webhook is called' };
@@ -268,7 +294,7 @@ export function trigger(on) {
   return { kind: on.table === 'file' ? 'file' : 'table', table: on.table, label: `When ${/^[aeiou]/i.test(t) ? 'an' : 'a'} ${t} is ${what}` };
 }
 
-export const pretty = (name) => {
+const pretty = (name) => {
   const s = name.replace(/\.ts$/, '').replaceAll(/[-_]+/g, ' ');
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
@@ -300,7 +326,6 @@ export function toRun(r, number) {
   };
 }
 
-// w is a workflow row with its last run, as last.
 export function toWorkflow(w) {
   return {
     id: w.id,
