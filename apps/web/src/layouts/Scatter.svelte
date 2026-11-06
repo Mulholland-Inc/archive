@@ -3,12 +3,8 @@
   import { fill } from './fill.js';
   import { label, money, number, steps } from './format.js';
 
-  // A scatter: each row a dot, across by the view's by column and up by its first other money or number
-  // column, for comparable sales (price against square feet), deals by size and days open, and the like. A row
-  // missing either has no dot. Hovering near a dot names its row and its two values; clicking opens it.
   let { view, rows, shown, pick } = $props();
 
-  // A dot's radius, its radius under the cursor, and how near the cursor finds one, in pixels.
   const DOT = 4;
   const ON = 6;
   const REACH = 24;
@@ -39,8 +35,6 @@
   let hovered = $state(null);
   const px = (p) => share(xt, p.x) * width;
   const py = (p) => height - share(yt, p.y) * height;
-  // Every gridline is one path, so where they cross is drawn once, and the outer ones sit just inside the plot
-  // rather than half past its edges.
   const inside = (v, max) => Math.min(Math.max(v, 0.5), max - 0.5);
   const grid = $derived(
     [...xt.map((t) => `M${inside(share(xt, t) * width, width)},0V${height}`), ...yt.map((t) => `M0,${inside(height - share(yt, t) * height, height)}H${width}`)].join('')
@@ -88,8 +82,6 @@
 </div>
 
 <style>
-  /* The up axis's title over its numbers, as wide as the widest, then the plot, and under it the across
-     axis's numbers and its title, at its end. */
   .scatter {
     display: grid;
     height: var(--view-fill);
@@ -122,7 +114,6 @@
     text-align: end;
   }
 
-  /* Every number sits in the one cell, moved up from its foot to its own gridline. */
   .ticks span {
     position: relative;
     grid-area: 1 / 1;
@@ -153,14 +144,12 @@
     shape-rendering: crispEdges;
   }
 
-  /* A ring of the page round each dot keeps dots that overlap apart. */
   .dot {
     fill: var(--color-chart);
     stroke: var(--color-canvas);
     stroke-width: var(--space-0-5);
   }
 
-  /* Each number sits under its own gridline, the last ending where the plot does. */
   .labels {
     position: relative;
     grid-column: 2;
@@ -182,7 +171,6 @@
     translate: -100%;
   }
 
-  /* The row under the cursor and its two values, over its dot. */
   .tip {
     position: absolute;
     left: var(--x);

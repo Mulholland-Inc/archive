@@ -42,7 +42,7 @@ func init() {
 			{Unless: "meta/currency", As: "org", Req: Req{URL: "https://api.xero.com/api.xro/2.0/Organisation", Header: map[string][]string{"xero-tenant-id": {"{meta/tenant}"}}}},
 			{Unless: "meta/currency", As: "meta/currency", In: "{org/Organisations/0/BaseCurrency}"},
 		},
-		Sign: map[string]string{"xero-tenant-id": "{meta/tenant}"},
+		Sign: map[string]string{"Authorization": "Bearer {token}", "xero-tenant-id": "{meta/tenant}"},
 		// Xero tags every answer with this, which its support asks for.
 		Trace: "Xero-Correlation-Id",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://login.xero.com/identity/connect/authorize", TokenURL: "https://identity.xero.com/connect/token",

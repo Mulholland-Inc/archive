@@ -1,22 +1,3 @@
-// Package connect is Archive's connectors: the services a member connects their own accounts at, like their
-// Gmail, so Archive can read them for them, and the actions a script takes with those accounts.
-//
-// A connector is one file of this package, <id>.go, that declares a Connector, only data, and adds it with Register
-// in its init, for the engine in def.go to run. Nothing else names it. It speaks one of three protocols, and a member
-// never sees which:
-//   - An API connector names the environment variable that holds its OAuth client, its endpoints and scopes,
-//     and its Actions over the provider's API. Load reads every connector's variable, and one
-//     whose variable is unset is unavailable: listed, but not offered.
-//   - An MCP connector names only its MCP server. Its OAuth client is Archive's own, which Discover and
-//     Register get from the server's authorization server the first time anyone connects (below), and the
-//     caller keeps; its actions are the server's tools.
-//   - A key connector has no sign-in: a person pastes in what the service gave them, like an API key and the
-//     address of their store, as its Keys say (keys.go). Its Authorize puts them on each request.
-//
-// Connecting is OAuth's authorization code flow with PKCE. AuthURL sends the browser to the provider with a
-// State sealed by SealState; Exchange trades the code it comes back with for a Grant, the account and its
-// refresh token, which the caller keeps sealed with SealToken; Refresh trades that for an access token, which
-// Open turns into a Client for actions; RevokeToken ends it at the provider.
 package connect
 
 import (
@@ -24,12 +5,16 @@ import (
 	"cmp"
 	"context"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/google/uuid"
@@ -48,96 +34,91 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Connector is a service accounts can be connected at, as its file declares it.
 type Connector struct {
-	ID, Name string
-	// Integration says an account connected to it is the archive's, like its QuickBooks company: an owner
-	// connects it for everyone, an archive has one, and its records are every member's. Without it, each member
-	// connects their own, like their Gmail, and its records are theirs alone.
+	ID, Name    string
 	Integration bool
-	// Pace is the least time between two requests this server sends the provider, every account's and every
-	// page's together, for a provider that refuses requests that come faster, as Gusto does; zero for none.
-	Pace time.Duration
-	// Env is the environment variable that holds an API connector's OAuth client, https://<client id>:<client
-	// secret>@<host> with the id and secret URL-escaped, and maybe a query of options the connector reads with
-	// Client.Option; Host is the provider host it names by default. When Env names another host, every URL of
-	// the connector moves onto it, so another server that speaks the provider's API can stand in for it.
-	Env, Host string
-	// Hosts, when given, are the only hosts whose URLs move onto the one Env names, like Salesforce's login
-	// server, whose sandbox is another, while each org's API stays on its own host.
-	Hosts    []string
-	Endpoint oauth2.Endpoint
-	// Revoke is where a refresh token is revoked on disconnect, posted as token=, as RFC 7009 has it; empty
-	// when the provider has nowhere. RevokeWith, when set, revokes in its place, for a provider that does it
-	// another way.
-	Revoke     string
-	RevokeWith func(rv *Revocation) error
-	Scopes     []string
-	// Optional are scopes an API connector asks for too, but connects without, like those its pushes need:
-	// asked for only once its variable has ?push=1, as its app may not have them yet.
-	Optional []string
-	// Params go on the authorization URL, like the ones that ask Google for a refresh token.
-	Params map[string]string
-	// Keep are parameters the provider adds to the callback that calls need later, like QuickBooks' realmId;
-	// the Grant keeps them as its Meta.
-	Keep []string
-	// MCP is an MCP connector's server. It needs no Env, Host, Endpoint, Revoke or Scopes: its authorization
-	// server has them. Scopes, when given, are asked for in place of the ones the server suggests.
-	MCP string
-	// Account is the account a token is for, like the mailbox address, read with c. An MCP connector's may be
-	// nil, or fail: then the account is the connector's name, and a member has one connection to it.
-	Account func(c *Client) (string, error)
-	// Actions are an API connector's actions, by name; an MCP connector's are its server's tools.
-	Actions map[string]*Action
-	// Streams are what Archive keeps a copy of for each account (sync.go), pulled in this order when several
-	// are due at once.
-	Streams []*Stream
-	// Push is how the provider tells Archive an account changed (sync.go); nil when it cannot, and then only
-	// connecting, asking and reading start a sync.
-	Push *Push
-	// Keys are what a key connector asks a person for in place of a sign-in, and Authorize puts them on a request
-	// (keys.go), or puts what else every request of a connector needs on it, like the Xero organisation it is for.
-	// A key connector's Env, when set, is a client of the server's own its requests need too, like a developer key.
-	Keys      []Key
-	Authorize func(req *http.Request, c *Client)
-	// Info is how it shows. Options says what else its Env's value takes or does, for the docs of that variable.
-	Info    Info
-	Options string
-	// API is the base of the requests of a connector that is only data (def.go): its Env is ARCHIVE_<ID> unless it
-	// says, and its Host that of its Endpoint. Sign are the headers of its requests, each left off while it reads to
-	// nothing, Who its Account, RevokeBy its RevokeWith, Listen its Push and Sync its Streams.
-	API      string
-	Sign     map[string]string
-	Who      *Who
-	RevokeBy *Req
-	Listen   *Listen
-	Sync     []*Sync
-	// Let are steps that find what API reads, once a Client, over what the account has: {key/...}, {meta/...},
-	// {option/...} and {token}. Their requests are absolute URLs, and what they put in {meta/...} the account keeps.
-	Let []Step
-	// Errors is an answer that refuses in a 200, as GraphQL does. Busy are what a refusal says, past its status, when
-	// the provider only turns Archive away for now. Trace is a header of its answers that names one to its support, which a
-	// refusal keeps.
-	Errors *Errors
-	Busy   []string
-	Trace  string
+	Pace        time.Duration
+	Env, Host   string
+	Hosts       []string
+	Endpoint    oauth2.Endpoint
+	RefreshURL  string
+	Revoke      string
+	RevokeWith  func(rv *Revocation) error
+	Lasts       bool
+	OAuth1      string
+	Scopes      []string
+	Optional    []string
+	Extra       map[string][]string
+	Comma       bool
+	Params      map[string]string
+	Trades      map[string]string
+	Ask         *Key
+	Signed      string
+	Was         string
+	Keep        []string
+	Allow       map[string][]string
+	TokenType   string
+	MCP         string
+	Account     func(c *Client) (string, error)
+	Actions     map[string]*Action
+	Streams     []*Stream
+	Push        *Push
+	Keys        []Key
+	Tap         bool
+	Authorize   func(req *http.Request, c *Client)
+	Trade       *Req
+	Mint        []Step
+	Link        *Link
+	Info        Info
+	Options     string
+	API         string
+	Sign        map[string]string
+	Basic       [2]string
+	Pin         Q
+	Who         *Who
+	RevokeBy    *Req
+	Listen      *Listen
+	Sync        []*Sync
+	Let         []Step
+	Errors      *Errors
+	Answer      *Codec
+	Busy        []string
+	Trace       string
 }
 
-// Errors reads a refusal out of a 200: its message at At and code at Code, which is a provider that is busy when it
-// is one of Busy. Its Status is 400 unless it says.
+func Parallel(ctx context.Context, limit, n int, fn func(ctx context.Context, i int) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	var once sync.Once
+	var first error
+	slots := make(chan struct{}, limit)
+	for i := range n {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if err := fn(ctx, i); err != nil {
+				once.Do(func() { first = err; cancel() })
+			}
+		})
+	}
+	wg.Wait()
+	return first
+}
+
 type Errors struct {
 	At, Code Path
-	Status   int
 	Busy     []string
 }
 
-// MCPEnv is the environment variable that, when set, is another server for an MCP connector than its own, one
-// that stands in for it. Unlike Env, nothing needs it.
+// Keyed is whether it connects without a sign-in: with keys the person pastes, or, Tap, in one tap with nothing to paste,
+// reading with Archive's own app credentials from Env, when it has one, or only what Archive already synced.
+func (c *Connector) Keyed() bool { return len(c.Keys) > 0 || c.Tap }
+
 func (c *Connector) MCPEnv() string { return "ARCHIVE_MCP_" + strings.ToUpper(c.ID) }
 
 var registry = map[string]*Connector{}
 
-// Register adds c; each connector's file calls it from init.
 func Register(c *Connector) {
 	if registry[c.ID] != nil {
 		panic("connect: two connectors are " + c.ID)
@@ -145,13 +126,17 @@ func Register(c *Connector) {
 	if err := c.compile(); err != nil {
 		panic("connect: " + c.ID + ": " + err.Error())
 	}
+	if len(c.Sync) == 0 && len(c.Streams) == 0 {
+		panic("connect: " + c.ID + " has no stream")
+	}
+	if len(c.Actions) == 0 && c.MCP == "" && !c.mailOnly() {
+		panic("connect: " + c.ID + " has no action")
+	}
 	registry[c.ID] = c
 }
 
-// Get is connector id, or nil when there is none.
 func Get(id string) *Connector { return registry[id] }
 
-// All are the connectors, by id.
 func All() []*Connector {
 	out := make([]*Connector, 0, len(registry))
 	for _, c := range registry {
@@ -161,8 +146,6 @@ func All() []*Connector {
 	return out
 }
 
-// Provider is a connector with the OAuth client this server has for it: from its variable for an API
-// connector, and for an MCP connector from its Registration, which Registered adds.
 type Provider struct {
 	*Connector
 	clientID, secret, base string
@@ -170,21 +153,16 @@ type Provider struct {
 	endpoint               oauth2.Endpoint
 	revoke                 string
 	scopes                 []string
-	// server is an MCP connector's server, its own or one standing in; resource is what its tokens are for, as
-	// RFC 8707 has the authorization server told.
-	server, resource string
-	// pushTo is the value of its Push's Env.
-	pushTo string
+	server, resource       string
+	pushTo                 string
 }
 
-// Providers are the available connectors, by id.
 type Providers map[string]*Provider
 
-// Load is every MCP connector, and every API connector whose client getenv has.
 func Load(getenv func(string) string) (Providers, error) {
 	out := Providers{}
 	for _, c := range All() {
-		if len(c.Keys) > 0 {
+		if c.Keyed() {
 			if p, ok := keyProvider(c, getenv); ok {
 				out[c.ID] = p
 			}
@@ -196,6 +174,9 @@ func Load(getenv func(string) string) (Providers, error) {
 		}
 		raw := strings.TrimSpace(getenv(c.Env))
 		if raw == "" {
+			if c.Was != "" {
+				out[c.ID] = &Provider{Connector: c}
+			}
 			continue
 		}
 		u, err := url.Parse(raw)
@@ -207,6 +188,11 @@ func Load(getenv func(string) string) (Providers, error) {
 			p := &Provider{Connector: c, clientID: id, secret: secret, base: strings.TrimRight(u.Scheme+"://"+u.Host+u.Path, "/"), opts: u.Query(), scopes: c.Scopes}
 			if u.Query().Get("push") != "" {
 				p.scopes = slices.Concat(c.Scopes, c.Optional)
+			}
+			for _, opt := range slices.Sorted(maps.Keys(c.Extra)) {
+				if u.Query().Get(opt) != "" {
+					p.scopes = slices.Concat(p.scopes, c.Extra[opt])
+				}
 			}
 			p.endpoint = oauth2.Endpoint{AuthURL: p.at(c.Endpoint.AuthURL), TokenURL: p.at(c.Endpoint.TokenURL), AuthStyle: c.Endpoint.AuthStyle}
 			if c.Push != nil && c.Push.Env != "" {
@@ -221,7 +207,6 @@ func Load(getenv func(string) string) (Providers, error) {
 	return out, nil
 }
 
-// Get is the available connector id, or why there is none.
 func (ps Providers) Get(id string) (*Provider, error) {
 	if p := ps[id]; p != nil {
 		return p, nil
@@ -234,7 +219,6 @@ func (ps Providers) Get(id string) (*Provider, error) {
 
 var client = &http.Client{Timeout: 30 * time.Second}
 
-// at is the provider's URL u, on the host its client names.
 func (p *Provider) at(u string) string {
 	pu, err := url.Parse(u)
 	if p.base == "" || p.base == p.Host || err != nil || len(p.Hosts) > 0 && !slices.Contains(p.Hosts, pu.Scheme+"://"+pu.Host) {
@@ -247,9 +231,31 @@ func (p *Provider) config(redirect string) *oauth2.Config {
 	return &oauth2.Config{ClientID: p.clientID, ClientSecret: p.secret, RedirectURL: redirect, Scopes: p.scopes, Endpoint: p.endpoint}
 }
 
-// AuthURL is where the browser goes to consent, coming back to redirect with state and a code that only
-// verifier (oauth2.GenerateVerifier) trades.
-func (p *Provider) AuthURL(redirect, state, verifier string) string {
+func (p *Provider) configOf(redirect string, meta map[string]string) (*oauth2.Config, error) {
+	cfg := p.config(redirect)
+	if !strings.Contains(cfg.Endpoint.TokenURL, "{") {
+		return cfg, nil
+	}
+	u, err := expand(cfg.Endpoint.TokenURL, p.metaScope(meta))
+	if err != nil {
+		return nil, fmt.Errorf("%s: its token endpoint: %w", p.Name, err)
+	}
+	cfg.Endpoint.TokenURL = u
+	return cfg, nil
+}
+
+func (p *Provider) metaScope(meta map[string]string) map[string]any {
+	m, opts := map[string]any{}, map[string]any{}
+	for k, v := range meta {
+		m[k] = v
+	}
+	for k := range p.opts {
+		opts[k] = p.opts.Get(k)
+	}
+	return map[string]any{"meta": m, "option": opts}
+}
+
+func (p *Provider) AuthURL(redirect, state, verifier string, meta map[string]string) (string, error) {
 	opts := []oauth2.AuthCodeOption{oauth2.S256ChallengeOption(verifier)}
 	for k, v := range p.Params {
 		opts = append(opts, oauth2.SetAuthURLParam(k, v))
@@ -257,40 +263,124 @@ func (p *Provider) AuthURL(redirect, state, verifier string) string {
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	return p.config(redirect).AuthCodeURL(state, opts...)
+	if p.Comma {
+		opts = append(opts, oauth2.SetAuthURLParam("scope", strings.Join(p.scopes, ",")))
+	}
+	cfg := p.config(redirect)
+	if strings.Contains(cfg.Endpoint.AuthURL, "{") {
+		u, err := expand(cfg.Endpoint.AuthURL, p.metaScope(meta))
+		if err != nil {
+			return "", fmt.Errorf("%s: where it signs in: %w", p.Name, err)
+		}
+		cfg.Endpoint.AuthURL = u
+	}
+	return cfg.AuthCodeURL(state, opts...), nil
 }
 
-// Grant is a connected account: who it is, its refresh token, the scopes the provider granted and the
-// parameters of the callback the connector keeps.
+func (p *Provider) AskOf(v string) (map[string]string, error) {
+	k := p.Ask
+	if k == nil {
+		return nil, nil
+	}
+	if k.Places != "" {
+		if m, ok := k.placeOf(v); ok {
+			return m, nil
+		}
+		return nil, fmt.Errorf("%s needs your health system: search for it by name and pick it", p.Name)
+	}
+	v = strings.ToLower(strings.TrimSpace(v))
+	if k.Find != "" {
+		f := reOf(k.Find).FindStringSubmatch(v)
+		if f == nil {
+			return nil, fmt.Errorf("%s needs %s: %s", p.Name, k.Label, k.Help)
+		}
+		v = f[1]
+	}
+	if k.As != "" {
+		x, _ := fillStr(k.As, map[string]any{"it": v})
+		v = text(x)
+	}
+	if v == "" {
+		return nil, fmt.Errorf("%s needs %s", p.Name, k.Label)
+	}
+	return map[string]string{k.Name: v}, nil
+}
+
+func (p *Provider) signed(q url.Values) bool {
+	got := q.Get(p.Signed)
+	for _, esc := range []func(string) string{func(s string) string { return s }, url.QueryEscape} {
+		var pairs []string
+		for _, k := range slices.Sorted(maps.Keys(q)) {
+			if k != p.Signed {
+				pairs = append(pairs, esc(k)+"="+esc(strings.Join(q[k], ",")))
+			}
+		}
+		m := hmac.New(sha256.New, []byte(p.secret))
+		m.Write([]byte(strings.Join(pairs, "&")))
+		if same(got, hex.EncodeToString(m.Sum(nil))) {
+			return true
+		}
+	}
+	return false
+}
+
 type Grant struct {
 	Account, Refresh string
 	Scopes           []string
 	Meta             map[string]string
 }
 
-// Exchange is the account the provider came back to redirect for, with the query q it came back with. It
-// fails when the person refused, or left out a scope an API connector asks for.
-func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string) (*Grant, error) {
+func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, verifier string, asked map[string]string) (*Grant, error) {
 	if e := q.Get("error"); e != "" {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, cmp.Or(q.Get("error_description"), e))
+	}
+	if p.Signed != "" && !p.signed(q) {
+		return nil, fmt.Errorf("%s was not connected: it came back without %s's signature", p.Name, p.Name)
 	}
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, client)
 	opts := []oauth2.AuthCodeOption{oauth2.VerifierOption(verifier)}
 	if p.resource != "" {
 		opts = append(opts, oauth2.SetAuthURLParam("resource", p.resource))
 	}
-	tok, err := p.config(redirect).Exchange(ctx, q.Get("code"), opts...)
+	for k, v := range p.Trades {
+		opts = append(opts, oauth2.SetAuthURLParam(k, v))
+	}
+	meta := map[string]string{}
+	if p.Ask != nil {
+		k := p.Ask.Name
+		if asked[k] == "" || (p.Signed != "" || q.Has(k)) && !strings.EqualFold(q.Get(k), asked[k]) {
+			return nil, fmt.Errorf("%s was not connected: it came back for %s %q, not %q", p.Name, k, q.Get(k), asked[k])
+		}
+		maps.Copy(meta, asked)
+	}
+	for _, k := range p.Keep {
+		if v := q.Get(k); v != "" {
+			meta[k] = v
+		}
+		if vals, ok := p.Allow[k]; ok && meta[k] != "" && !slices.Contains(vals, meta[k]) {
+			return nil, fmt.Errorf("%s was not connected: it came back with %s %s, which Archive does not know", p.Name, k, meta[k])
+		}
+	}
+	cfg, err := p.configOf(redirect, meta)
+	if err != nil {
+		return nil, err
+	}
+	tok, err := cfg.Exchange(ctx, q.Get("code"), opts...)
 	if err != nil {
 		return nil, fmt.Errorf("%s was not connected: %s", p.Name, Reason(err))
 	}
-	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: map[string]string{}}
-	if s, _ := tok.Extra("scope").(string); s != "" {
-		g.Scopes = strings.Fields(s)
-	}
 	for _, k := range p.Keep {
-		if g.Meta[k] = q.Get(k); g.Meta[k] == "" {
+		extra, _ := tok.Extra(k).(string)
+		if meta[k] = cmp.Or(meta[k], extra); meta[k] == "" {
 			return nil, fmt.Errorf("%s was not connected: it came back without %s", p.Name, k)
 		}
+	}
+	g := &Grant{Refresh: tok.RefreshToken, Scopes: p.scopes, Meta: meta}
+	if p.Lasts {
+		g.Refresh = cmp.Or(g.Refresh, tok.AccessToken)
+	}
+	if s, _ := tok.Extra("scope").(string); s != "" {
+		g.Scopes = strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 	}
 	switch {
 	case g.Refresh == "":
@@ -298,6 +388,12 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	case p.MCP == "" && slices.ContainsFunc(p.Scopes, func(s string) bool { return !granted(g.Scopes, s) }):
 		return nil, fmt.Errorf("%s was connected without all the access Archive asked for; connect it again and allow it all", p.Name)
 	}
+	return p.named(ctx, tok, g)
+}
+
+// named names whose account a new grant is, by the connector's Account.
+func (p *Provider) named(ctx context.Context, tok *oauth2.Token, g *Grant) (*Grant, error) {
+	var err error
 	c := p.Open(ctx, tok, g.Meta)
 	defer c.Close()
 	if p.Account != nil {
@@ -318,21 +414,32 @@ func (p *Provider) Exchange(ctx context.Context, redirect string, q url.Values, 
 	return g, nil
 }
 
-// granted says whether the scopes a provider granted have want: itself, or a URL ending in it, as Microsoft
-// answers Graph's. offline_access is what asks for the refresh token, which nobody lists again.
 func granted(scopes []string, want string) bool {
-	return want == "offline_access" || slices.ContainsFunc(scopes, func(s string) bool {
+	return want == "offline_access" || strings.HasPrefix(want, "launch/") || slices.ContainsFunc(scopes, func(s string) bool {
 		return strings.EqualFold(s, want) || strings.HasSuffix(strings.ToLower(s), "/"+strings.ToLower(want))
 	})
 }
 
-// Refresh is a fresh access token for the refresh token rt. Its RefreshToken is the one to keep from now on:
-// rt, or the one the provider replaced it with.
-func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error) {
-	if len(p.Keys) > 0 {
+func (p *Provider) Refresh(ctx context.Context, rt string, meta map[string]string) (*oauth2.Token, error) {
+	if p.Keyed() && p.Trade == nil && p.Mint == nil || p.Lasts || p.was(rt) != nil {
 		return &oauth2.Token{AccessToken: rt, RefreshToken: rt}, nil
 	}
-	tok, err := p.config("").TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
+	if p.Keyed() {
+		keys, end, err := p.trade(ctx, keysFrom(rt))
+		if err != nil {
+			return nil, err
+		}
+		b, _ := json.Marshal(keys)
+		return &oauth2.Token{AccessToken: string(b), RefreshToken: rt, Expiry: end}, nil
+	}
+	cfg, err := p.configOf("", meta)
+	if err != nil {
+		return nil, err
+	}
+	if p.RefreshURL != "" {
+		cfg.Endpoint.TokenURL = p.RefreshURL
+	}
+	tok, err := cfg.TokenSource(context.WithValue(ctx, oauth2.HTTPClient, client), &oauth2.Token{RefreshToken: rt}).Token()
 	if err != nil {
 		return nil, err
 	}
@@ -340,19 +447,19 @@ func (p *Provider) Refresh(ctx context.Context, rt string) (*oauth2.Token, error
 	return tok, nil
 }
 
-// RevokeToken ends the grant of the refresh token rt at the provider, where it has a way to: RevokeWith, or
-// RFC 7009's form at Revoke, which an MCP connector's authorization server also takes its client's
-// credentials with.
-func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
-	rv := &Revocation{Refresh: rt, ctx: ctx, p: p}
+func (p *Provider) RevokeToken(ctx context.Context, rt string, meta map[string]string) error {
+	rv := &Revocation{Refresh: rt, Meta: meta, ctx: ctx, p: p}
 	switch {
-	case len(p.Keys) > 0:
+	case p.was(rt) != nil:
 		return nil
 	case p.RevokeWith != nil:
 		return rv.p.RevokeWith(rv)
+	case p.Keyed():
+		return nil
 	case p.revoke == "":
 		return nil
 	}
+
 	form, hdr := url.Values{"token": {rt}, "token_type_hint": {"refresh_token"}}, http.Header{}
 	switch {
 	case p.MCP != "" && p.endpoint.AuthStyle == oauth2.AuthStyleInHeader:
@@ -368,39 +475,31 @@ func (p *Provider) RevokeToken(ctx context.Context, rt string) error {
 	return rv.send("POST", p.revoke, hdr, form)
 }
 
-// basic is the Authorization header of HTTP Basic with the client id and secret, form-encoded as RFC 6749 has
-// them.
 func basic(id, secret string) string {
 	return "Basic " + base64.StdEncoding.EncodeToString([]byte(url.QueryEscape(id)+":"+url.QueryEscape(secret)))
 }
 
-// Revocation is a grant a connector's RevokeWith ends.
 type Revocation struct {
-	// Refresh is the grant's refresh token.
 	Refresh string
+	Meta    map[string]string
 	ctx     context.Context
 	p       *Provider
 }
 
-// Client is the OAuth client's id and secret.
 func (rv *Revocation) Client() (id, secret string) { return rv.p.clientID, rv.p.secret }
 
-// Access is an access token of the grant, for a provider that revokes with one.
 func (rv *Revocation) Access() (string, error) {
-	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh)
+	tok, err := rv.p.Refresh(rv.ctx, rv.Refresh, rv.Meta)
 	if err != nil {
 		return "", err
 	}
 	return tok.AccessToken, nil
 }
 
-// Form posts v to the provider's URL u as a form, with hdr, and fails unless it answers 2xx.
 func (rv *Revocation) Form(u string, hdr http.Header, v url.Values) error {
 	return rv.send("POST", rv.p.at(u), hdr, v)
 }
 
-// Send sends body to the provider's URL u, JSON unless it is a string, with hdr, and fails unless it
-// answers 2xx.
 func (rv *Revocation) Send(method, u string, hdr http.Header, body any) error {
 	return rv.send(method, rv.p.at(u), hdr, body)
 }
@@ -424,7 +523,6 @@ func (rv *Revocation) send(method, u string, hdr http.Header, body any) error {
 	return nil
 }
 
-// Reason is what a provider said when it refused, without the rest of its answer.
 func Reason(err error) string {
 	var re *oauth2.RetrieveError
 	if errors.As(err, &re) && re.ErrorCode != "" {
@@ -433,26 +531,23 @@ func Reason(err error) string {
 	return err.Error()
 }
 
-// State is what the provider hands back with the code: who started connecting, where, and the PKCE verifier.
 type State struct {
-	Provider  string    `json:"p"`
-	Workspace string    `json:"w"`
-	User      uuid.UUID `json:"u"`
-	Member    uuid.UUID `json:"m"`
-	Verifier  string    `json:"v"`
-	Exp       int64     `json:"x"`
+	Provider  string            `json:"p"`
+	Workspace string            `json:"w"`
+	User      uuid.UUID         `json:"u"`
+	Member    uuid.UUID         `json:"m"`
+	Verifier  string            `json:"v"`
+	Exp       int64             `json:"x"`
+	Meta      map[string]string `json:"e,omitempty"`
 }
 
-// TTL is how long a person has to consent.
 const TTL = 10 * time.Minute
 
-// SealState is st encrypted and authenticated with aead, to fit a URL.
 func SealState(aead cipher.AEAD, st State) string {
 	b, _ := json.Marshal(st)
 	return base64.RawURLEncoding.EncodeToString(seal(aead, b, "connect"))
 }
 
-// OpenState is the state SealState sealed, while it has not expired.
 func OpenState(aead cipher.AEAD, sealed string) (State, bool) {
 	var st State
 	ct, err := base64.RawURLEncoding.DecodeString(sealed)
@@ -463,12 +558,10 @@ func OpenState(aead cipher.AEAD, sealed string) (State, bool) {
 	return st, err == nil && json.Unmarshal(b, &st) == nil && time.Now().Unix() <= st.Exp
 }
 
-// SealToken is the refresh token of connection id, encrypted and bound to it.
 func SealToken(aead cipher.AEAD, id uuid.UUID, token string) []byte {
 	return seal(aead, []byte(token), "connection "+id.String())
 }
 
-// OpenToken is the refresh token SealToken sealed for connection id.
 func OpenToken(aead cipher.AEAD, id uuid.UUID, sealed []byte) (string, error) {
 	b, err := open(aead, sealed, "connection "+id.String())
 	if err != nil {
@@ -491,40 +584,43 @@ func open(aead cipher.AEAD, ct []byte, purpose string) ([]byte, error) {
 	return aead.Open(nil, ct[:n], ct[n:], []byte(purpose))
 }
 
-// maxBody is the most of a provider's answer a Client reads, like fetch's limit in a run.
 const maxBody = 5 << 20
 
-// Client is a connected account at work, for an Account or an Action: requests to the provider's API as the
-// account, or calls to its MCP server's tools. Close it when done.
 type Client struct {
-	ctx  context.Context
-	p    *Provider
-	http *http.Client
-	tok  *oauth2.Token
-	// Meta are the callback's parameters the connector keeps, like QuickBooks' realmId, and what its Let keeps.
-	Meta map[string]string
-	sess *mcp.ClientSession
-	// tools are the MCP server's, as it listed them for a stream.
-	tools []*mcp.Tool
-	// keys are a key connector's, by name.
-	keys map[string]string
-	// apiURL is where its relative URLs go, as api finds it once.
+	ctx     context.Context
+	p       *Provider
+	http    *http.Client
+	tok     *oauth2.Token
+	Meta    map[string]string
+	sess    *mcp.ClientSession
+	tools   []*mcp.Tool
+	keys    map[string]string
 	apiOnce sync.Once
 	apiURL  string
 	apiErr  error
-	// mcpSeen is what the last answer of its MCP server's transport was, which its SDK does not say in an error.
 	mcpSeen *seen
+	Files   Yours
+	Store   func(name string, b []byte) (string, error)
+	Export  func() (*Upfile, error)
+	Mail    func(s Scan) ([]any, error)
 }
 
-// Open is a Client of the account whose access token tok is, with the Meta its grant kept.
 func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]string) *Client {
-	if len(p.Keys) > 0 {
+	if p.Keyed() {
 		return p.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
+	if w := p.was(tok.AccessToken); w != nil {
+		return w.openKeys(ctx, keysFrom(tok.AccessToken), meta)
+	}
+	if p.TokenType != "" {
+		t := *tok
+		t.TokenType = p.TokenType
+		tok = &t
 	}
 	c := &Client{ctx: ctx, p: p, tok: tok, Meta: meta}
 	var rt http.RoundTripper = &oauth2.Transport{Source: oauth2.StaticTokenSource(tok)}
 	if p.Authorize != nil {
-		rt = &keyTransport{c: c, base: rt}
+		rt = &keyTransport{c: c}
 	}
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
@@ -533,13 +629,13 @@ func (p *Provider) Open(ctx context.Context, tok *oauth2.Token, meta map[string]
 	return c
 }
 
-// Context is what the Client's requests run in.
-func (c *Client) Context() context.Context { return c.ctx }
+func (p *Provider) was(t string) *Provider {
+	if p.Was == "" || !strings.HasPrefix(t, "{") || registry[p.Was] == nil {
+		return nil
+	}
+	return &Provider{Connector: registry[p.Was]}
+}
 
-// Option is the option k in the query of the connector's variable, like ?sandbox=1.
-func (c *Client) Option(k string) string { return c.p.opts.Get(k) }
-
-// Token is the access token, for a provider that wants it somewhere other than the Authorization header.
 func (c *Client) Token() string {
 	if c.tok == nil {
 		return ""
@@ -547,18 +643,10 @@ func (c *Client) Token() string {
 	return c.tok.AccessToken
 }
 
-// Credentials are the OAuth client's id and secret, for a provider that wants them with a request.
 func (c *Client) Credentials() (id, secret string) { return c.p.clientID, c.p.secret }
 
-// Get reads the provider's URL u as JSON into v.
-func (c *Client) Get(u string, v any) error { return c.Do("GET", u, nil, v) }
-
-// Do sends body to the provider's URL u, as a form when it is url.Values, as it is when a string and JSON
-// otherwise, and reads the answer as JSON into v; into a *string or *[]byte it is the answer as it came. A
-// 4xx or 5xx is a *Refusal.
 func (c *Client) Do(method, u string, body, v any) error { return c.Send(method, u, nil, body, v) }
 
-// Send is Do with the headers hdr too.
 func (c *Client) Send(method, u string, hdr http.Header, body, v any) error {
 	req, err := request(c.ctx, method, c.p.at(u), body)
 	if err != nil {
@@ -629,16 +717,12 @@ func request(ctx context.Context, method, u string, body any) (*http.Request, er
 	return req, nil
 }
 
-// Refusal is a provider answering a request with a 4xx or 5xx, or a tool's result marked as an error, with
-// no Status. Busy says it only turned Archive away for now, and Retry how long it asked Archive to wait, 0 when it did
-// not say.
 type Refusal struct {
 	Provider string
 	Status   int
-	// Message is what it said why, as it said it.
-	Message string
-	Busy    bool
-	Retry   time.Duration
+	Message  string
+	Busy     bool
+	Retry    time.Duration
 }
 
 func (r *Refusal) Error() string {
@@ -664,7 +748,6 @@ func refusal(p *Provider, resp *http.Response) *Refusal {
 	return f
 }
 
-// busyStatus says a status only turns a call away for now.
 func busyStatus(s int) bool {
 	return s == http.StatusTooManyRequests || s == http.StatusBadGateway || s == http.StatusServiceUnavailable || s == http.StatusGatewayTimeout
 }
@@ -673,7 +756,6 @@ func (c *Connector) busySays(msg string) bool {
 	return slices.ContainsFunc(c.Busy, func(s string) bool { return strings.Contains(msg, s) })
 }
 
-// retryAfter is how long a Retry-After header asks to wait, in seconds or until a date; 0 when it asks nothing.
 func retryAfter(h http.Header) time.Duration {
 	v := h.Get("Retry-After")
 	if v == "" {
@@ -688,9 +770,6 @@ func retryAfter(h http.Header) time.Duration {
 	return 0
 }
 
-// reasonIn is the message in a provider's error body: the first of the keys providers put it under, at any
-// depth, like Google's error.message, QuickBooks' Fault.Error[0].Detail or OAuth's error_description; or the
-// body itself, cut short.
 func reasonIn(b []byte) string {
 	var v any
 	if json.Unmarshal(b, &v) != nil {
@@ -700,7 +779,7 @@ func reasonIn(b []byte) string {
 		}
 		return s
 	}
-	for _, k := range []string{"message", "error_description", "Detail", "Message", "detail", "error"} {
+	for _, k := range []string{"message", "error_message", "error_description", "error_summary", "Detail", "Message", "detail", "error"} {
 		if s := find(v, k); s != "" {
 			return s
 		}
@@ -729,22 +808,16 @@ func find(v any, key string) string {
 	return ""
 }
 
-// Action is something a script does with a connected account of an API connector, as
-// archive.action("<connector>.<name>", input). Its input is checked against Input before Do sees it.
 type Action struct {
-	// Doc says what it does and returns, for the run tool's docs.
 	Doc    string
 	Input  *jsonschema.Schema
 	Output any
 	Do     func(c *Client, in json.RawMessage) (any, error)
-	// Writes says it changes something at the provider, like sending a message, which a viewer-only token
-	// may not.
 	Writes bool
+	Asks   bool
 	plan   *Plan
 }
 
-// ToolActions are the actions of an MCP connector: its server's tools, each by its name without the connector's id
-// before it. A tool writes unless the server says it only reads.
 func (p *Provider) ToolActions(tools []*mcp.Tool) map[string]*Action {
 	out := make(map[string]*Action, len(tools))
 	for _, t := range tools {
@@ -785,40 +858,24 @@ func (p *Provider) ToolActions(tools []*mcp.Tool) map[string]*Action {
 	return out
 }
 
-// An MCP connector's OAuth client is Archive's own, registered at its server's authorization server: Register
-// finds that server as the MCP authorization spec has it, with the protected resource's metadata (RFC 9728)
-// and then the authorization server's (RFC 8414), and registers a client there with Dynamic Client
-// Registration (RFC 7591). The caller keeps the Registration, one per connector and server, and hands it to
-// Registered for every later connect, refresh and revoke.
-
-// Registration is the client Archive registered at an MCP connector's authorization server, with what it
-// needs of that server's metadata.
 type Registration struct {
-	// Server is the MCP server it is for, and Redirect the redirect URI it registered: a change of either
-	// registers again.
-	Server   string `json:"server"`
-	Redirect string `json:"redirect"`
-	// Resource is the server's resource identifier, which goes with every authorization and code (RFC 8707).
-	Resource string `json:"resource"`
-	AuthURL  string `json:"auth_url"`
-	TokenURL string `json:"token_url"`
-	Revoke   string `json:"revoke,omitempty"`
-	ClientID string `json:"client_id"`
-	Secret   string `json:"secret,omitempty"`
-	// Method is how the client authenticates at the token endpoint: client_secret_basic, client_secret_post
-	// or none, PKCE alone.
-	Method string   `json:"method"`
-	Scopes []string `json:"scopes,omitempty"`
-	// Expires is when the secret expires; zero when it does not.
-	Expires time.Time `json:"expires,omitzero"`
+	Server   string    `json:"server"`
+	Redirect string    `json:"redirect"`
+	Resource string    `json:"resource"`
+	AuthURL  string    `json:"auth_url"`
+	TokenURL string    `json:"token_url"`
+	Revoke   string    `json:"revoke,omitempty"`
+	ClientID string    `json:"client_id"`
+	Secret   string    `json:"secret,omitempty"`
+	Method   string    `json:"method"`
+	Scopes   []string  `json:"scopes,omitempty"`
+	Expires  time.Time `json:"expires,omitzero"`
 }
 
-// Fits says whether r is still the client for p and redirect.
 func (p *Provider) Fits(r *Registration, redirect string) bool {
 	return r != nil && r.Server == p.server && r.Redirect == redirect && (r.Expires.IsZero() || time.Until(r.Expires) > TTL)
 }
 
-// Registered is p with the client r.
 func (p *Provider) Registered(r *Registration) *Provider {
 	q := *p
 	q.clientID, q.secret, q.scopes, q.resource, q.revoke = r.ClientID, r.Secret, r.Scopes, r.Resource, r.Revoke
@@ -829,8 +886,6 @@ func (p *Provider) Registered(r *Registration) *Provider {
 	return &q
 }
 
-// Register finds the authorization server of p's MCP server and registers Archive there as a client that
-// comes back to redirect. It fails, saying so, when the server does not let clients register themselves.
 func (p *Provider) Register(ctx context.Context, redirect string) (*Registration, error) {
 	fail := func(format string, a ...any) error {
 		return fmt.Errorf("%s could not be set up: %s", p.Name, fmt.Sprintf(format, a...))
@@ -840,7 +895,6 @@ func (p *Provider) Register(ctx context.Context, redirect string) (*Registration
 		return nil, fail("%v", err)
 	}
 	origin := su.Scheme + "://" + su.Host
-	// The server's 401 names its metadata and the scopes to ask for; without one, the well-known places do.
 	var metaURLs []string
 	challenged := ""
 	if req, err := http.NewRequestWithContext(ctx, "GET", p.server, nil); err == nil {
@@ -866,7 +920,6 @@ func (p *Provider) Register(ctx context.Context, redirect string) (*Registration
 			break
 		}
 	}
-	// A server without that metadata is its own authorization server, as the MCP spec once had it.
 	issuer, resource, scopes := origin, p.server, strings.Fields(challenged)
 	if prm != nil {
 		if len(prm.AuthorizationServers) > 0 {
@@ -891,7 +944,6 @@ func (p *Provider) Register(ctx context.Context, redirect string) (*Registration
 	case !slices.Contains(asm.CodeChallengeMethodsSupported, "S256"):
 		return nil, fail("its authorization server %s does not take PKCE with S256", issuer)
 	}
-	// A secret where the server takes one, as the confidential client Archive is; PKCE alone where it does not.
 	method := "none"
 	for _, m := range []string{"client_secret_post", "client_secret_basic"} {
 		if slices.Contains(asm.TokenEndpointAuthMethodsSupported, m) {
@@ -915,13 +967,11 @@ func (p *Provider) Register(ctx context.Context, redirect string) (*Registration
 		Scopes: scopes, Expires: reg.ClientSecretExpiresAt}, nil
 }
 
-// SealClient is r encrypted and bound to connector id, to keep.
 func SealClient(aead cipher.AEAD, id string, r *Registration) []byte {
 	b, _ := json.Marshal(r)
 	return seal(aead, b, "client "+id)
 }
 
-// OpenClient is the Registration SealClient sealed for connector id.
 func OpenClient(aead cipher.AEAD, id string, sealed []byte) (*Registration, error) {
 	b, err := open(aead, sealed, "client "+id)
 	if err != nil {
@@ -931,7 +981,6 @@ func OpenClient(aead cipher.AEAD, id string, sealed []byte) (*Registration, erro
 	return &r, json.Unmarshal(b, &r)
 }
 
-// session is the Client's session with the MCP server, opened on first use.
 func (c *Client) session() (*mcp.ClientSession, error) {
 	if c.sess != nil {
 		return c.sess, nil
@@ -951,7 +1000,6 @@ func (c *Client) session() (*mcp.ClientSession, error) {
 	return s, nil
 }
 
-// Tools are the tools of the MCP server, every page of them.
 func (c *Client) Tools() ([]*mcp.Tool, error) {
 	s, err := c.session()
 	if err != nil {
@@ -967,8 +1015,6 @@ func (c *Client) Tools() ([]*mcp.Tool, error) {
 	return out, nil
 }
 
-// Call calls the MCP server's tool name with args. A result the tool marks as an error is an error, with
-// what the tool said.
 func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	s, err := c.session()
 	if err != nil {
@@ -984,7 +1030,6 @@ func (c *Client) Call(name string, args any) (*mcp.CallToolResult, error) {
 	return res, nil
 }
 
-// seen is a transport that keeps the last refusal its server answered with that was only for now.
 type seen struct {
 	base http.RoundTripper
 	mu   sync.Mutex
@@ -1005,7 +1050,6 @@ func (t *seen) RoundTrip(r *http.Request) (*http.Response, error) {
 	return res, err
 }
 
-// transportErr is err, an MCP request that failed, with the refusal behind it if its server was only busy.
 func (c *Client) transportErr(err error) error {
 	if c.mcpSeen == nil {
 		return err
@@ -1019,8 +1063,6 @@ func (c *Client) transportErr(err error) error {
 	return err
 }
 
-// pacer spaces the requests this server sends one provider at least pace apart, and holds them all back when
-// the provider says it had too many: until its Retry-After, or pacerRest when it names none.
 type pacer struct {
 	mu   sync.Mutex
 	pace time.Duration
@@ -1036,7 +1078,6 @@ func pacerOf(id string, pace time.Duration) *pacer {
 	return p.(*pacer)
 }
 
-// slot is when the next request may go, which it reserves.
 func (p *pacer) slot() time.Time {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -1056,7 +1097,6 @@ func (p *pacer) rest(d time.Duration) {
 	}
 }
 
-// paced is a transport that sends each request in its pacer's next slot.
 type paced struct {
 	base http.RoundTripper
 	p    *pacer
@@ -1077,13 +1117,10 @@ func (t *paced) RoundTrip(r *http.Request) (*http.Response, error) {
 	return res, err
 }
 
-// unreached is a provider a request never got an answer from.
 type unreached struct{ error }
 
 func (u unreached) Unwrap() error { return u.error }
 
-// Busy says err is a provider that turned a call away for now, by rate limit or by being out of reach, rather
-// than one that will fail again: a sync keeps trying such a page, later and later, and never gives it up.
 func Busy(err error) bool {
 	if err == nil {
 		return false
@@ -1097,7 +1134,6 @@ func Busy(err error) bool {
 	return errors.As(err, new(unreached))
 }
 
-// RetryAfter is how long err, a provider that is busy, asked to wait; 0 when it did not say.
 func RetryAfter(err error) time.Duration {
 	if r := (*Refusal)(nil); errors.As(err, &r) {
 		return r.Retry
@@ -1105,7 +1141,6 @@ func RetryAfter(err error) time.Duration {
 	return 0
 }
 
-// Text is the text of a tool's result, its text parts on lines of their own.
 func Text(res *mcp.CallToolResult) string {
 	var parts []string
 	for _, c := range res.Content {
@@ -1116,7 +1151,6 @@ func Text(res *mcp.CallToolResult) string {
 	return strings.Join(parts, "\n")
 }
 
-// Close ends the Client's MCP session, if it opened one.
 func (c *Client) Close() {
 	if c.sess != nil {
 		c.sess.Close()
@@ -1124,11 +1158,13 @@ func (c *Client) Close() {
 	}
 }
 
-// mcpAccount is an MCP connector's Account that calls tool, without arguments, and reads its answer: the
-// first email, then the first name, in its JSON; or its first line.
 func mcpAccount(tool string) func(c *Client) (string, error) {
 	return func(c *Client) (string, error) {
-		res, err := c.Call(tool, map[string]any{})
+		t, err := c.tool(tool)
+		if err != nil {
+			return "", err
+		}
+		res, err := c.Call(t.Name, map[string]any{})
 		if err != nil {
 			return "", err
 		}
@@ -1152,5 +1188,6 @@ func mcpAccount(tool string) func(c *Client) (string, error) {
 	}
 }
 
-// ClientID is the OAuth client's id.
 func (p *Provider) ClientID() string { return p.clientID }
+
+func (p *Provider) Ready() bool { return p.MCP != "" || p.Keyed() || p.clientID != "" }

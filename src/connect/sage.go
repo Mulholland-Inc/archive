@@ -35,7 +35,7 @@ func init() {
 			{Unless: "meta/currency", As: "money", Req: Req{URL: "https://api.accounting.sage.com/v3.1/financial_settings", Header: map[string][]string{"X-Business": {"{meta/business}"}}}},
 			{Unless: "meta/currency", As: "meta/currency", In: "{money/base_currency/id}"},
 		},
-		Sign: map[string]string{"X-Business": "{meta/business}"},
+		Sign: map[string]string{"Authorization": "Bearer {token}", "X-Business": "{meta/business}"},
 		Endpoint: oauth2.Endpoint{AuthURL: "https://www.sageone.com/oauth2/auth/central?filter=apiv3.1", TokenURL: "https://oauth.accounting.sage.com/token",
 			AuthStyle: oauth2.AuthStyleInParams},
 		RevokeBy: &Req{Method: POST, URL: "https://oauth.accounting.sage.com/revoke", Form: Q{"client_id": "{client/id}", "client_secret": "{client/secret}", "token": "{refresh}"}},

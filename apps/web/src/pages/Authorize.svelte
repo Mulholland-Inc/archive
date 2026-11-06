@@ -12,10 +12,6 @@
   import { lookOf, TYPES } from '../lib/looks.js';
   import { fade } from '../lib/motion.js';
 
-  // An MCP client, like Claude or ChatGPT, asking to be let into one of your archives: mcp.<domain>/oauth/authorize
-  // checked its request and sent you here, sealed, as ?request= (src/mcp.go). You sign in as you do to the app,
-  // pick an archive and allow it; the API answers with where to send the browser, back to the client. The
-  // client is named as it registered itself (client_name), or "an app" if it gave no name.
 
   const query = new URLSearchParams(location.search);
   const request = query.get('request') ?? '';
@@ -161,7 +157,6 @@
     transition: background-color var(--duration-fast) var(--ease-out);
   }
 
-  /* Picked as a sidebar item is active: a neutral fill, a stronger one when picked. */
   .archive:hover {
     background: var(--color-fill);
   }

@@ -1,9 +1,7 @@
-// Tables as the Database screens show them, from the catalog (/api/types) and the DDL (/api/schema).
-
 import { relative } from './live.js';
 
 const sql = { id: 'uuid', text: 'text', long: 'text', date: 'date', money: 'numeric(12,2)', number: 'integer', link: 'uuid', file: 'uuid', email: 'text', yes: 'boolean', place: 'text' };
-export const typeLabels = { id: 'ID', text: 'Text', long: 'Long text', date: 'Date', money: 'Money', number: 'Number', link: 'Link', file: 'File', email: 'Email', yes: 'Yes or no', place: 'Place', choice: 'Choice' };
+const typeLabels = { id: 'ID', text: 'Text', long: 'Long text', date: 'Date', money: 'Money', number: 'Number', link: 'Link', file: 'File', email: 'Email', yes: 'Yes or no', place: 'Place', choice: 'Choice' };
 
 export const typeLabel = (col) => col.label ?? typeLabels[col.type] ?? col.type;
 
@@ -25,8 +23,6 @@ const kinds = {
 
 const own = new Set(['id', 'access', 'created_at', 'updated_at', 'search']);
 
-// linkTo is the table a link names, as the app knows it: a table or view of the workspace by its name, one of
-// Archive's own the catalog shows (member, mail_message, ...) by its name too, or archive.file for a file.
 function linkTo(ref, tables) {
   if (!ref) return undefined;
   if (ref === 'archive.file') return ref;
@@ -36,8 +32,6 @@ function linkTo(ref, tables) {
 
 function column(c, types, tables) {
   const enumType = types[`${c.schema}.${c.type}`]?.enum?.length;
-  // An id or a list of ids can also link through its comment, "references <table>": Postgres has no foreign
-  // key for arrays, and the agent sometimes writes the comment without one.
   const ref = c.ref?.replace(/^public\./, '') || (c.type === 'uuid' ? /^references\s+([a-z][a-z0-9_]*)/i.exec(c.description ?? '')?.[1] : undefined);
   const to = linkTo(c.ref || ref, tables);
   const type = c.ref === 'archive.file' ? 'file' : ref ? 'link' : enumType ? 'choice' : (kinds[c.type] ?? 'text');
@@ -45,6 +39,8 @@ function column(c, types, tables) {
   return {
     name: c.name,
     type,
+    sql: c.type,
+    list: Boolean(c.list),
     label: c.list ? `List of ${(label ?? typeLabels[type]).toLowerCase()}` : label,
     required: Boolean(c.not_null && !c.default),
     notes: own.has(c.name) ? 'Set by the archive' : c.name === 'name' && !c.description ? 'The title the row and every link to it show' : c.description,
@@ -52,21 +48,18 @@ function column(c, types, tables) {
   };
 }
 
-// counts: { [table]: { rows, updated } }, from one query; workflows: the real workflows, to say which
-// tables start one. With archive, Archive's own tables the catalog shows instead, which links name: a row of
-// one has its page as a row of a table does.
-export function toTables(catalog, schema = [], counts = {}, workflows = [], archive = false) {
-  const ddls = Object.fromEntries(schema.map((s) => [s.name, s.ddl]));
+export function toTables(catalog, ddls = {}, counts = {}, workflows = [], archive = false) {
   return Object.values(catalog.tables ?? {})
     .filter((t) => (t.schema === 'archive') === archive)
     .map((t) => {
       const columns = t.columns.filter((c) => c.type !== 'tsvector').map((c) => column(c, catalog.types ?? {}, catalog.tables ?? {}));
       return {
         id: t.name,
-        name: t.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()),
+        name: t.name.replaceAll('_', ' ').replace(/\b\w/g, (s) => s.toUpperCase()),
         kind: t.kind,
         layout: t.layout,
         by: t.by,
+        icon: t.icon,
         description: t.description,
         rows: counts[t.name]?.rows ?? null,
         updated: counts[t.name]?.updated ? relative(counts[t.name].updated) : '',
@@ -81,7 +74,6 @@ export function toTables(catalog, schema = [], counts = {}, workflows = [], arch
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-// One read-only query for every table's row count and last change.
 export function countsQuery(catalog) {
   const tables = Object.values(catalog.tables ?? {}).filter((t) => t.schema === 'public');
   if (!tables.length) return '';

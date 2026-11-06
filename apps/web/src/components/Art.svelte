@@ -9,6 +9,7 @@
   .art {
     display: block;
     flex: none;
+    max-width: 100%;
     margin-inline: auto;
     object-fit: contain;
     user-select: none;

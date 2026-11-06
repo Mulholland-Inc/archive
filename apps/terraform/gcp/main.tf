@@ -6,24 +6,23 @@ resource "google_project_service" "crm" {
 locals {
   url     = "https://app.${var.domain}"
   api_url = "https://api.${var.domain}"
-  # MCP's own host: the same service, which serves only MCP and its OAuth there (src/mcp.go).
   mcp_url = "https://mcp.${var.domain}"
 
-  # Every secret env var of the service and the job, by name. Terraform makes each one's Secret Manager secret,
-  # archive-<name in kebab case>, and hands it to Cloud Run at version latest, but never holds a value: each is
-  # seeded with gcloud, and Cloud Run won't start a revision until all of them have a version.
-  # A feature that is not used is seeded with a single space, which Archive reads as unset. The connectors' are in
-  # secrets.json, from their definitions: go run . secrets > ../apps/terraform/gcp/secrets.json, in src. A key that
-  # leaves this map destroys its secret, so CI fails when the file is stale, and a rename needs care.
   secrets = merge(jsondecode(file("${path.module}/secrets.json")), {
+    ARCHIVE_ENV        = "A JSON object of secret names and their values, read before the env var of each name. A space leaves it empty."
     DATABASE_URL       = "Postgres as the archive user: host=/cloudsql/<connection name> user=archive password=<password> dbname=archive."
     ARCHIVE_SECRET_KEY = "32 random bytes, hex or base64, wrapping every workspace's data key."
-    ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with; the image workflow sets it on the Worker as LIVE_KEY."
+    ARCHIVE_LIVE_KEY   = "Key the API announces live changes to the app Worker with and signs its WebSocket tickets with; the image workflow sets it on the Worker as LIVE_KEY."
     ANTHROPIC_API_KEY  = "Key of the in-app agent and archive.browse. A space leaves the agent off."
     TYPESAFE_API_KEY   = "TypeSafe key of archive.browse. A space leaves browse off."
     ARCHIVE_MICROSOFT  = "Sign-in with Microsoft, https://<client id>:<client secret>@login.microsoftonline.com. A space leaves it off."
     ARCHIVE_SLACK      = "Sign-in with Slack, https://<client id>:<client secret>@slack.com. A space leaves it off."
     ARCHIVE_GITHUB     = "Sign-in with GitHub, https://<client id>:<client secret>@github.com. A space leaves it off."
+    ARCHIVE_APPLE      = "Sign in with Apple, https://<services id>:<team id>.<key id>.<the .p8 key, base64>@appleid.apple.com, URL-escaped. A space leaves it off."
+    ARCHIVE_IOS_APP    = "The iPhone app's App ID, <team id>.dev.archive.app: the phone then proves each upload comes from it with App Attest. A space leaves App Attest off."
+    ARCHIVE_EMAIL      = "Sending email, https://<account id>:<token>@api.cloudflare.com. Terraform sets it."
+    ARCHIVE_EMAIL_KEY  = "Key the email Worker posts received mail to the API with. Terraform sets it."
+    ARCHIVE_STRIPE     = "Linking clients' cards, https://<secret key>@api.stripe.com?publishable=<publishable key>. A space leaves it off."
   })
 
   services = ["run.googleapis.com", "sqladmin.googleapis.com", "secretmanager.googleapis.com", "iam.googleapis.com", "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "sts.googleapis.com", "cloudtasks.googleapis.com", "siteverification.googleapis.com", "pubsub.googleapis.com"]
@@ -81,10 +80,6 @@ resource "google_service_account_iam_member" "tasks" {
 
 data "google_project" "this" {}
 
-# Gmail pushes a change of a connected mailbox to this topic (src/connect/pushers.go, users.watch), which only
-# Gmail's own account publishes to, and the subscription pushes it to the API, with the OIDC token of the
-# tasks account, which the API checks as it checks Cloud Tasks' calls. Pub/Sub's service agent mints that
-# token. A push is only a nudge: a sync reads what changed itself, so a push dropped loses nothing.
 resource "google_pubsub_topic" "gmail" {
   name = "archive-gmail"
 
@@ -164,6 +159,11 @@ resource "google_sql_database_instance" "this" {
       enabled = true
     }
 
+    ip_configuration {
+      ipv4_enabled = true
+      ssl_mode     = "ENCRYPTED_ONLY"
+    }
+
     dynamic "database_flags" {
       for_each = var.db_max_connections != null ? [var.db_max_connections] : []
       content {
@@ -185,13 +185,22 @@ resource "google_sql_user" "this" {
   name     = "archive"
   instance = google_sql_database_instance.this.name
 
-  # Its password is set with gcloud sql users set-password and kept only in DATABASE_URL.
   lifecycle {
     ignore_changes = [password]
   }
 }
 
 resource "google_storage_bucket" "this" {
+  lifecycle_rule {
+    condition {
+      age            = 2
+      matches_suffix = [".part"]
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
   name                        = "${var.project}-archive"
   location                    = var.region
   uniform_bucket_level_access = true
@@ -216,7 +225,6 @@ resource "google_secret_manager_secret" "this" {
   depends_on = [google_project_service.this]
 }
 
-# Terraform once wrote the secrets' values; it forgets those versions, and the generated values, and keeps them.
 removed {
   from = google_secret_manager_secret_version.this
   lifecycle {
@@ -372,10 +380,11 @@ resource "google_cloud_run_v2_service" "this" {
       }
 
       startup_probe {
-        failure_threshold = 30
-        period_seconds    = 10
-        http_get {
-          path = "/health"
+        period_seconds    = 1
+        timeout_seconds   = 1
+        failure_threshold = 240
+        tcp_socket {
+          port = 8080
         }
       }
 
@@ -398,6 +407,8 @@ resource "google_cloud_run_v2_service" "this" {
   }
 
   depends_on = [
+    google_secret_manager_secret_version.email,
+    google_secret_manager_secret_version.email_key,
     google_project_iam_member.sql,
     google_cloud_tasks_queue_iam_member.this,
     google_service_account_iam_member.tasks,
@@ -407,7 +418,7 @@ resource "google_cloud_run_v2_service" "this" {
   ]
 }
 
-resource "google_cloud_run_v2_job" "this" {
+resource "google_cloud_run_v2_job" "migrate" {
   name                = "archive"
   location            = var.region
   deletion_protection = var.deletion_protection
@@ -415,12 +426,12 @@ resource "google_cloud_run_v2_job" "this" {
   template {
     template {
       service_account = google_service_account.this.email
-      timeout         = "600s"
+      timeout         = "3600s"
       max_retries     = 0
 
       containers {
         image = local.image
-        args  = ["help"]
+        args  = ["migrate"]
 
         resources {
           limits = {
@@ -470,12 +481,35 @@ resource "google_cloud_run_v2_job" "this" {
   }
 
   depends_on = [
+    google_secret_manager_secret_version.email,
+    google_secret_manager_secret_version.email_key,
     google_project_iam_member.sql,
-    google_cloud_tasks_queue_iam_member.this,
-    google_service_account_iam_member.tasks,
     google_secret_manager_secret_iam_member.this,
     google_storage_bucket_iam_member.this,
   ]
+}
+
+resource "google_cloud_run_v2_job_iam_member" "deploy" {
+  count    = var.github_repository != "" ? 1 : 0
+  name     = google_cloud_run_v2_job.migrate.name
+  location = var.region
+  role     = "roles/run.developer"
+  member   = google_service_account.deploy[0].member
+}
+
+resource "google_project_iam_member" "deploy_watches_job" {
+  count   = var.github_repository != "" ? 1 : 0
+  project = var.project
+  role    = "roles/run.viewer"
+  member  = google_service_account.deploy[0].member
+}
+
+removed {
+  from = google_cloud_run_v2_job.this
+
+  lifecycle {
+    destroy = false
+  }
 }
 
 data "cloudflare_zone" "this" {
@@ -495,8 +529,7 @@ resource "google_service_account" "verify" {
 resource "google_service_account_iam_member" "verify" {
   service_account_id = google_service_account.verify.name
   role               = "roles/iam.serviceAccountTokenCreator"
-  # Whoever applies: the terraform account once CI applies, else the account running it.
-  member = var.github_repository != "" ? google_service_account.terraform[0].member : "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
+  member             = var.github_repository != "" ? google_service_account.terraform[0].member : "${endswith(data.google_client_openid_userinfo.me.email, ".gserviceaccount.com") ? "serviceAccount" : "user"}:${data.google_client_openid_userinfo.me.email}"
 }
 
 resource "google_project_iam_member" "verify" {
@@ -570,8 +603,6 @@ resource "cloudflare_dns_record" "run" {
   ttl     = 1
 }
 
-# mcp.<domain> is the same Cloud Run service as api.<domain>, mapped and proxied the same way; requests that
-# come to it by that host reach only MCP and its OAuth.
 resource "google_cloud_run_domain_mapping" "mcp" {
   provider = google.verify
   name     = "mcp.${var.domain}"
@@ -633,9 +664,6 @@ resource "cloudflare_workers_custom_domain" "app" {
   service    = cloudflare_workers_script.app.script_name
 }
 
-# The browser's live-data socket is api.<domain>/live, so it carries the API's own session cookie; this route sends
-# it, and the API's announces to /live/announce, to the app Worker, which hands them to the workspace's Durable
-# Object. Every other path on api.<domain> still reaches Cloud Run.
 resource "cloudflare_workers_route" "live" {
   zone_id = data.cloudflare_zone.this.zone_id
   pattern = "api.${var.domain}/live*"
@@ -645,6 +673,71 @@ resource "cloudflare_workers_route" "live" {
 data "cloudflare_account_api_token_permission_groups_list" "this" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = data.cloudflare_zone.this.account.id
+}
+
+data "cloudflare_account_api_token_permission_groups_list" "email" {
+  account_id = data.cloudflare_zone.this.account.id
+  name       = "Email Sending Write"
+}
+
+resource "cloudflare_email_sending_subdomain" "this" {
+  zone_id = data.cloudflare_zone.this.zone_id
+  name    = var.domain
+}
+
+resource "cloudflare_account_token" "email" {
+  account_id = data.cloudflare_zone.this.account.id
+  name       = "archive-email"
+  policies = [{
+    effect            = "allow"
+    permission_groups = [for g in data.cloudflare_account_api_token_permission_groups_list.email.result : { id = g.id }]
+    resources         = jsonencode({ "com.cloudflare.api.account.${data.cloudflare_zone.this.account.id}" = "*" })
+  }]
+}
+
+resource "google_secret_manager_secret_version" "email" {
+  secret      = google_secret_manager_secret.this["ARCHIVE_EMAIL"].id
+  secret_data = "https://${data.cloudflare_zone.this.account.id}:${cloudflare_account_token.email.value}@api.cloudflare.com"
+}
+
+resource "random_password" "email_key" {
+  length  = 48
+  special = false
+}
+
+resource "google_secret_manager_secret_version" "email_key" {
+  secret      = google_secret_manager_secret.this["ARCHIVE_EMAIL_KEY"].id
+  secret_data = random_password.email_key.result
+}
+
+resource "cloudflare_workers_script" "email" {
+  account_id  = data.cloudflare_zone.this.account.id
+  script_name = "archive-email"
+  main_module = "email.js"
+  content     = file("${path.module}/email.js")
+  bindings = [{
+    type = "plain_text"
+    name = "API"
+    text = local.api_url
+    }, {
+    type = "secret_text"
+    name = "KEY"
+    text = random_password.email_key.result
+  }]
+}
+
+resource "cloudflare_email_routing_dns" "this" {
+  zone_id = data.cloudflare_zone.this.zone_id
+}
+
+resource "cloudflare_email_routing_catch_all" "this" {
+  zone_id  = data.cloudflare_zone.this.zone_id
+  name     = "archive"
+  enabled  = true
+  matchers = [{ type = "all" }]
+  actions  = [{ type = "worker", value = [cloudflare_workers_script.email.script_name] }]
+
+  depends_on = [cloudflare_email_routing_dns.this]
 }
 
 resource "cloudflare_account_token" "app" {
@@ -658,8 +751,6 @@ resource "cloudflare_account_token" "app" {
   }]
 }
 
-# The image workflow's Worker deploy token, which Terraform makes and so also writes; the deploy identity may read
-# it and the live key, and no other secret.
 resource "google_secret_manager_secret" "deploy" {
   count     = var.github_repository != "" ? 1 : 0
   secret_id = "archive-cloudflare-deploy-token"
@@ -749,20 +840,11 @@ resource "google_service_account_iam_member" "deploy_runs_browser_as" {
   member             = google_service_account.deploy[0].member
 }
 
-# The image workflow reads the live key at deploy time and sets it on the app Worker as LIVE_KEY.
 resource "google_secret_manager_secret_iam_member" "deploy_live" {
   count     = var.github_repository != "" ? 1 : 0
   secret_id = google_secret_manager_secret.this["ARCHIVE_LIVE_KEY"].id
   role      = "roles/secretmanager.secretAccessor"
   member    = google_service_account.deploy[0].member
-}
-
-resource "google_cloud_run_v2_job_iam_member" "deploy" {
-  count    = var.github_repository != "" ? 1 : 0
-  name     = google_cloud_run_v2_job.this.name
-  location = var.region
-  role     = "roles/run.developer"
-  member   = google_service_account.deploy[0].member
 }
 
 resource "google_service_account_iam_member" "deploy_runs_as" {
@@ -772,8 +854,6 @@ resource "google_service_account_iam_member" "deploy_runs_as" {
   member             = google_service_account.deploy[0].member
 }
 
-# Terraform applies itself on every push to main that changes it (.github/workflows/terraform.yml), as this
-# account, through the same workload identity pool as the deploy.
 resource "google_service_account" "terraform" {
   count      = var.github_repository != "" ? 1 : 0
   account_id = "archive-terraform"
@@ -793,7 +873,6 @@ resource "google_service_account_iam_member" "terraform" {
   member             = "principalSet://iam.googleapis.com/${google_iam_workload_identity_pool.github[0].name}/attribute.repository/${var.github_repository}"
 }
 
-# The Cloudflare token Terraform itself runs with, as CLOUDFLARE_API_TOKEN; seeded with gcloud like the others.
 resource "google_secret_manager_secret" "cloudflare" {
   secret_id = "archive-cloudflare-api-token"
 

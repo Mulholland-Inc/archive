@@ -3,6 +3,8 @@ package connect
 import (
 	"bytes"
 	"cmp"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math/big"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
@@ -25,32 +28,16 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
-// A connector is data: a sync and some actions over its provider's API. Its file holds a Connector literal, with
-// no funcs, which Register compiles into what the rest of the server runs. The engine here owns everything the
-// file does not say: where a sync is, when it lists whole, and what a page of it deletes.
-//
-// Values in a definition are read at run time, so the compiler cannot check them: a Path is a /-separated walk of
-// an answer, where * is every element of a list, a number one of them, ** the first list of objects at any depth,
-// **/key the list under key at any depth, and a;b the first of two walks that finds anything. A template is a
-// string whose {path} is read from what the request knows. {path} is escaped in a URL, {+path} is not, {~path} is
-// escaped a part at a time, {path,} joins a list with commas or {path,x} with x, {'path} and {"path} are escaped to
-// go in a string quoted so, and {path|x} is x when the path has nothing. A value that is only one {path} keeps its
-// type, and with nothing there its key is left out.
-
 type (
-	// Path is a walk of an answer, like paging/next/after or */portalId.
-	Path string
-	// SQL is an expression Postgres evaluates over a record, the jsonb column data.
-	SQL string
-	// Q is a query or form, by template.
-	Q map[string]string
-	// Obj is a JSON body or output, whose strings are templates.
-	Obj = map[string]any
-	// Method is how a request is sent; GET unless it says.
+	Path   string
+	SQL    string
+	Q      map[string]string
+	Obj    = map[string]any
 	Method string
 )
 
@@ -62,10 +49,6 @@ const (
 	DELETE Method = "DELETE"
 )
 
-// Req is a request. A relative URL is on the connector's API. A Method other than GET writes unless it is Read.
-// Header goes with it, by template. Tool asks the connector's MCP server instead, with Body as its arguments, those
-// its schema does not name left out; Need are those the stream cannot do without. Or is sent in its place when it is
-// refused as a bad request. Text says the answer is text, not JSON. Parts send it as multipart/related.
 type Req struct {
 	Method Method
 	URL    string
@@ -79,11 +62,10 @@ type Req struct {
 	Or     *Req                `json:",omitempty"`
 	Text   bool                `json:",omitempty"`
 	Parts  []Part              `json:",omitempty"`
-	// exact is a URL a provider named, sent as it is.
-	exact bool
+	Head   map[string]any      `json:",omitempty"`
+	exact  bool
 }
 
-// Part is a part of a multipart request, its Body sent as JSON unless it is a string.
 type Part struct {
 	Type string
 	Body any
@@ -91,8 +73,6 @@ type Part struct {
 
 func (r Req) writes() bool { return r.URL != "" && r.Method != "" && r.Method != GET && !r.Read }
 
-// Test asks something of a record or answer: that At has anything, or Is it, in any element of a list, whatever its
-// case; Not, that it has something other; or Re, that it matches. Off turns the answer round.
 type Test struct {
 	At      Path
 	Is, Not string `json:",omitempty"`
@@ -131,8 +111,6 @@ func reOf(s string) *regexp.Regexp {
 	return r
 }
 
-// Deny is a refusal a definition knows: of one of Status, saying one of Says if it lists any, in any case. In Deny of
-// a Sync, Why says what it means, reading {message}.
 type Deny struct {
 	Status []int
 	Says   []string `json:",omitempty"`
@@ -147,14 +125,12 @@ func (d Deny) is(r *Refusal) bool {
 	return len(d.Says) == 0 || slices.ContainsFunc(d.Says, func(s string) bool { return strings.Contains(m, strings.ToLower(s)) })
 }
 
-// Info is how a connector shows.
 type Info struct {
 	By          string   `json:"by,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Category    Category `json:"category,omitempty"`
 	Icon        Icon     `json:"icon,omitempty"`
-	// Scopes say in words what connecting allows.
-	Scopes []string `json:"scopes,omitempty"`
+	Scopes      []string `json:"scopes,omitempty"`
 }
 
 type (
@@ -178,6 +154,12 @@ const (
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
 
+	CatCompliance Category = "Compliance"
+	CatData       Category = "Data"
+	CatHome       Category = "Home"
+	CatHealth     Category = "Health"
+	CatMedia      Category = "Media"
+
 	IconMail     Icon = "mail"
 	IconUsers    Icon = "users"
 	IconList     Icon = "list"
@@ -190,42 +172,39 @@ const (
 	IconLedger   Icon = "ledger"
 	IconCard     Icon = "card"
 	IconBug      Icon = "bug"
+
+	IconWarehouse Icon = "warehouse"
+	IconHeart     Icon = "heart"
+	IconMusic     Icon = "music"
 )
 
-// Who is how to ask whose account a token is for: the first of Names in the answer, lowercase when Lower. With
-// Each, the first of Names of each of its elements that pass Where, joined by commas. Tool asks an MCP server's tool,
-// without arguments, and reads what it says the way such tools say it: the first address or name in it, or its first
-// line.
 type Who struct {
 	Req
 	Names []Path
 	Lower bool
+	Find  string `json:",omitempty"`
+	As    string `json:",omitempty"`
 	Each  Path
 	Where Test
 	Tool  string
+	Check []Step `json:",omitempty"`
 }
 
-// Paging is how an answer names the next page, which the next request reads as {page}.
 type Paging interface{ paging() }
 
 type (
-	// NextURL is an answer naming the next page's URL, maybe on the API's own path, without the query keys of Drop.
 	NextURL struct {
 		At   Path
 		Drop []string `json:",omitempty"`
 	}
-	// Cursor is an answer naming the next page's token, while More says so when there is a More. GraphQL pages
-	// so, with {page} in its variables.
-	Cursor struct{ At, More Path }
-	// Offset is a count from From that goes up by Step while a page comes back with Size records.
-	Offset struct{ From, Size, Step int }
-	// ToolPage is an MCP tool that pages as its schema says: Max at a time in the first of Limit that it takes, and
-	// the next page in the first of After, which the answer names under one of the usual keys, or by number in Page
-	// while a page comes back full. Each is comma separated. A next page that is the one before, or starts as it did,
-	// ends the listing.
+	Cursor struct {
+		At, More Path
+		Then     *Req `json:",omitempty"`
+	}
+	Offset   struct{ From, Size, Step int }
 	ToolPage struct {
-		Limit, After, Page string
-		Max                int
+		Limit, After, Page, Offset string
+		Max                        int
 	}
 )
 
@@ -234,38 +213,24 @@ func (Cursor) paging()   {}
 func (Offset) paging()   {}
 func (ToolPage) paging() {}
 
-// Change is how a stream reads what changed since its last sync; nil lists it whole every time. A position the
-// provider no longer takes, one of a Change's Expired statuses, starts a full listing. A provider whose Change
-// cannot say what was deleted is listed whole relistAfter after it last was.
 type Change interface{ change() }
 
 type (
-	// SinceTime asks with {since}, in Unix milliseconds when Ms. Mark, when given, is the time on a record: a
-	// sync pages on from the last it read rather than by page, which Most limits, past which it lists whole. Items
-	// is the answer's list of records, when it is not the listing's. An answer of Cap records or more is cut short,
-	// and lists whole too. Stamp, a record's own time in the provider's clock, is what {since} is rather than
-	// Archive's: the newest it has read. Lasts says it tells of deletes, so it never lists whole for them; Within how
-	// long ago it still reaches.
 	SinceTime struct {
-		Req     Req
-		Ms      bool
-		Mark    Path
-		Most    int
-		Expired []int
-		Items   Path          `json:",omitempty"`
-		Cap     int           `json:",omitempty"`
-		Stamp   Path          `json:",omitempty"`
-		Lasts   bool          `json:",omitempty"`
-		Within  time.Duration `json:",omitempty"`
+		Req    Req
+		Ms     bool
+		Mark   Path
+		Most   int
+		Items  Path          `json:",omitempty"`
+		Cap    int           `json:",omitempty"`
+		Stamp  Path          `json:",omitempty"`
+		Lasts  bool          `json:",omitempty"`
+		Within time.Duration `json:",omitempty"`
 	}
-	// NewestFirst pages the listing with Query too, newest change first, down to the last sync, by Updated. A
-	// record without one lists whole.
 	NewestFirst struct {
 		Query   Q
 		Expired []int
 	}
-	// Token asks with the {token} Start's answer named at At, or the last answer did. Each is the answer's
-	// list of changes, whose Live and Gone are the ids of records to read and of those gone.
 	Token struct {
 		Start      Req
 		At         Path
@@ -274,10 +239,6 @@ type (
 		Live, Gone []Path
 		Expired    []int
 	}
-	// Resume is a provider whose answers name where the next sync goes on from: at At on the last page. Req asks from
-	// it as {token}; with none it is a URL. With Start, it comes from there before the listing, at From. Its answers
-	// list records at Items, or changes with each record at Inner and its id at ID, Gone those that are records gone.
-	// Stale says what else means it no longer takes the position.
 	Resume struct {
 		Start   *Req `json:",omitempty"`
 		From    Path `json:",omitempty"`
@@ -297,16 +258,6 @@ func (NewestFirst) change() {}
 func (Token) change()       {}
 func (Resume) change()      {}
 
-// Parts fans one stream out over many of a thing, like calendars, each read as {part}, the rest of it as {in/...}.
-// The parts a walk finds are read from where each ended before: one new is read whole on its own, and one missing
-// from two walks in a row lists every part whole, which deletes what it had.
-//
-// A part is ID, by template, {id} when empty, Vals what else it keeps. The things come from Req's answer at Items,
-// every page of it, or are Fixed, or are the dates of Span. Soft are refusals that mean there are none. Skip are those
-// that are no part, and Not requests that name one that is none, by id, when they do not answer 404. Deep lists those
-// under one that passes DeepIf the way Req does, whose {id} is its. Under lists more under each, which read it as
-// {up/...}, and those are the parts. First skips this level once the stream has listed whole. Also are other places
-// to find them.
 type Parts struct {
 	Req    Req      `json:",omitzero"`
 	Items  Path     `json:",omitempty"`
@@ -315,6 +266,7 @@ type Parts struct {
 	Vals   Obj      `json:",omitempty"`
 	Fixed  []Obj    `json:",omitempty"`
 	Span   *Span    `json:",omitempty"`
+	Split  string   `json:",omitempty"`
 	Soft   []int    `json:",omitempty"`
 	Skip   []Test   `json:",omitempty"`
 	Not    []Req    `json:",omitempty"`
@@ -323,31 +275,27 @@ type Parts struct {
 	Under  *Parts   `json:",omitempty"`
 	First  bool     `json:",omitempty"`
 	Also   []*Parts `json:",omitempty"`
+	Mail   *Scan    `json:",omitempty"`
 }
 
-// Shift is a move in time, in years, months and days.
+type Scan struct {
+	Find, Near, From string
+	Days             int
+}
+
 type Shift [3]int
 
 func (s Shift) from(t time.Time) time.Time { return t.AddDate(s[0], s[1], s[2]) }
 
-// Span is the dates from a start to Last, a shift from today, or the first of this month with Month, a Step at a
-// time, each as {start} and {end}. It starts at First, a shift from Last. With From, on the walk that lists whole it
-// starts at that date moved by Back, First when there is no date. Once it has listed whole, it starts at Then.
 type Span struct {
 	Last, First, Step, Back, Then Shift
 	From                          string `json:",omitempty"`
 	Month                         bool   `json:",omitempty"`
 }
 
-// Hydrate adds to the records of a page, after it is read.
 type Hydrate interface{ hydrate() }
 
 type (
-	// Fetch is a request per record, Par at once, whose answer is the record, or goes at As, or is added to it with
-	// Merge. With Gone, a 404 is a record deleted there. With If, only records that pass. With Once, only one request a
-	// page for each value of that template, which a record with the same shares. With Soft, only a provider that is
-	// busy fails the page; with Bare a tool the server does not have leaves nothing, not a stream skipped. Items takes
-	// that much of the answer. More and Each read pages {n} of a list: Each from every page, while More says more.
 	Fetch struct {
 		Req   Req
 		As    string
@@ -362,31 +310,23 @@ type (
 		More  Path   `json:",omitempty"`
 		Each  Path   `json:",omitempty"`
 	}
-	// Batch is one request for a page, which reads {inputs}, the records' ids as [{id}], whose Results go on the
-	// record whose id is at their Key, at As. A listing skips it with DeltaOnly.
 	Batch struct {
 		Req          Req
 		As           string
 		Results, Key Path
 		DeltaOnly    bool
 	}
-	// Lookup is one request for a page, whose whole answer goes on each record at As. With Soft, only a provider
-	// that is busy fails the page.
 	Lookup struct {
 		Req  Req
 		As   string
 		Soft bool
 	}
-	// Decode is a codec over each record, or over what is at At, going to As, for those that pass If.
 	Decode struct {
 		Codec *Codec
 		At    Path   `json:",omitempty"`
 		As    string `json:",omitempty"`
 		If    Test   `json:",omitzero"`
 	}
-	// Files reads the words of the files of a record, the list at Each, Par at once, at As. Its request answers
-	// with the content, base64url, at Data. A file without Has, over Most bytes at Size, or of a kind Archive does
-	// not read is not asked for, and only a provider that is busy fails the page.
 	Files struct {
 		Each            Path
 		Req             Req
@@ -395,9 +335,6 @@ type (
 		As              string
 		Most, Par       int
 	}
-	// Download reads the words of a file its Req answers with, down to 25 MB, at As: the record's own, or each of
-	// the list at Each that passes If, reading the record as {up/...}. Name and Mime are templates, and Size a path. One
-	// that already has As is left alone. Only a provider that is busy fails the page.
 	Download struct {
 		Each       Path `json:",omitempty"`
 		If         Test `json:",omitzero"`
@@ -406,6 +343,7 @@ type (
 		Size       Path
 		As         string
 		Par        int
+		Keep       bool `json:",omitempty"`
 	}
 )
 
@@ -416,9 +354,6 @@ func (Decode) hydrate()   {}
 func (Files) hydrate()    {}
 func (Download) hydrate() {}
 
-// Map is what a record is as a row, each column a SQL expression over data. People are its known_person columns
-// by address and Orgs its known_org columns by web domain, or EINs by EIN, Refs its columns that are a row of the
-// connection by that row's id there. Children are rows of other tables that belong to it.
 type Map struct {
 	Table              string
 	Cols               map[string]SQL
@@ -427,7 +362,6 @@ type Map struct {
 	EINs               map[string]SQL `json:",omitempty"`
 }
 
-// Kids are the child rows of a record: one for each row of From, a SQL table expression over data.
 type Kids struct {
 	Table              string
 	From               SQL
@@ -435,18 +369,6 @@ type Kids struct {
 	People, Orgs, Refs map[string]SQL
 }
 
-// Sync is a kind of record a connector syncs: its listing, how it reads what changed, what else a page reads, and
-// the row a record is. Vars are templates' own values, so that streams share theirs. Items is the answer's list of
-// records, ID each one's id, id when empty, and Updated when it last changed there. An answer without its Items is
-// refused, so a full listing never ends empty by accident; Absent is a key a provider's answer has when it leaves
-// Items out for having none.
-//
-// Key makes the id when ID cannot, the first that reads to anything. Set adds to each record, by template. Gone are
-// the records that are deleted there, and Skip those that are no record. Every is how long after it caught up the
-// stream reads again. Keep says a listing deletes nothing, and Short what in an answer says this listing is short of
-// everything, so that it deletes nothing either. Memo is what a record that has not changed still reads the same: such
-// a record is only seen, and not read further. Deny are refusals that skip the stream, Restart those that start it
-// again when a page was under way, and Pass those that pass over a part until the next walk.
 type Sync struct {
 	Name, Doc string
 	Gap       time.Duration
@@ -460,21 +382,47 @@ type Sync struct {
 	Parts     *Parts
 	Hydrate   []Hydrate
 	To        Map
-	Absent    Path          `json:",omitempty"`
-	Key       []Reads       `json:",omitempty"`
-	Set       Obj           `json:",omitempty"`
-	Gone      []Test        `json:",omitempty"`
-	Skip      []Test        `json:",omitempty"`
-	Every     time.Duration `json:",omitempty"`
-	Keep      bool          `json:",omitempty"`
-	Short     Test          `json:",omitzero"`
-	Memo      string        `json:",omitempty"`
-	Deny      []Deny        `json:",omitempty"`
-	Restart   []int         `json:",omitempty"`
-	Pass      []int         `json:",omitempty"`
+	Absent    Path                                          `json:",omitempty"`
+	Empty     bool                                          `json:",omitempty"`
+	Key       []Reads                                       `json:",omitempty"`
+	Set       Obj                                           `json:",omitempty"`
+	Gone      []Test                                        `json:",omitempty"`
+	Skip      []Test                                        `json:",omitempty"`
+	Every     time.Duration                                 `json:",omitempty"`
+	Keep      bool                                          `json:",omitempty"`
+	Short     Test                                          `json:",omitzero"`
+	Memo      string                                        `json:",omitempty"`
+	Deny      []Deny                                        `json:",omitempty"`
+	Restart   []int                                         `json:",omitempty"`
+	Pass      []int                                         `json:",omitempty"`
+	Content   []Content                                     `json:",omitempty"`
+	Pull      func(c *Client, cursor string) (*Page, error) `json:"-"`
+	Mail      *Scan                                         `json:",omitempty"`
 }
 
-// Reads is what template Of reads to, all of it there, or the first group of Find in that.
+type Content struct {
+	If   Test `json:",omitzero"`
+	Req  Req
+	Size Path   `json:",omitempty"`
+	Too  []Deny `json:",omitempty"`
+}
+
+type Send struct {
+	Doc       string
+	Let       []Step
+	New, Over Req
+	In        *Req
+	At        Path
+	AtHeader  string
+	Check     *Req
+	Now       string
+	Part      Req
+	Last      *Req
+	Step      int64
+	Bare      bool
+	Stale     []Deny
+}
+
 type Reads struct {
 	Of   string
 	Find string `json:",omitempty"`
@@ -502,16 +450,11 @@ func (k Reads) read(sc map[string]any) string {
 	return s
 }
 
-// relistAfter is how long after a full listing a provider that cannot say what was deleted lists whole again, and
-// overlap how far before a sync's start the next reads from, against the provider's clock.
 const (
 	relistAfter = 7 * 24 * time.Hour
 	overlap     = time.Minute
 )
 
-// Plan is an action: its Steps in order, each reading the input and the steps' As before it, {now}, a fresh {nonce} and {meta/...}, and Out, or
-// else the answer of the last. Clamp keeps a number within what a provider takes: { def, most }. Enum names the only
-// values an input may be.
 type Plan struct {
 	Doc   string
 	Clamp map[string][2]int
@@ -520,12 +463,6 @@ type Plan struct {
 	Out   any
 }
 
-// Step is a request, a codec, the one over the other, or only In's value. Each runs it for every element of a list,
-// when there is one, which reads the element's fields too and the element as {it}; Onto puts each result on its
-// element. It runs only with If, without Unless and when Only holds, of each element with Each. A codec reads the
-// request's answer, or In. Find is the first group of a regexp over the value. Fail ends the action with that message.
-// With Page, the request is every page of what is at Items. Soft are refusals that are nothing rather than failure.
-// Words reads a file's words. As may be a path into what a step before named.
 type Step struct {
 	Req
 	As         string
@@ -540,11 +477,8 @@ type Step struct {
 	Page       Paging
 	Items      Path
 	Soft       []int
-	Words      *Download
 }
 
-// Call is the action of a Plan, whose In and Out are its input's and output's types, for the docs and the check of
-// a script's input. It writes when any step does.
 func Call[In, Out any](p Plan) *Action {
 	in, err := jsonschema.For[In](nil)
 	if err != nil {
@@ -569,6 +503,27 @@ func Call[In, Out any](p Plan) *Action {
 	return a
 }
 
+// Func is an action in Go, for a provider that speaks more than HTTP and JSON, like IMAP.
+func Func[In, Out any](doc string, f func(c *Client, in In) (Out, error)) *Action {
+	in, err := jsonschema.For[In](nil)
+	if err != nil {
+		panic(err)
+	}
+	out, err := jsonschema.For[Out](nil)
+	if err != nil {
+		panic(err)
+	}
+	return &Action{Doc: doc, Input: in, Output: out, Do: func(c *Client, raw json.RawMessage) (any, error) {
+		var v In
+		if len(raw) > 0 && string(raw) != "null" {
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return nil, err
+			}
+		}
+		return f(c, v)
+	}}
+}
+
 func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	v, err := readAll(raw, c.p.Name)
 	if err != nil {
@@ -578,7 +533,8 @@ func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	if sc == nil {
 		sc = map[string]any{}
 	}
-	sc["now"], sc["nonce"], sc["meta"] = time.Now().UTC().Format(time.RFC3339), nonce(), c.scope()["meta"]
+	cs := c.scope()
+	sc["now"], sc["nonce"], sc["meta"], sc["key"] = time.Now().UTC().Format(time.RFC3339), nonce(), cs["meta"], cs["key"]
 	for k, lim := range p.Clamp {
 		n, _ := strconv.Atoi(text(sc[k]))
 		sc[k] = clamp(n, lim[0], lim[1])
@@ -594,7 +550,6 @@ func (p *Plan) run(c *Client, raw json.RawMessage) (any, error) {
 	return last, nil
 }
 
-// runSteps runs steps over sc, and is the answer of the last that ran.
 func runSteps(c *Client, steps []Step, sc map[string]any) (any, error) {
 	var last any
 	for _, s := range steps {
@@ -642,7 +597,6 @@ func runSteps(c *Client, steps []Step, sc map[string]any) (any, error) {
 	return last, nil
 }
 
-// put sets what path walks to in sc, making what it walks through.
 func put(sc map[string]any, path string, v any) {
 	head, rest, more := strings.Cut(path, "/")
 	if !more {
@@ -664,10 +618,6 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	}
 	v = e
 	switch {
-	case s.Words != nil:
-		if v, err = c.words(*s.Words, sc); err != nil {
-			return nil, err
-		}
 	case s.Req.URL != "" || s.Tool != "":
 		if s.Page != nil {
 			v, err = c.every(s.Req, s.Items, s.Page, sc)
@@ -697,11 +647,6 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	return v, nil
 }
 
-// Sign is a way a push proves it is the provider's, when it has the header Header and, if it says, When is Is.
-// The signature is Digest of Of, a template of {method}, {url}, {body}, {secret} and {header/<name>}, with HMAC
-// keyed by the app's secret, or the hook option of its variable with Hook, or the secret a handshake left with Kept,
-// after Pre. Plain are characters {url} has not percent-escaped, as the provider signs it, and Fresh a header of its
-// time in Unix milliseconds, which must be under 5 minutes old.
 type Sign struct {
 	Header, When, Is string
 	Digest           Digest
@@ -710,6 +655,9 @@ type Sign struct {
 	Plain, Fresh     string
 	Hook, Kept       bool
 	Pre              string
+	Key              *Req   `json:",omitempty"`
+	JWK              Path   `json:",omitempty"`
+	Claim            string `json:",omitempty"`
 }
 
 type (
@@ -727,25 +675,6 @@ const (
 	Hex
 )
 
-// Listen is how a provider tells Archive an account changed. Env names where it pushes, read as {target} and not
-// asked for without it. OIDC is a Pub/Sub push, signed for Archive's tasks account; Signs the app's other schemes,
-// the first whose header a push has deciding.
-//
-// Asking: Over is what to watch one by one, each read as {part} and {in/...}; without it the account is watched
-// once. Ask comes first, and Watch reads its answer as {ask}, with {account}, {client}, {token}, {conn} the connection,
-// a fresh {nonce} and {secret}, and {until} and {until_ms} the time Until from now. Mint is a key made before asking,
-// as {key}, which goes on {hook}, where the provider pushes; else Key is the template of what they name it by, with
-// the answer at {answer}. Resource is what it is called there, and Secret keeps {secret} to check pushes with. It ends
-// at Expires in the answer, or Lasts from now, and Renew is how long before that a sync renews it.
-//
-// Renewing: OfPart says which of Over an old watch is on, reading {key}, {resource}. Extend keeps such a watch, its
-// answer passing Alive if it says, which a 404 or anything else with Alive replaces. Replace makes new watches and
-// ends the old. An old watch on nothing there any more is ended. Skip are refusals that mean this one cannot be
-// watched, and Lax says any refusal that is not a busy provider's does. Unwatch ends one.
-//
-// Hearing: Hello is the handshake a provider opens a watch with. A push's Keys are read from its body, or from what
-// Codec makes of what is at Wrap, the first of them that has any, or from Kept, which proves them too. Only is what a
-// push says for it to mean anything.
 type Listen struct {
 	Env      string
 	OIDC     bool
@@ -758,6 +687,7 @@ type Listen struct {
 	Until    time.Duration
 	Resource string
 	Secret   bool
+	Keep     string
 	Expires  Path
 	Lasts    time.Duration
 	Unwatch  *Req
@@ -775,16 +705,23 @@ type Listen struct {
 	Keys     []Path
 	Kept     *Kept
 	Only     Test
+	Forget   []Forget
 }
 
-// Hello is a handshake: a query parameter whose value is answered as it came, in plain text, or with Header, a header
-// answered with itself, and kept as the secret of the watch the URL names.
+type Forget struct {
+	When, Is string
+	All      bool
+	Of       []Forgot
+}
+
+type Forgot struct {
+	Stream string
+	At     Path
+	ID     string
+}
+
 type Hello struct{ Query, Header string }
 
-// Kept is how a push names a watch and proves it with the secret Archive kept. With ByQuery the key is in the push's
-// URL, its Sign proves it, and a push of a watch with no secret starts nothing. With IDHeader and TokenHeader they are
-// headers, and a push whose Quiet header is QuietIs says nothing changed. With Each they are at ID and Token in each
-// element of the body.
 type Kept struct {
 	ByQuery               bool
 	IDHeader, TokenHeader string
@@ -792,12 +729,15 @@ type Kept struct {
 	Each, ID, Token       Path
 }
 
-// compile fills in what the rest of the server runs from a connector's data, and fails on data that cannot run.
+func (c *Connector) mailOnly() bool {
+	return len(c.Sync) > 0 && !slices.ContainsFunc(c.Sync, func(s *Sync) bool { return s.Mail == nil })
+}
+
 func (c *Connector) compile() error {
-	if c.API == "" && c.MCP == "" {
+	if c.API == "" && c.MCP == "" && !c.mailOnly() {
 		return nil
 	}
-	if len(c.Keys) == 0 && c.MCP == "" {
+	if !c.Tap && len(c.Keys) == 0 && c.MCP == "" {
 		if c.Env == "" {
 			c.Env = "ARCHIVE_" + strings.ToUpper(c.ID)
 		}
@@ -805,15 +745,40 @@ func (c *Connector) compile() error {
 			c.Host = u.Scheme + "://" + u.Host
 		}
 	}
-	if c.Sign != nil {
-		sign := c.Sign
+	if (c.Ask != nil || c.Signed != "" || c.Was != "") && (c.Keyed() || c.MCP != "") {
+		return errors.New("Ask, Signed and Was are a sign-in's, not keys' or an MCP server's")
+	}
+	if c.OAuth1 != "" && (c.Keyed() || c.MCP != "" || c.Ask != nil || c.Signed != "" || !c.Lasts) {
+		return errors.New("an OAuth 1 sign-in asks nothing first, signs nothing back, and its token Lasts")
+	}
+	if c.Trade != nil {
+		if err := c.Trade.check("trade", "key", "client", "option", "basic"); err != nil {
+			return err
+		}
+	}
+	if c.Sign != nil || c.Pin != nil {
+		sign, pin := c.Sign, c.Pin
 		c.Authorize = func(r *http.Request, cl *Client) {
 			for h, t := range sign {
 				if v, _ := fillStr(t, cl.scope()); text(v) != "" {
 					r.Header.Set(h, text(v))
 				}
 			}
+			if pin != nil {
+				q := r.URL.Query()
+				for k, t := range pin {
+					v, _ := fillStr(t, cl.scope())
+					q.Set(k, text(v))
+				}
+				r.URL.RawQuery = q.Encode()
+			}
 		}
+	}
+	if b := c.Basic; b[0] != "" {
+		if c.Sign != nil {
+			return errors.New("a connector signs with Sign or Basic, not both")
+		}
+		c.Authorize = func(r *http.Request, cl *Client) { r.SetBasicAuth(cl.keys[b[0]], cl.keys[b[1]]) }
 	}
 	if w := c.Who; w != nil {
 		if w.Tool != "" {
@@ -827,6 +792,14 @@ func (c *Connector) compile() error {
 	}
 	if r := c.RevokeBy; r != nil {
 		c.RevokeWith = func(rv *Revocation) error { return r.revoke(rv) }
+	}
+	if l := c.Link; l != nil {
+		if len(c.Keys) == 0 {
+			return errors.New("link: a widget hands over Keys")
+		}
+		if err := l.check(); err != nil {
+			return err
+		}
 	}
 	for name, a := range c.Actions {
 		if a.plan != nil {
@@ -844,16 +817,29 @@ func (c *Connector) compile() error {
 		if err := s.check(); err != nil {
 			return fmt.Errorf("stream %s: %w", s.Name, err)
 		}
-		c.Streams = append(c.Streams, &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()})
+		st := &Stream{Name: s.Name, Doc: s.Doc, Gap: s.Gap, Every: s.Every, Table: s.To.Table, Pull: s.pull, SQL: s.To.sql(), Version: s.version()}
+		if s.Pull != nil {
+			st.Pull = s.Pull
+		}
+		if len(s.Content) > 0 {
+			st.Read = s.bytesOf
+		}
+		c.Streams = append(c.Streams, st)
 	}
 	return nil
 }
 
-// read is the account Who asks for.
 func (w *Who) read(cl *Client, c *Connector) (string, error) {
 	ans, err := cl.req(w.Req, cl.scope())
 	if err != nil {
 		return "", err
+	}
+	if w.Check != nil {
+		sc := cl.scope()
+		sc["who"] = ans
+		if _, err := runSteps(cl, w.Check, sc); err != nil {
+			return "", err
+		}
 	}
 	first := func(v any) string {
 		for _, n := range w.Names {
@@ -875,20 +861,38 @@ func (w *Who) read(cl *Client, c *Connector) (string, error) {
 		}
 		s = strings.Join(names, ", ")
 	}
+	if w.As != "" {
+		sc := cl.scope()
+		sc["who"] = ans
+		if v, _ := fillStr(w.As, sc); strings.Trim(text(v), " ·") != "" {
+			s = strings.Trim(text(v), " ·")
+		}
+	}
 	if w.Lower {
 		s = strings.ToLower(s)
 	}
-	if s == "" && len(c.Keys) > 0 {
+	if w.Find != "" {
+		if f := reOf(w.Find).FindStringSubmatch(s); f != nil {
+			s = f[1]
+		}
+	}
+	if s == "" && c.Keyed() {
 		s = c.Name
 	}
 	return s, nil
 }
 
-// revoke ends a grant as r says, which reads {client}, {refresh}, {basic} the client as HTTP Basic, and {access} an
-// access token of the grant, only asked for when it does.
 func (r *Req) revoke(rv *Revocation) error {
 	id, secret := rv.Client()
-	sc := map[string]any{"client": map[string]any{"id": id, "secret": secret}, "refresh": rv.Refresh, "basic": basic(id, secret)}
+	sc := rv.p.metaScope(rv.Meta)
+	sc["client"], sc["refresh"], sc["basic"] = map[string]any{"id": id, "secret": secret}, rv.Refresh, basic(id, secret)
+	if rv.p.Keyed() {
+		keys := map[string]any{}
+		for k, v := range keysFrom(rv.Refresh) {
+			keys[k] = v
+		}
+		sc["key"] = keys
+	}
 	if slices.Contains(r.roots(), "access") {
 		at, err := rv.Access()
 		if err != nil {
@@ -911,7 +915,6 @@ func (r *Req) revoke(rv *Revocation) error {
 	return rv.Send(string(cmp.Or(r.Method, POST)), u, hdr, body)
 }
 
-// roots are the first parts of the paths r reads.
 func (r Req) roots() []string {
 	var seen []string
 	note := func(t string) {
@@ -957,6 +960,9 @@ func (r Req) roots() []string {
 		}
 	}
 	walk(r.Body)
+	for _, x := range r.Head {
+		walk(x)
+	}
 	for _, x := range r.Parts {
 		note(x.Type)
 		walk(x.Body)
@@ -985,9 +991,9 @@ func (r Req) check(where string, roots ...string) error {
 }
 
 func (a *Action) check() error {
-	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta")
+	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta", "key")
 	for i, s := range a.plan.Steps {
-		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
+		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" {
 			return fmt.Errorf("step %d is nothing to do", i)
 		}
 		if s.URL != "" && s.Each == "" {
@@ -1010,8 +1016,15 @@ func (s *Sync) check() error {
 	if len(s.To.Cols) == 0 || len(s.To.Cols) > 50 {
 		return errors.New("To.Cols has between 1 and 50 columns")
 	}
+	if s.Pull != nil {
+		return nil
+	}
 	roots := append(slices.Collect(maps.Keys(s.Vars)), "stream", "part", "in", "page", "key", "meta", "option")
-	if err := s.Req.check("listing", roots...); err != nil {
+	if s.Mail != nil {
+		if s.Req.URL != "" || s.Req.Tool != "" || s.Change != nil || s.Page != nil || s.Parts != nil {
+			return errors.New("a stream that reads mail has no Req, Change, Page or Parts")
+		}
+	} else if err := s.Req.check("listing", roots...); err != nil {
 		return err
 	}
 	switch ch := s.Change.(type) {
@@ -1048,14 +1061,17 @@ func (s *Sync) check() error {
 			return errors.New("a Decode needs a Codec")
 		}
 	}
+	for _, k := range s.Content {
+		if err := k.Req.check("content", "source"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
-// version is the stream's definition's hash, all but how it shows and how fast it goes: a stream whose rows were
-// written by another starts from scratch.
 func (s *Sync) version() string {
 	x := *s
-	x.Doc, x.Gap, x.Every, x.Absent, x.Deny, x.Restart, x.Pass = "", 0, 0, "", nil, nil, nil
+	x.Doc, x.Gap, x.Every, x.Absent, x.Empty, x.Deny, x.Restart, x.Pass = "", 0, 0, "", false, nil, nil, nil
 	h := sha256.New()
 	b, _ := json.Marshal(x)
 	h.Write(b)
@@ -1066,12 +1082,6 @@ func (s *Sync) version() string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// flow is where a stream is. Since are the parts' positions, times or tokens, of the last sync, Listed when the
-// last full listing began, Missed the parts the walk before did not find, and Seen what Memo read of each record in
-// the last listing. While a sync is under way, Mode is list or delta, Began when it began, Parts what it goes through
-// and Info what they keep, At which it is on, Page and Mark where in it, Tokens the parts' positions a listing took,
-// Max the newest Stamp it has read, First the first record of the page before, Partial that its listing is short of
-// everything, and Next what Seen will be.
 type flow struct {
 	Since   map[string]string `json:"since,omitempty"`
 	Listed  string            `json:"listed,omitempty"`
@@ -1093,13 +1103,11 @@ type flow struct {
 
 func (st flow) cursor() string { return cursorFor(st) }
 
-// listing is a stream that restarts as a full listing, part one, keeping when it began.
 func (st flow) listing() *Page {
 	st.Mode, st.At, st.Page, st.Mark, st.Tokens, st.First, st.Partial, st.Next = "list", 0, "", "", nil, "", false, nil
 	return &Page{More: true, Cursor: st.cursor()}
 }
 
-// over is st with no sync under way, its memory kept.
 func (st flow) over() flow {
 	st.Mode, st.Began, st.Parts, st.Info, st.At, st.Page, st.Mark, st.Tokens, st.Max, st.First, st.Partial, st.Next = "", "", nil, nil, 0, "", "", nil, "", "", false, nil
 	return st
@@ -1118,7 +1126,6 @@ func (s *Sync) pull(c *Client, cursor string) (*Page, error) {
 		if st.Page != "" && slices.Contains(s.Restart, r.Status) {
 			return &Page{More: true, Cursor: st.over().cursor()}, nil
 		}
-		// A listing's next page can expire as a position does, and a cursor kept on it would fail for good.
 		if ch, ok := s.Change.(Resume); ok && st.Page != "" && (slices.Contains(ch.Expired, r.Status) || slices.ContainsFunc(ch.Stale, func(d Deny) bool { return d.is(r) })) {
 			return st.listing(), nil
 		}
@@ -1143,13 +1150,15 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 		sc = Obj{}
 	}
 	sc["stream"] = s.Name
+	cs := c.scope()
+	sc["key"], sc["meta"], sc["option"] = cs["key"], cs["meta"], cs["option"]
 	if st.Mode == "" {
 		parts, info, err := s.parts(c, sc, st)
 		if err != nil {
 			return nil, err
 		}
 		if s.Parts != nil && len(parts) == 0 {
-			if len(st.Since) > 0 {
+			if len(st.Since) > 0 && s.Parts.Mail == nil {
 				return nil, fmt.Errorf("%s listed none of what it listed before; Archive keeps what it has and asks again next sync", c.p.Name)
 			}
 			return &Page{Cursor: st.cursor()}, nil
@@ -1172,7 +1181,6 @@ func (s *Sync) step(c *Client, st flow) (*Page, error) {
 	return page, err
 }
 
-// lists says this sync reads everything rather than what changed.
 func (s *Sync) lists(st *flow, parts []string) bool {
 	if s.Change == nil {
 		return true
@@ -1211,7 +1219,6 @@ func (s *Sync) lists(st *flow, parts []string) bool {
 	return again
 }
 
-// part reads the page of part that st is on.
 func (s *Sync) part(c *Client, st flow, part string, sc map[string]any) (*Page, error) {
 	if st.Mode == "delta" && st.Since[part] != "" {
 		return s.delta(c, st, part, sc)
@@ -1247,7 +1254,6 @@ func (s *Sync) part(c *Client, st flow, part string, sc map[string]any) (*Page, 
 	return s.done(c, st, part, sc, recs, next, cmp.Or(position, s.began(st)))
 }
 
-// began is the position a time gives, for a stream whose answers give it none.
 func (s *Sync) began(st flow) string {
 	switch ch := s.Change.(type) {
 	case Resume:
@@ -1260,7 +1266,6 @@ func (s *Sync) began(st flow) string {
 	return st.Began
 }
 
-// start is what asks for the position before a listing, and where its answer has it.
 func (s *Sync) start() (*Req, Path) {
 	switch ch := s.Change.(type) {
 	case Token:
@@ -1271,7 +1276,6 @@ func (s *Sync) start() (*Req, Path) {
 	return nil, ""
 }
 
-// covers says the last sync read exactly these parts, so a delta can start from where they each are.
 func (st flow) covers(parts []string) bool {
 	if len(st.Since) != len(parts) {
 		return false
@@ -1291,7 +1295,6 @@ func (s *Sync) parts(c *Client, sc map[string]any, st flow) ([]string, map[strin
 	return s.Parts.find(c, sc, nil, st.Listed != "")
 }
 
-// find are the parts p finds under up, each once, and what each keeps. again says the stream has listed whole.
 func (p *Parts) find(c *Client, sc, up map[string]any, again bool) ([]string, map[string]Obj, error) {
 	ids, info := []string{}, map[string]Obj{}
 	add := func(more []string, of map[string]Obj) {
@@ -1385,6 +1388,23 @@ func (p *Parts) items(c *Client, sc map[string]any, again bool) ([]any, error) {
 		return out, nil
 	case p.Span != nil:
 		return p.Span.dates(sc, again), nil
+	case p.Mail != nil:
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		return c.Mail(*p.Mail)
+	case p.Split != "":
+		v, _ := fillStr(p.Split, sc)
+		out := []any{}
+		for _, n := range strings.FieldsFunc(text(v), func(r rune) bool { return r == ',' || unicode.IsSpace(r) }) {
+			n = strings.ReplaceAll(n, "`", "")
+			at := []any{}
+			for _, x := range strings.Split(n, ".") {
+				at = append(at, x)
+			}
+			out = append(out, map[string]any{"name": n, "at": at})
+		}
+		return out, nil
 	case p.Req.URL == "" && p.Req.Tool == "":
 		return nil, nil
 	case p.Page != nil:
@@ -1423,12 +1443,11 @@ func (sp *Span) dates(sc map[string]any, again bool) []any {
 		if end.After(last) {
 			end = last
 		}
-		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly)})
+		out = append(out, map[string]any{"start": start.Format(time.DateOnly), "end": end.Format(time.DateOnly), "after": end.AddDate(0, 0, 1).Format(time.DateOnly)})
 	}
 	return out
 }
 
-// read sends req for the page st is on, and is its answer and records.
 func (s *Sync) read(c *Client, req Req, st *flow, sc map[string]any) (any, []Record, error) {
 	ans, err := s.send(c, req, st, sc)
 	if err != nil {
@@ -1443,9 +1462,6 @@ func (s *Sync) read(c *Client, req Req, st *flow, sc map[string]any) (any, []Rec
 	return ans, recs, nil
 }
 
-// itemsOf is the list at at in ans. An answer without it is refused, so a listing never ends empty by accident and
-// deletes what it did not read, unless the stream declares what an answer with nothing has in its place. A stream
-// whose answer is its records, each with its ID, is refused any answer but a list.
 func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, error) {
 	if t, _ := fillStr(string(at), sc); strings.Contains(string(at), "{") {
 		at = Path(text(t))
@@ -1454,13 +1470,25 @@ func (s *Sync) itemsOf(c *Client, ans any, at Path, sc map[string]any) (any, err
 	if _, list := items.([]any); items != nil && (at != "" || s.ID == "" || list) {
 		return items, nil
 	}
-	if s.Absent != "" && pick(ans, s.Absent) != nil {
+	if m, _ := ans.(map[string]any); s.Absent != "" && pick(ans, s.Absent) != nil || s.Empty && (ans == nil || m != nil && len(m) == 0) {
 		return []any{}, nil
 	}
 	return nil, fmt.Errorf("%s answered %s without its list of records, at %q", c.p.Name, s.Name, at)
 }
 
 func (s *Sync) send(c *Client, req Req, st *flow, sc map[string]any) (any, error) {
+	if s.Mail != nil {
+		if c.Mail == nil {
+			return nil, errors.New("it reads the mail Archive synced, which only a sync can")
+		}
+		m := *s.Mail
+		for _, t := range []*string{&m.Near, &m.From} {
+			v, _ := fillStr(*t, sc)
+			*t = text(v)
+		}
+		got, err := c.Mail(m)
+		return Obj{"messages": got}, err
+	}
 	if p, ok := s.Page.(ToolPage); ok {
 		var err error
 		if req, err = p.asking(c, req, st.Page); err != nil {
@@ -1472,7 +1500,6 @@ func (s *Sync) send(c *Client, req Req, st *flow, sc map[string]any) (any, error
 	return c.req(req, sc)
 }
 
-// pageOf is req for the page at, which sc reads as {page}: "" is the first.
 func pageOf(req Req, pg Paging, at string, sc map[string]any) Req {
 	delete(sc, "page")
 	if at != "" {
@@ -1480,13 +1507,15 @@ func pageOf(req Req, pg Paging, at string, sc map[string]any) Req {
 		if _, ok := pg.(NextURL); ok {
 			req.URL, req.Query, req.exact = at, nil, true
 		}
+		if c, ok := pg.(Cursor); ok && c.Then != nil {
+			req = *c.Then
+		}
 	} else if o, ok := pg.(Offset); ok && o.From != 0 {
 		sc["page"] = strconv.Itoa(o.From)
 	}
 	return req
 }
 
-// every is the list at items in every page of req.
 func (c *Client) every(req Req, items Path, pg Paging, sc map[string]any) ([]any, error) {
 	x := maps.Clone(sc)
 	out := []any{}
@@ -1515,7 +1544,6 @@ func (s *Sync) records(items any, sc map[string]any) []Record {
 	return out
 }
 
-// record is what m says, its data at data; false when it is no record. id and gone are a Change's own when it has them.
 func (s *Sync) record(m, data map[string]any, id Path, gone []Test, sc map[string]any) (Record, bool) {
 	x := maps.Clone(sc)
 	maps.Copy(x, m)
@@ -1546,7 +1574,6 @@ func (s *Sync) record(m, data map[string]any, id Path, gone []Test, sc map[strin
 	return Record{ID: rid, Data: data}, true
 }
 
-// remember keeps what Stamp and Memo read of recs, and makes those Memo knows the same.
 func (s *Sync) remember(st *flow, recs []Record, sc map[string]any) {
 	if t, ok := s.Change.(SinceTime); ok && t.Stamp != "" {
 		for _, r := range recs {
@@ -1575,7 +1602,6 @@ func (s *Sync) remember(st *flow, recs []Record, sc map[string]any) {
 	}
 }
 
-// delta reads what changed, as its Change says, from the position part has.
 func (s *Sync) delta(c *Client, st flow, part string, sc map[string]any) (*Page, error) {
 	var ans any
 	var recs []Record
@@ -1635,9 +1661,6 @@ func (s *Sync) delta(c *Client, st flow, part string, sc map[string]any) (*Page,
 			from = &x
 		}
 		if ans, recs, err = from.read(c, ch.Req, &st, sc); err != nil {
-			if expired(ch.Expired) {
-				return st.listing(), nil
-			}
 			return nil, err
 		}
 		if ch.Cap > 0 && len(recs) >= ch.Cap {
@@ -1700,7 +1723,6 @@ func (s *Sync) delta(c *Client, st flow, part string, sc map[string]any) (*Page,
 	return nil, fmt.Errorf("%s has no way to read what changed", s.Name)
 }
 
-// changes are the records an answer's changes name: each as its last change says, gone or there to read.
 func (t Token) changes(ans any) []Record {
 	gone, order := map[string]bool{}, []string{}
 	note := func(paths []Path, e any, deleted bool) {
@@ -1725,8 +1747,6 @@ func (t Token) changes(ans any) []Record {
 	return out
 }
 
-// done is the page of recs, with the sync moving on: to the next page, or with the part at position, to the next
-// part, or to its end. A listing keeps its positions to itself until it ends: until then it has not read them all.
 func (s *Sync) done(c *Client, st flow, part string, sc map[string]any, recs []Record, next, position string) (*Page, error) {
 	mode, whole := st.Mode, st.Mode == "list" && !s.Keep && !st.Partial
 	if next != "" {
@@ -1757,7 +1777,6 @@ func (s *Sync) done(c *Client, st flow, part string, sc map[string]any, recs []R
 	return s.page(c, st.over(), mode, sc, recs, false, whole)
 }
 
-// page hydrates recs and is them as a page of the sync's mode, whole when it is of a listing of everything.
 func (s *Sync) page(c *Client, st flow, mode string, sc map[string]any, recs []Record, more, whole bool) (*Page, error) {
 	if err := s.hydrated(c, mode, recs, sc); err != nil {
 		return nil, err
@@ -1770,7 +1789,6 @@ func (s *Sync) page(c *Client, st flow, mode string, sc map[string]any, recs []R
 	return &Page{Records: recs, Cursor: st.cursor(), More: more, Full: whole}, nil
 }
 
-// next is the page after this one, recs in it.
 func (s *Sync) next(c *Client, ans any, recs []Record, st *flow) string {
 	p, ok := s.Page.(ToolPage)
 	if !ok {
@@ -1826,7 +1844,6 @@ func atoi(s string) int {
 	return n
 }
 
-// firstTaken is the first of names, comma separated, that takes has.
 func firstTaken(names string, has func(string) bool) string {
 	for _, n := range strings.Split(names, ",") {
 		if n != "" && has(n) {
@@ -1836,8 +1853,6 @@ func firstTaken(names string, has func(string) bool) string {
 	return ""
 }
 
-// asking is req with the page size and page in its arguments, as the tool's schema names them. A server without the
-// tool skips the stream.
 func (p ToolPage) asking(c *Client, req Req, at string) (Req, error) {
 	t, err := c.tool(req.Tool)
 	if err != nil {
@@ -1858,13 +1873,14 @@ func (p ToolPage) asking(c *Client, req Req, at string) (Req, error) {
 			args[a] = at
 		} else if n := firstTaken(p.Page, has); n != "" {
 			args[n] = atoi(at)
+		} else if o := firstTaken(p.Offset, has); o != "" {
+			args[o] = atoi(at)
 		}
 	}
 	req.Body = args
 	return req, nil
 }
 
-// after is the page after the one at: named in ans, or by number while a page comes back full.
 func (p ToolPage) after(c *Client, tool string, ans any, recs []Record, at string) string {
 	t, err := c.tool(tool)
 	if err != nil {
@@ -1878,12 +1894,12 @@ func (p ToolPage) after(c *Client, tool string, ans any, recs []Record, at strin
 	if firstTaken(p.Page, has) != "" && len(recs) > 0 && len(recs) >= p.Max {
 		return strconv.Itoa(max(atoi(at), 1) + 1)
 	}
+	if firstTaken(p.Offset, has) != "" && len(recs) > 0 && len(recs) >= p.Max {
+		return strconv.Itoa(atoi(at) + len(recs))
+	}
 	return ""
 }
 
-// namedNext is the cursor of the page after recs in an answer: one it names at its top or a level down, like
-// namedNext or pageInfo.endCursor while hasNextPage, or with has_more the last record's id; "" when it says there is
-// no more.
 func namedNext(v any, recs []Record) string {
 	m, _ := v.(map[string]any)
 	levels := []map[string]any{m}
@@ -1916,7 +1932,6 @@ func namedNext(v any, recs []Record) string {
 	return ""
 }
 
-// hydrated runs the stream's Hydrate over recs, those deleted or the same left alone.
 func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]any) error {
 	data := func(r *Record) map[string]any {
 		m, _ := r.Data.(map[string]any)
@@ -2065,7 +2080,7 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					a, _ := f.(map[string]any)
 					name, kind := text(pick(a, h.Name)), text(pick(a, h.Mime))
 					size, _ := strconv.Atoi(text(pick(a, h.Size)))
-					if text(pick(a, h.Has)) == "" || size > h.Most || Extract == nil || !textual(name, kind) {
+					if text(pick(a, h.Has)) == "" || size > h.Most || c.Store == nil && (Extract == nil || !textual(name, kind)) {
 						continue
 					}
 					x := scope(r)
@@ -2077,6 +2092,11 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					if err == nil {
 						b, _ := unb64(text(pick(ans, h.Data)))
 						a[h.As] = bytesText(name, kind, b)
+						if id, err := c.keep(name, b); err != nil {
+							return err
+						} else if id != "" {
+							a["file"] = id
+						}
 					}
 				}
 				return nil
@@ -2095,12 +2115,15 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					if h.If.At != "" && !h.If.holds(r.Data) || !none(pick(r.Data, Path(h.As))) {
 						return nil
 					}
-					t, err := c.words(h, x)
+					t, id, err := c.download(h, x)
 					if err != nil {
 						return err
 					}
 					if t != "" {
 						data(r)[h.As] = t
+					}
+					if id != "" {
+						data(r)["file"] = id
 					}
 					return nil
 				}
@@ -2112,11 +2135,14 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 					}
 					y := maps.Clone(x)
 					maps.Copy(y, a)
-					t, err := c.words(h, y)
+					t, id, err := c.download(h, y)
 					if err != nil {
 						return err
 					}
 					a[h.As] = t
+					if id != "" {
+						a["file"] = id
+					}
 				}
 				return nil
 			})
@@ -2128,7 +2154,6 @@ func (s *Sync) hydrated(c *Client, mode string, recs []Record, base map[string]a
 	return nil
 }
 
-// read is the answer of a Fetch: with More and Each, its first page with Each from all of them.
 func (f Fetch) read(c *Client, sc map[string]any) (any, error) {
 	if f.Each == "" {
 		return c.req(f.Req, sc)
@@ -2156,11 +2181,10 @@ func (f Fetch) read(c *Client, sc map[string]any) (any, error) {
 	return first, nil
 }
 
-// words are the words of the file d says, downloaded whole; "" for what it does not read.
-func (c *Client) words(d Download, sc map[string]any) (string, error) {
+func (c *Client) download(d Download, sc map[string]any) (string, string, error) {
 	u, err := c.urlOf(d.Req.URL, sc)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if q := values(d.Req.Query, sc); len(q) > 0 {
 		u = u + sepOf(u) + q.Encode()
@@ -2168,7 +2192,19 @@ func (c *Client) words(d Download, sc map[string]any) (string, error) {
 	name, _ := fillStr(d.Name, sc)
 	kind, _ := fillStr(d.Mime, sc)
 	size, _ := strconv.ParseInt(text(pick(sc, d.Size)), 10, 64)
-	return c.fileText(u, text(name), text(kind), size)
+	if !d.Keep || c.Store == nil {
+		t, err := c.fileText(u, text(name), text(kind), size)
+		return t, "", err
+	}
+	if size > maxFile {
+		return "", "", nil
+	}
+	b, err := c.fileBytes(u, maxFile)
+	if err != nil || b == nil {
+		return "", "", err
+	}
+	id, err := c.keep(text(name), b)
+	return bytesText(text(name), text(kind), b), id, err
 }
 
 func sepOf(u string) string {
@@ -2178,7 +2214,6 @@ func sepOf(u string) string {
 	return "?"
 }
 
-// scope is what a request of the account's own, not a script's, reads.
 func (c *Client) scope() map[string]any {
 	id, secret := c.Credentials()
 	keys := map[string]any{}
@@ -2196,9 +2231,6 @@ func (c *Client) scope() map[string]any {
 	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts}
 }
 
-// api is where the connector's relative URLs go: its API, read from the account, and what its Let finds, once.
-// What Let puts in {meta/...} the account keeps as its Meta, which a grant being made saves with it, so that a
-// later Client finds it there, like the one Xero organisation a connection reads.
 func (c *Client) api() (string, error) {
 	c.apiOnce.Do(func() {
 		sc := c.scope()
@@ -2220,7 +2252,6 @@ func (c *Client) api() (string, error) {
 	return c.apiURL, c.apiErr
 }
 
-// req sends r, its templates read from sc, and is its answer, its numbers exact.
 func (c *Client) req(r Req, sc map[string]any) (any, error) {
 	if r.Tool != "" {
 		return c.toolReq(r, sc)
@@ -2290,9 +2321,14 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.p.Answer != nil {
+		if ans, err = c.p.Answer.fn(ans); err != nil {
+			return nil, err
+		}
+	}
 	if e := c.p.Errors; e != nil {
 		if msg := text(pick(ans, e.At)); msg != "" {
-			f := &Refusal{Provider: c.p.Name, Status: cmp.Or(e.Status, http.StatusBadRequest), Message: msg}
+			f := &Refusal{Provider: c.p.Name, Status: http.StatusBadRequest, Message: msg}
 			if slices.Contains(e.Busy, text(pick(ans, e.Code))) {
 				f.Status, f.Busy = http.StatusTooManyRequests, true
 			}
@@ -2303,10 +2339,15 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 }
 
 func (r Req) headers(sc map[string]any) http.Header {
-	if r.Header == nil {
+	if r.Header == nil && r.Head == nil {
 		return nil
 	}
 	hdr := http.Header{}
+	for k, v := range r.Head {
+		x, _ := fill(v, sc)
+		b, _ := json.Marshal(x)
+		hdr.Set(k, jsonASCII(b))
+	}
 	for k, ts := range r.Header {
 		for _, t := range ts {
 			v, _ := fillStr(t, sc)
@@ -2316,7 +2357,6 @@ func (r Req) headers(sc map[string]any) http.Header {
 	return hdr
 }
 
-// toolReq calls the MCP tool r names, with what of its arguments the tool takes.
 func (c *Client) toolReq(r Req, sc map[string]any) (any, error) {
 	t, err := c.tool(r.Tool)
 	if err != nil {
@@ -2355,7 +2395,6 @@ func (c *Client) toolReq(r Req, sc map[string]any) (any, error) {
 	return ans, nil
 }
 
-// expand is template t as a URL: its values escaped as they ask, and it fails on one that has nothing.
 func expand(t string, sc map[string]any) (string, error) {
 	missing := ""
 	u := varRe.ReplaceAllStringFunc(t, func(m string) string {
@@ -2387,8 +2426,6 @@ func expand(t string, sc map[string]any) (string, error) {
 	return u, nil
 }
 
-// urlOf is a request's URL: an absolute one in a definition goes where it says, and a template that starts with a
-// value, which a script may have given, stays on the API.
 func (c *Client) urlOf(t string, sc map[string]any) (string, error) {
 	u, err := expand(t, sc)
 	if err != nil {
@@ -2411,7 +2448,6 @@ func (c *Client) urlOf(t string, sc map[string]any) (string, error) {
 	return "", fmt.Errorf("%s is neither a path, which starts with /, nor a URL of %s's API", u, c.p.Name)
 }
 
-// values is a query or form: a list repeats its key.
 func values(q Q, sc map[string]any) url.Values {
 	out := url.Values{}
 	for k, t := range q {
@@ -2430,14 +2466,14 @@ func values(q Q, sc map[string]any) url.Values {
 	return out
 }
 
-var varRe = regexp.MustCompile(`\{[+~'"]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
+var varRe = regexp.MustCompile(`\{[+~'"#-]?[A-Za-z_][\w\-*/.@;]*(,[^|{}]*)?(\|[^{}]*)?\}`)
 
-// tvar is a {path} of a template.
 type tvar struct {
-	path, def, sep  string
-	raw, segs, join bool
-	quote           byte
-	hasDef          bool
+	path, def, sep        string
+	raw, segs, join, host bool
+	num                   bool
+	quote                 byte
+	hasDef                bool
 }
 
 func varOf(m string) tvar {
@@ -2448,6 +2484,10 @@ func varOf(m string) tvar {
 		v.raw, s = true, s[1:]
 	case '~':
 		v.segs, s = true, s[1:]
+	case '-':
+		v.host, s = true, s[1:]
+	case '#':
+		v.num, s = true, s[1:]
 	case '\'', '"':
 		v.quote, s = s[0], s[1:]
 	}
@@ -2456,7 +2496,6 @@ func varOf(m string) tvar {
 	return v
 }
 
-// of is the value of v in sc, its default when it has none.
 func (v tvar) of(sc map[string]any) (any, bool) {
 	x := pick(sc, Path(v.path))
 	if none(x) {
@@ -2476,6 +2515,12 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 		}
 		return strings.Join(s, cmp.Or(v.sep, ",")), true
 	}
+	if v.host {
+		return strings.ReplaceAll(strings.ToLower(text(x)), "_", "-"), true
+	}
+	if n, err := strconv.ParseFloat(text(x), 64); v.num && err == nil {
+		return n, true
+	}
 	switch v.quote {
 	case '\'':
 		return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(text(x)), true
@@ -2485,7 +2530,6 @@ func (v tvar) of(sc map[string]any) (any, bool) {
 	return x, true
 }
 
-// fillStr is the value of template t; false when it is only a {path} that has nothing.
 func fillStr(t string, sc map[string]any) (any, bool) {
 	if m := varRe.FindString(t); m != "" && m == t {
 		return varOf(m).of(sc)
@@ -2496,7 +2540,6 @@ func fillStr(t string, sc map[string]any) (any, bool) {
 	}), true
 }
 
-// fill is the value of a body or output, whose strings are templates, with those that have nothing left out.
 func fill(t any, sc map[string]any) (any, bool) {
 	switch v := t.(type) {
 	case string:
@@ -2529,10 +2572,16 @@ func fill(t any, sc map[string]any) (any, bool) {
 	return t, true
 }
 
-// pick walks path in v: nil when it leads nowhere.
 func pick(v any, path Path) any {
 	if path == "" {
 		return v
+	}
+	if strings.Contains(string(path), "+") {
+		out := []any{}
+		for _, part := range strings.Split(string(path), "+") {
+			out = append(out, listOf(pick(v, Path(part)))...)
+		}
+		return out
 	}
 	if strings.Contains(string(path), ";") {
 		for _, alt := range strings.Split(string(path), ";") {
@@ -2559,7 +2608,11 @@ func pick(v any, path Path) any {
 		return deep(v, rest)
 	}
 	if l, ok := v.([]any); ok {
-		if i, err := strconv.Atoi(head); err == nil && i >= 0 && i < len(l) {
+		i, err := strconv.Atoi(head)
+		if i < 0 {
+			i += len(l)
+		}
+		if err == nil && i >= 0 && i < len(l) {
 			return pick(l[i], Path(rest))
 		}
 		return nil
@@ -2568,8 +2621,6 @@ func pick(v any, path Path) any {
 	return pick(m[head], Path(rest))
 }
 
-// deep is the list under key at any depth, or with no key the first list of objects there is, v itself when it is one,
-// or else the first empty list; nil when it has none.
 func deep(v any, key string) any {
 	var empty any
 	var walk func(v any) any
@@ -2609,10 +2660,8 @@ func deep(v any, key string) any {
 	return empty
 }
 
-// none says v is nothing for a template.
 func none(v any) bool { return v == nil || v == "" || v == false }
 
-// truth says v is something for a step or a Fetch to go on: a list is when any element is.
 func truth(v any) bool {
 	if l, ok := v.([]any); ok {
 		return slices.ContainsFunc(l, truth)
@@ -2650,7 +2699,6 @@ func text(v any) string {
 	return ""
 }
 
-// readAll is the JSON b, its numbers exact; nil when it is empty.
 func readAll(b []byte, provider string) (any, error) {
 	if len(bytes.TrimSpace(b)) == 0 {
 		return nil, nil
@@ -2664,7 +2712,6 @@ func readAll(b []byte, provider string) (any, error) {
 	return v, nil
 }
 
-// sql is the query of a page's records, a jsonb array in $1, as the JSON of a Row each, in order.
 func (m Map) sql() string {
 	return "SELECT " + rowSQL(m.Cols, m.People, m.Orgs, m.EINs, m.Refs, m.Children) + " FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS r(data, i) ORDER BY i"
 }
@@ -2691,21 +2738,11 @@ func rowSQL(cols, people, orgs, eins, refs map[string]SQL, kids []Kids) string {
 	return s + ")"
 }
 
-// Codec is a generic way to read or write a value, inside the engine.
 type Codec struct {
 	Name string
 	fn   func(any) (any, error)
 }
 
-// The codecs. MIME reads what is at payload, a tree of MIME parts as JSON with mimeType, filename, headers, body
-// and parts, into the headers people read, text, html and attachments; MIMEHead into the headers alone, and
-// MIMEWords as MIME does for keeping: its text falls back on its HTML's words and is cut at maxText, its HTML goes,
-// and it adds parties, the people of its headers, and sent, when its Date says. RFC5322 writes a message, maybe as
-// a reply to parent, a message as JSON, into raw, base64url. Base64JSON reads JSON out of base64, and Base64Text text.
-// Words is the words of HTML. Claims reads a JWT's claims, unverified, as a provider's own token says them of
-// itself. GraphQLReads passes a GraphQL document that only reads, and refuses any other. Sum adds
-// a list of numbers up.
-// ToolBusy are what MCP tools say when the API behind them turned them away for now.
 var ToolBusy = []string{"Too Many Requests", " 429", " 502", " 503", " 504", "Service Unavailable", "Bad Gateway", "Gateway Timeout", "Rate Limit Exceeded"}
 
 var (
@@ -2727,7 +2764,7 @@ var (
 		}
 		return string(b), nil
 	}}
-	Words  = &Codec{"words", func(v any) (any, error) { return htmlText(text(v)), nil }}
+	Words  = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
 	Claims = &Codec{"claims", func(v any) (any, error) {
 		parts := strings.Split(text(v), ".")
 		if len(parts) != 3 {
@@ -2740,6 +2777,7 @@ var (
 		return readAll(b, "the token")
 	}}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
+	SQLReads     = &Codec{"sql_reads", sqlReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
 		n := 0
 		for _, e := range listOf(v) {
@@ -2750,8 +2788,77 @@ var (
 	}}
 )
 
-// graphQLReads passes a document whose operations are all queries, and refuses one that has anything else, wherever it
-// is in the document: comments and strings are skipped, and only what is outside every brace is read as an operation.
+func sqlReads(v any) (any, error) {
+	q := text(v)
+	var words []string
+	for i := 0; i < len(q); {
+		switch c := q[i]; {
+		case strings.HasPrefix(q[i:], "--"):
+			for i < len(q) && q[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(q[i:], "/*"):
+			n := 0
+			for i < len(q) {
+				if strings.HasPrefix(q[i:], "/*") {
+					n, i = n+1, i+2
+				} else if strings.HasPrefix(q[i:], "*/") {
+					n, i = n-1, i+2
+					if n == 0 {
+						break
+					}
+				} else {
+					i++
+				}
+			}
+			if n > 0 {
+				return nil, errors.New("a comment that does not end")
+			}
+		case c == '\'' || c == '"' || c == '`':
+			j := i + 1
+			for j < len(q) && q[j] != c {
+				if q[j] == '\\' && c != '`' {
+					j++
+				}
+				j++
+			}
+			if j >= len(q) {
+				return nil, errors.New("a string or quoted name that does not end")
+			}
+			i = j + 1
+		case c == ';':
+			if strings.TrimSpace(q[i+1:]) != "" {
+				return nil, errors.New("one statement at a time")
+			}
+			i = len(q)
+		case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
+			j := i
+			for j < len(q) && (q[j] == '_' || q[j] >= 'a' && q[j] <= 'z' || q[j] >= 'A' && q[j] <= 'Z' || q[j] >= '0' && q[j] <= '9') {
+				j++
+			}
+			words = append(words, strings.ToUpper(q[i:j]))
+			i = j
+		default:
+			i++
+		}
+	}
+	if len(words) == 0 || !slices.Contains(sqlRead, words[0]) {
+		return nil, errors.New("only a query that reads, which starts with SELECT, WITH, SHOW, DESCRIBE, EXPLAIN, VALUES, TABLE or FROM")
+	}
+	for _, w := range words {
+		if slices.Contains(sqlWrite, w) {
+			return nil, fmt.Errorf("only a query that reads, and %s writes", w)
+		}
+	}
+	return q, nil
+}
+
+var (
+	sqlRead  = []string{"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "VALUES", "TABLE", "FROM", "LIST"}
+	sqlWrite = []string{"INSERT", "UPDATE", "DELETE", "MERGE", "UPSERT", "OVERWRITE", "CREATE", "DROP", "ALTER", "TRUNCATE", "GRANT", "REVOKE",
+		"COPY", "OPTIMIZE", "VACUUM", "CALL", "EXECUTE", "CACHE", "UNCACHE", "MSCK"}
+)
+
 func graphQLReads(v any) (any, error) {
 	doc := text(v)
 	depth := 0
@@ -2800,7 +2907,6 @@ func graphQLReads(v any) (any, error) {
 			if word != "query" && word != "fragment" {
 				return nil, fmt.Errorf("Archive only reads here, and runs no %s", word)
 			}
-			// What follows, a name, variables or directives, up to the opening brace, is the operation's own.
 			paren := 0
 			for i < len(doc) && (doc[i] != '{' || paren > 0) {
 				switch doc[i] {
@@ -2831,7 +2937,6 @@ func graphQLReads(v any) (any, error) {
 	return v, nil
 }
 
-// MarshalJSON is what a stream's version sees of a codec.
 func (c *Codec) MarshalJSON() ([]byte, error) { return json.Marshal(c.Name) }
 
 func unb64(s string) ([]byte, error) {
@@ -2889,7 +2994,7 @@ func mimeWords(v any) (any, error) {
 	m := mimeRead(v, true)
 	words := m["text"].(string)
 	if words == "" {
-		words = htmlText(m["html"].(string))
+		words = HTMLText(m["html"].(string))
 	}
 	m["text"] = clip(words, maxText)
 	delete(m, "html")
@@ -2972,8 +3077,29 @@ func (l *Listen) compile(c *Connector) error {
 	if len(l.Keys) == 0 && l.Kept == nil {
 		return errors.New("needs Keys or Kept")
 	}
+	for _, s := range l.Signs {
+		if s.Key == nil {
+			continue
+		}
+		if len(c.Keys) == 0 || s.JWK == "" || s.Claim == "" {
+			return errors.New("a JWS is a key connector's, with JWK and Claim")
+		}
+		if err := s.Key.check("jws key", "client", "option", "kid"); err != nil {
+			return err
+		}
+	}
 	if l.Key == "" && l.Mint == "" {
 		return errors.New("needs Key or Mint")
+	}
+	for _, f := range l.Forget {
+		if f.When == "" || f.Is == "" {
+			return errors.New("a forget needs When and Is")
+		}
+		for _, o := range f.Of {
+			if !slices.ContainsFunc(c.Sync, func(s *Sync) bool { return s.Name == o.Stream }) {
+				return fmt.Errorf("a forget of %s, which it does not sync", o.Stream)
+			}
+		}
 	}
 	if l.Watch.URL != "" {
 		if err := l.Watch.check("watch", "client", "token", "key", "meta", "option", "target", "account", "conn", "ask", "nonce", "secret", "hook", "part", "in", "until", "until_ms", "up"); err != nil {
@@ -2999,7 +3125,6 @@ func watchScope(cl *Client, w Watch) map[string]any {
 	return sc
 }
 
-// watch is how the connector asks for pushes, as a Push does: over each part, keeping or replacing what there was.
 func (l *Listen) watch(c *Connector) func(cl *Client, h Hook, old []Watch) ([]Watch, error) {
 	return func(cl *Client, h Hook, old []Watch) ([]Watch, error) {
 		base := cl.scope()
@@ -3040,6 +3165,9 @@ func (l *Listen) watch(c *Connector) func(cl *Client, h Hook, old []Watch) ([]Wa
 				if err == nil && (l.Alive.At == "" || l.Alive.holds(ans)) {
 					if t := l.ends(ans); !t.IsZero() {
 						o.Expires = t
+					}
+					if s := l.kept(sc, ans); s != "" {
+						o.Secret = s
 					}
 					out = append(out, o)
 					continue
@@ -3111,10 +3239,21 @@ func (l *Listen) make(cl *Client, c *Connector, h Hook, base map[string]any, par
 	if l.Secret {
 		w.Secret = text(sc["secret"])
 	}
+	if s := l.kept(sc, ans); s != "" {
+		w.Secret = s
+	}
 	return w, nil
 }
 
-// ends is when a watch its answer is of ends.
+func (l *Listen) kept(sc map[string]any, ans any) string {
+	if l.Keep == "" {
+		return ""
+	}
+	sc["answer"] = ans
+	s, _ := fillStr(l.Keep, sc)
+	return text(s)
+}
+
 func (l *Listen) ends(ans any) time.Time {
 	if l.Lasts > 0 {
 		return time.Now().Add(l.Lasts)
@@ -3122,13 +3261,12 @@ func (l *Listen) ends(ans any) time.Time {
 	return stamp(text(pick(ans, l.Expires)))
 }
 
-// hear reads a push, as a Push does.
 func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, secret func(string) string) (*Heard, error) {
 	q := r.URL.Query()
 	for _, h := range l.Hello {
 		if h.Query != "" {
 			if v := q.Get(h.Query); v != "" {
-				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}}, Body: v}, nil
+				return &Heard{Status: http.StatusOK, Header: http.Header{"Content-Type": {"text/plain; charset=utf-8"}, "X-Content-Type-Options": {"nosniff"}}, Body: v}, nil
 			}
 		}
 		if h.Header != "" {
@@ -3174,6 +3312,16 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 	if l.Only.At != "" && !l.Only.holds(v) {
 		return &Heard{}, nil
 	}
+	var forget *Forget
+	for i, f := range l.Forget {
+		if r.Header.Get(f.When) == f.Is {
+			forget = &l.Forget[i]
+			break
+		}
+	}
+	if forget != nil && !forget.All && len(forget.Of) == 0 {
+		return &Heard{Status: http.StatusOK}, nil
+	}
 	if k := l.Kept; k != nil {
 		if k.ByQuery {
 			return &Heard{Keys: []string{q.Get("k")}}, nil
@@ -3206,10 +3354,20 @@ func (l *Listen) hear(pr *Provider, r *http.Request, at string, body []byte, sec
 			keys = append(keys, s)
 		}
 	}
-	return &Heard{Keys: keysOf(keys...)}, nil
+	heard := &Heard{Keys: keysOf(keys...)}
+	if forget != nil {
+		heard.Status, heard.All, heard.Forget = http.StatusOK, forget.All, map[string][]string{}
+		for _, o := range forget.Of {
+			for _, e := range listOf(pick(v, o.At)) {
+				if id, _ := fillStr(o.ID, map[string]any{"it": e}); text(id) != "" {
+					heard.Forget[o.Stream] = append(heard.Forget[o.Stream], text(id))
+				}
+			}
+		}
+	}
+	return heard, nil
 }
 
-// verify checks a push against the first of Signs whose header it has. kept is the secret of the watch it names.
 func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, kept string) error {
 	for _, s := range l.Signs {
 		got := r.Header.Get(s.Header)
@@ -3233,7 +3391,7 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		case s.Kept:
 			key = kept
 		}
-		if key == "" {
+		if key == "" && s.Key == nil {
 			return forged("%s", s.Header)
 		}
 		sc := map[string]any{"method": r.Method, "url": at, "body": string(body), "secret": p.secret}
@@ -3258,6 +3416,17 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 		if s.Enc == Hex {
 			want = hex.EncodeToString(sum)
 		}
+		if s.Key != nil {
+			claims, err := s.jws(p, r, got)
+			if err != nil {
+				return err
+			}
+			iat, _ := claims["iat"].(float64)
+			if time.Since(time.Unix(int64(iat), 0)).Abs() > 5*time.Minute {
+				return forged("%s's iat", s.Header)
+			}
+			got, _ = claims[s.Claim].(string)
+		}
 		if !same(got, s.Pre+want) {
 			return forged("%s", s.Header)
 		}
@@ -3266,8 +3435,54 @@ func (l *Listen) verify(p *Provider, r *http.Request, at string, body []byte, ke
 	return forged("no signature it knows")
 }
 
-// Secrets are the environment variables that hold what connectors need of this server, each described from the
-// connectors that read it, for Terraform and the docs.
+var jwsKeys sync.Map
+
+func (s Sign) jws(p *Provider, r *http.Request, token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, forged("%s is no JWS", s.Header)
+	}
+	var head struct{ Alg, Kid string }
+	if b, err := base64.RawURLEncoding.DecodeString(parts[0]); err != nil || json.Unmarshal(b, &head) != nil || head.Alg != "ES256" || head.Kid == "" {
+		return nil, forged("%s's header", s.Header)
+	}
+	k, ok := jwsKeys.Load(p.ID + " " + head.Kid)
+	if !ok {
+		c := p.openKeys(r.Context(), nil, nil)
+		defer c.Close()
+		sc := c.scope()
+		sc["kid"] = head.Kid
+		ans, err := c.req(*s.Key, sc)
+		if err != nil {
+			return nil, err
+		}
+		jwk, _ := pick(ans, s.JWK).(map[string]any)
+		x, errX := base64.RawURLEncoding.DecodeString(text(jwk["x"]))
+		y, errY := base64.RawURLEncoding.DecodeString(text(jwk["y"]))
+		if errX != nil || errY != nil || text(jwk["crv"]) != "P-256" || len(x) != 32 || len(y) != 32 {
+			return nil, fmt.Errorf("%s's key %s is no P-256 key", p.Name, head.Kid)
+		}
+		pub, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), append(append([]byte{4}, x...), y...))
+		if err != nil {
+			return nil, fmt.Errorf("%s's key %s: %w", p.Name, head.Kid, err)
+		}
+		k, _ = jwsKeys.LoadOrStore(p.ID+" "+head.Kid, pub)
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || len(sig) != 64 {
+		return nil, forged("%s's signature", s.Header)
+	}
+	h := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if !ecdsa.Verify(k.(*ecdsa.PublicKey), h[:], new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])) {
+		return nil, forged("%s", s.Header)
+	}
+	var claims map[string]any
+	if b, err := base64.RawURLEncoding.DecodeString(parts[1]); err != nil || json.Unmarshal(b, &claims) != nil {
+		return nil, forged("%s's claims", s.Header)
+	}
+	return claims, nil
+}
+
 func Secrets() map[string]string {
 	type secret struct {
 		names, opts []string

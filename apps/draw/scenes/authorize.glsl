@@ -33,8 +33,6 @@ vec2 cabinet(vec3 p) {
   return r;
 }
 
-// The lock on the top drawer and the key turned in it: k is the lock's frame, x across, y up, z out of the
-// drawer, and the key's bow is a LIME ring standing in its y-z plane, with a tag on a split ring below it.
 vec3 lockFrame(vec3 p) {
   vec3 l = faceZ(p, 0.41) - vec3(0.2, 0.0, 0.88);
   return vec3(l.x, l.z, l.y);
