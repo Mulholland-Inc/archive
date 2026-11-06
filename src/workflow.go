@@ -121,7 +121,7 @@ func workflowTables(cat *Catalog) []string {
 	var out []string
 	for _, n := range cat.names() {
 		t := cat.Tables[n]
-		sync, ok := syncSchema[n]
+		sync, ok := cat.sync[n]
 		if t.Kind == "table" && (t.Schema == "public" || n == "member" || n == "inbox" || t.Schema == "archive" && ok && sync.parent == "") {
 			out = append(out, n)
 		}

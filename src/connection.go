@@ -557,7 +557,7 @@ func (a *Archive) SetAccess(ctx context.Context, id uuid.UUID, group string) err
 		if err := a.st.db(ctx).SetConnectionAccess(ctx, access, id); err != nil {
 			return err
 		}
-		return syncNarrow(ctx, a.st.Q(ctx), id, access)
+		return syncNarrow(ctx, a.st.Q(ctx), a.Catalog(), id, access)
 	})
 }
 
@@ -829,7 +829,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 					return err
 				}
 			}
-			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now}
+			w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c2.Access, now: now, sync: a.Catalog().sync}
 			if err := syncSave(ctx, w, s, page, cur); err != nil {
 				return err
 			}
@@ -874,7 +874,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 		for k := range st {
 			if !slices.ContainsFunc(streams, func(d *connect.Stream) bool { return d.Name == k }) {
 				delete(st, k)
-				w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, now: now}
+				w := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, now: now, sync: a.Catalog().sync}
 				if err := w.stream(ctx, k); err != nil {
 					return err
 				}
@@ -1097,7 +1097,7 @@ func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
 			return
 		}
 		show[name] = true
-		for child, ct := range syncSchema {
+		for child, ct := range cat.sync {
 			if ct.parent == name {
 				walk(child)
 			}
@@ -1145,119 +1145,22 @@ type syncTable struct {
 	links      map[string]string
 }
 
-var syncSchema = map[string]syncTable{
-	"mail_message":                     {},
-	"mail_party":                       {parent: "mail_message", of: "message"},
-	"mail_attachment":                  {parent: "mail_message", of: "message"},
-	"doc_page":                         {},
-	"payroll_company":                  {},
-	"payroll_department":               {links: map[string]string{"company": "payroll_company"}},
-	"payroll_location":                 {links: map[string]string{"company": "payroll_company"}},
-	"payroll_schedule":                 {links: map[string]string{"company": "payroll_company"}},
-	"payroll_worker":                   {links: map[string]string{"company": "payroll_company", "department": "payroll_department", "manager": "payroll_worker"}},
-	"payroll_job":                      {parent: "payroll_worker", of: "worker", links: map[string]string{"location": "payroll_location"}},
-	"payroll_compensation":             {parent: "payroll_worker", of: "worker"},
-	"payroll_address":                  {parent: "payroll_worker", of: "worker", links: map[string]string{"location": "payroll_location"}},
-	"payroll_employment":               {parent: "payroll_worker", of: "worker"},
-	"payroll_custom_field":             {links: map[string]string{"company": "payroll_company"}},
-	"payroll_custom_value":             {parent: "payroll_worker", of: "worker", links: map[string]string{"field": "payroll_custom_field"}},
-	"payroll_department_member":        {parent: "payroll_department", of: "department", links: map[string]string{"worker": "payroll_worker"}},
-	"payroll_schedule_assignment":      {links: map[string]string{"company": "payroll_company", "default_schedule": "payroll_schedule", "hourly_schedule": "payroll_schedule", "salaried_schedule": "payroll_schedule"}},
-	"payroll_schedule_member":          {parent: "payroll_schedule_assignment", of: "assignment", links: map[string]string{"worker": "payroll_worker", "department": "payroll_department", "schedule": "payroll_schedule"}},
-	"payroll_earning_type":             {links: map[string]string{"company": "payroll_company"}},
-	"payroll_time_off_request":         {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker", "approver": "payroll_worker"}},
-	"payroll_time_off_day":             {parent: "payroll_time_off_request", of: "request"},
-	"payroll_time_off_balance":         {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker"}},
-	"payroll_time_off_policy":          {parent: "payroll_time_off_balance", of: "balance"},
-	"payroll_run":                      {links: map[string]string{"company": "payroll_company", "schedule": "payroll_schedule"}},
-	"payroll_pay":                      {parent: "payroll_run", of: "run", links: map[string]string{"worker": "payroll_worker"}},
-	"payroll_pay_line":                 {parent: "payroll_run", of: "run", links: map[string]string{"worker": "payroll_worker"}},
-	"payroll_pay_period":               {links: map[string]string{"company": "payroll_company", "schedule": "payroll_schedule", "run": "payroll_run"}},
-	"payroll_contractor_payment":       {links: map[string]string{"company": "payroll_company", "worker": "payroll_worker"}},
-	"payroll_contractor_payment_group": {links: map[string]string{"company": "payroll_company"}},
-	"payroll_task":                     {links: map[string]string{"company": "payroll_company"}},
-	"file":                             {links: map[string]string{"parent": "file"}},
-	"calendar_event":                   {links: map[string]string{"series": "calendar_event"}},
-	"calendar_attendee":                {parent: "calendar_event", of: "event"},
-	"crm_company":                      {},
-	"crm_contact":                      {links: map[string]string{"company": "crm_company"}},
-	"crm_deal":                         {links: map[string]string{"company": "crm_company"}},
-	"chat_message":                     {},
-	"marketing_campaign":               {},
-	"work_item":                        {},
-	"code_project":                     {},
-	"compliance":                       {},
-	"commerce_product":                 {},
-	"commerce_order":                   {},
-	"dental_provider":                  {},
-	"dental_patient":                   {links: map[string]string{"provider": "dental_provider"}},
-	"dental_appointment":               {links: map[string]string{"patient": "dental_patient", "provider": "dental_provider", "hygienist": "dental_provider"}},
-	"dental_procedure":                 {links: map[string]string{"patient": "dental_patient", "appointment": "dental_appointment", "provider": "dental_provider"}},
-	"dental_payment":                   {links: map[string]string{"patient": "dental_patient"}},
-	"ad_metric":                        {links: map[string]string{"campaign": "marketing_campaign"}},
-	"commerce_line":                    {parent: "commerce_order", of: "purchase", links: map[string]string{"product": "commerce_product"}},
-	"ledger_account":                   {links: map[string]string{"parent": "ledger_account"}},
-	"ledger_contact":                   {},
-	"ledger_item":                      {links: map[string]string{"income_account": "ledger_account", "expense_account": "ledger_account"}},
-	"ledger_entry":                     {links: map[string]string{"contact": "ledger_contact", "account": "ledger_account"}},
-	"ledger_line":                      {parent: "ledger_entry", of: "entry", links: map[string]string{"account": "ledger_account", "item": "ledger_item"}},
-	"bank_account":                     {},
-	"bank_transaction":                 {links: map[string]string{"account": "bank_account"}},
-	"spend_department":                 {},
-	"spend_user":                       {links: map[string]string{"department": "spend_department", "manager": "spend_user"}},
-	"spend_card":                       {links: map[string]string{"holder": "spend_user"}},
-	"spend_transaction":                {links: map[string]string{"spender": "spend_user", "card": "spend_card", "department": "spend_department"}},
-	"spend_receipt":                    {parent: "spend_transaction", of: "spend"},
-	"warehouse_table":                  {},
-	"warehouse_column":                 {parent: "warehouse_table", of: "relation"},
-	"contact":                          {},
-	"location":                         {},
-	"history":                          {},
-	"post":                             {},
-	"kin":                              {},
-	"kin_tie":                          {parent: "kin", of: "person", links: map[string]string{"relative": "kin"}},
-	"dna":                              {links: map[string]string{"file": "file"}},
-	"media":                            {},
-	"photo":                            {},
-	"place_visit":                      {},
-	"investment_holding":               {links: map[string]string{"account": "bank_account"}},
-	"investment_transaction":           {links: map[string]string{"account": "bank_account"}},
-	"bank_liability":                   {links: map[string]string{"account": "bank_account"}},
-	"budget_category":                  {},
-	"parcel":                           {},
-	"parcel_event":                     {parent: "parcel", of: "parcel"},
-	"vehicle":                          {},
-	"vehicle_charge":                   {links: map[string]string{"vehicle": "vehicle"}},
-	"home_device":                      {},
-	"health_sample":                    {},
-	"health_day":                       {},
-	"health_sleep":                     {},
-	"health_workout":                   {},
-	"health_record":                    {},
-	"music_playlist":                   {},
-	"music_track":                      {links: map[string]string{"playlist": "music_playlist"}},
-	"music_artist":                     {},
-	"notebook":                         {},
-	"note":                             {links: map[string]string{"notebook": "notebook"}},
-	"note_attachment":                  {parent: "note", of: "note"},
-	"school_notice":                    {},
-}
-
 type syncRec struct {
 	ID   string
 	Data json.RawMessage
 }
 
 type syncDB struct {
-	q   *generated.Queries
-	db  generated.DBTX
-	id  uuid.UUID
-	acc *uuid.UUID
-	now time.Time
+	q    *generated.Queries
+	db   generated.DBTX
+	id   uuid.UUID
+	acc  *uuid.UUID
+	now  time.Time
+	sync map[string]syncTable
 }
 
 func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) error {
-	t, ok := syncSchema[s.Table]
+	t, ok := w.sync[s.Table]
 	if !ok || t.parent != "" {
 		return fmt.Errorf("%s lands in %q, which is no table of archive.sql a stream lands in", s.Name, s.Table)
 	}
@@ -1319,7 +1222,7 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 	kids := map[string][]map[string]any{}
 	for i, row := range rows {
 		for _, c := range row.Children {
-			ct, ok := syncSchema[c.Table]
+			ct, ok := w.sync[c.Table]
 			if !ok || ct.parent != s.Table {
 				return fmt.Errorf("%s: %q is no table of the rows of %s", s.Name, c.Table, s.Table)
 			}
@@ -1328,8 +1231,8 @@ func (w *syncDB) write(ctx context.Context, s *connect.Stream, recs []syncRec) e
 			kids[c.Table] = append(kids[c.Table], o)
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(syncSchema)) {
-		ct := syncSchema[name]
+	for _, name := range slices.Sorted(maps.Keys(w.sync)) {
+		ct := w.sync[name]
 		if ct.parent != s.Table {
 			continue
 		}
@@ -1379,19 +1282,20 @@ func (w *syncDB) mapped(ctx context.Context, s *connect.Stream, recs []syncRec) 
 	return rows, nil
 }
 
-func syncCheck() error {
-	cols := map[string][]string{}
-	for _, m := range syncTableRe.FindAllStringSubmatch(storeSchema, -1) {
-		for _, line := range strings.Split(m[2], "\n") {
-			if f := strings.Fields(line); len(f) > 1 && syncColRe.MatchString(f[0]) {
-				cols[m[1]] = append(cols[m[1]], f[0])
-			}
-		}
+func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
+	b, err := generated.New(db).Catalog(ctx)
+	if err != nil {
+		return err
+	}
+	cat, err := catalogParse(b)
+	if err != nil {
+		return err
 	}
 	has := func(table string, sets ...map[string]connect.SQL) error {
+		t := cat.Tables[table]
 		for _, set := range sets {
 			for c := range set {
-				if !slices.Contains(cols[table], c) {
+				if t.col(c) == nil && !slices.Contains(t.internal, c) {
 					return fmt.Errorf("%s has no column %s", table, c)
 				}
 			}
@@ -1405,7 +1309,7 @@ func syncCheck() error {
 	for id, ss := range syncs {
 		for _, s := range ss {
 			fail := func(err error) error { return fmt.Errorf("connector %s, stream %s: %w", id, s.Name, err) }
-			t, ok := syncSchema[s.To.Table]
+			t, ok := cat.sync[s.To.Table]
 			if !ok || t.parent != "" {
 				return fail(fmt.Errorf("%q is no table of archive.sql a stream lands in", s.To.Table))
 			}
@@ -1418,7 +1322,7 @@ func syncCheck() error {
 				}
 			}
 			for _, k := range s.To.Children {
-				ct, ok := syncSchema[k.Table]
+				ct, ok := cat.sync[k.Table]
 				if !ok || ct.parent != s.To.Table {
 					return fail(fmt.Errorf("%q is no table of the rows of %s", k.Table, s.To.Table))
 				}
@@ -1428,12 +1332,6 @@ func syncCheck() error {
 			}
 		}
 	}
-	return nil
-}
-
-var syncTableRe = regexp.MustCompile(`(?ms)^CREATE TABLE archive\.(\w+) \((.*?)^\)`)
-
-func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
 	streams := map[string][]*connect.Stream{}
 	for _, s := range connect.Phone {
 		streams["iphone"] = append(streams["iphone"], connect.PhoneStream(s.Name))
@@ -1465,7 +1363,7 @@ func (w *syncDB) object(table string, row *connect.Row, people, orgs map[string]
 	for col, e := range row.Orgs {
 		o[col] = orgs[e]
 	}
-	for col := range syncSchema[table].links {
+	for col := range w.sync[table].links {
 		o[col], o[col+"_source"] = nil, row.Refs[col]
 	}
 	o["connection"], o["access"] = w.id, w.acc
@@ -1526,9 +1424,9 @@ func children(r *connect.Row) []connect.Row {
 }
 
 func (w *syncDB) link(ctx context.Context, written []string) error {
-	for _, name := range slices.Sorted(maps.Keys(syncSchema)) {
-		for _, col := range slices.Sorted(maps.Keys(syncSchema[name].links)) {
-			to := syncSchema[name].links[col]
+	for _, name := range slices.Sorted(maps.Keys(w.sync)) {
+		for _, col := range slices.Sorted(maps.Keys(w.sync[name].links)) {
+			to := w.sync[name].links[col]
 			if !slices.Contains(written, name) && !slices.Contains(written, to) {
 				continue
 			}
@@ -1555,8 +1453,8 @@ func (w *syncDB) unseen(ctx context.Context, s *connect.Stream, since time.Time)
 }
 
 func (w *syncDB) stream(ctx context.Context, name string) error {
-	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
-		if syncSchema[t].parent != "" {
+	for _, t := range slices.Sorted(maps.Keys(w.sync)) {
+		if w.sync[t].parent != "" {
 			continue
 		}
 		if err := w.gone(ctx, "DELETE FROM archive."+t+" WHERE connection = $1 AND stream = $2", w.id, name); err != nil {
@@ -1574,14 +1472,13 @@ func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	return w.q.DeleteUnknown(ctx)
 }
 
-func syncNarrow(ctx context.Context, db generated.DBTX, id uuid.UUID, access *uuid.UUID) error {
-	for _, t := range slices.Sorted(maps.Keys(syncSchema)) {
+func syncNarrow(ctx context.Context, db generated.DBTX, cat *Catalog, id uuid.UUID, access *uuid.UUID) error {
+	for _, t := range slices.Sorted(maps.Keys(cat.sync)) {
 		if _, err := db.Exec(ctx, "UPDATE archive."+t+" SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access); err != nil {
 			return err
 		}
 	}
-	_, err := db.Exec(ctx, "UPDATE archive.file SET access = $2 WHERE connection = $1 AND access IS DISTINCT FROM $2", id, access)
-	return err
+	return nil
 }
 
 func syncCols(objs []map[string]any) []string {
@@ -1733,7 +1630,7 @@ func (h *Hub) pushForget(ctx context.Context, ws, conn uuid.UUID, heard *connect
 		return nil
 	}
 	return a.sys(ctx, func(ctx context.Context) error {
-		w := &syncDB{q: a.st.db(ctx), db: a.st.Q(ctx), id: c.ID, now: time.Now()}
+		w := &syncDB{q: a.st.db(ctx), db: a.st.Q(ctx), id: c.ID, now: time.Now(), sync: a.Catalog().sync}
 		for _, s := range p.Streams {
 			if ids := heard.Forget[s.Name]; len(ids) > 0 {
 				if err := w.delete(ctx, s, ids); err != nil {

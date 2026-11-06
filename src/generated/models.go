@@ -63,11 +63,10 @@ type ArchiveConnection struct {
 	ID uuid.UUID
 	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	Member    uuid.UUID
 	// Which service, a connector: gmail, notion, quickbooks, ...
@@ -160,11 +159,10 @@ type ArchiveWorkflow struct {
 	ID uuid.UUID
 	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	UserID    uuid.UUID
 	Role      string
@@ -188,11 +186,10 @@ type ArchiveWorkflowRun struct {
 	ID uuid.UUID
 	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	Workflow  uuid.UUID
 	// What started it: cron, table, webhook, or run (archive.run, or the Run button in the app; start in runs from before it was called run)

@@ -340,7 +340,7 @@ func (h *Hub) deviceRecords(w http.ResponseWriter, d *device) (any, error) {
 		st := syncStateOf(c.Cursor)
 		cur := st.of(s.Name).fresh(s)
 		cur.Def, st[s.Name] = s.Version, cur
-		sw := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c.Access, now: now}
+		sw := &syncDB{q: q, db: a.st.Q(ctx), id: c.ID, acc: c.Access, now: now, sync: a.Catalog().sync}
 		if err := syncSave(ctx, sw, s, &connect.Page{Records: body.Records, Full: body.Full, More: body.More}, cur); err != nil {
 			return err
 		}

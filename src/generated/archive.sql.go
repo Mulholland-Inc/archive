@@ -255,39 +255,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.business'::regclass, 'archive.agreement'::regclass, 'archive.billing'::regclass, 'archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
-            'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
-            'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
-            'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
-            'archive.payroll_address'::regclass, 'archive.payroll_employment'::regclass, 'archive.payroll_custom_field'::regclass,
-            'archive.payroll_custom_value'::regclass, 'archive.payroll_department_member'::regclass, 'archive.payroll_schedule_assignment'::regclass,
-            'archive.payroll_schedule_member'::regclass, 'archive.payroll_earning_type'::regclass, 'archive.payroll_time_off_request'::regclass,
-            'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
-            'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
-            'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.file'::regclass,
-            'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
-            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.code_project'::regclass, 'archive.compliance'::regclass,
-            'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
-            'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
-            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
-            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
-            'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
-            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.photo'::regclass, 'archive.place_visit'::regclass,
-            'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
-            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
-            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
-            'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
-            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
-            'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
-            'archive.school_notice'::regclass,
-            'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
-            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass,
-            'archive.agent_list'::regclass, 'archive.workflow_list'::regclass, 'archive.connection_list'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -777,24 +745,7 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 }
 
 const deleteUnknown = `-- name: DeleteUnknown :exec
-WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
-    AND NOT EXISTS (SELECT FROM archive.file x WHERE x.owner = k.id OR x.editor = k.id)
-    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
-    AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
-    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
-    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.spend_user x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
-DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id)
+SELECT archive.delete_unknown()
 `
 
 func (q *Queries) DeleteUnknown(ctx context.Context) error {

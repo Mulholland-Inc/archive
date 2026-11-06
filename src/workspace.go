@@ -164,9 +164,6 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syncCheck(); err != nil {
-		return nil, err
-	}
 	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
