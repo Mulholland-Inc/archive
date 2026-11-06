@@ -762,6 +762,9 @@ func (c *Connector) compile() error {
 		c.Authorize = func(r *http.Request, cl *Client) {
 			sc := cl.scope()
 			for h, t := range sign {
+				if r.Header.Get(h) != "" {
+					continue
+				}
 				if v := (Reads{Of: t}).read(sc); v != "" {
 					r.Header.Set(h, v)
 				}
@@ -2833,6 +2836,7 @@ var (
 		}
 		return string(b), nil
 	}}
+	Basic        = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
 	Words        = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
 	SQLReads     = &Codec{"sql_reads", sqlReads}
