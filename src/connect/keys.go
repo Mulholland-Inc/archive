@@ -1,13 +1,18 @@
 package connect
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"maps"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -192,7 +197,18 @@ func keysFrom(s string) map[string]string {
 
 func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *Client {
 	c := &Client{ctx: ctx, p: p, keys: keys, Meta: meta}
-	var rt http.RoundTripper = &keyTransport{c: c}
+	kt := &keyTransport{c: c, base: http.DefaultTransport}
+	if p.Cert != "" {
+		pair, err := tls.X509KeyPair(pemOf(keys[p.Cert]), pemOf(keys[p.CertKey]))
+		if err != nil {
+			kt.err = fmt.Errorf("%s's certificate and private key do not make a pair: %w", p.Name, err)
+		} else {
+			t := http.DefaultTransport.(*http.Transport).Clone()
+			t.TLSClientConfig = &tls.Config{Certificates: []tls.Certificate{pair}, MinVersion: tls.VersionTLS12}
+			kt.base = t
+		}
+	}
+	var rt http.RoundTripper = kt
 	if p.Pace > 0 {
 		rt = &paced{base: rt, p: pacerOf(p.ID, p.Pace)}
 	}
@@ -200,14 +216,35 @@ func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *
 	return c
 }
 
+var pemRe = regexp.MustCompile(`-----BEGIN ([A-Z0-9 ]+)-----([A-Za-z0-9+/=\s]*)-----END ([A-Z0-9 ]+)-----`)
+
+func pemOf(s string) []byte {
+	var b bytes.Buffer
+	for _, m := range pemRe.FindAllStringSubmatch(s, -1) {
+		der, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(m[2]), ""))
+		if err != nil {
+			continue
+		}
+		pem.Encode(&b, &pem.Block{Type: m[1], Bytes: der})
+	}
+	return b.Bytes()
+}
+
 func (c *Client) Key(name string) string { return c.keys[name] }
 
-type keyTransport struct{ c *Client }
+type keyTransport struct {
+	c    *Client
+	base http.RoundTripper
+	err  error
+}
 
 func (t *keyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.err != nil {
+		return nil, t.err
+	}
 	r = r.Clone(r.Context())
 	if t.c.p.Authorize != nil {
 		t.c.p.Authorize(r, t.c)
 	}
-	return http.DefaultTransport.RoundTrip(r)
+	return t.base.RoundTrip(r)
 }
