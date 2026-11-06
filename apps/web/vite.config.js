@@ -1,11 +1,13 @@
+import { execSync } from 'node:child_process';
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
 const archive = 'http://127.0.0.1:8080';
 const kit = new URL('../kit', import.meta.url).pathname;
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [svelte()],
+  define: { __BUILD__: JSON.stringify(command === 'build' ? execSync('git rev-parse HEAD').toString().trim() : '') },
   resolve: { alias: { '#kit': kit } },
   server: { port: 5173, strictPort: true, fs: { allow: ['.', kit] }, proxy: { '/api': archive, '^/auth(/|$)': archive, '^/connect(/|$)': archive, '/live': { target: process.env.ARCHIVE_LIVE_DEV ?? archive, ws: true } } }
-});
+}));
