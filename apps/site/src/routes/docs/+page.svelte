@@ -529,7 +529,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw. Rows from reads are strict: reading a column that is not there throws, while an empty one reads <code>null</code>.</td></tr>
+<tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw.</td></tr>
 <tr><td><code>list(table, &#123; where?, limit?, after? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
 <tr><td><code>get(table, id): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
 <tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
