@@ -2,18 +2,6 @@ package connect
 
 import "time"
 
-// Meta Ads, one ad account's campaigns and how they did, read through Meta's Marketing API. Meta's sign-in gives
-// tokens that end in 60 days and cannot be refreshed, so this connects as a system user of the business's own
-// Meta Business Manager: in Business Settings, Users, System users, a system user with the ad account assigned
-// and a token with ads_read, which does not expire, pasted in by an owner with the ad account's id. The token
-// lasts until the business revokes it.
-//
-// It syncs the account's campaigns into marketing_campaign, listed whole each sync, and each campaign's results
-// of each day into ad_metric: spend, impressions, reach, clicks, and the purchases and leads Meta credits it
-// with. The first sync reads three years of days, as far back as Meta keeps them; each sync after reads the
-// last 28 days again, as Meta still credits a day's results for that long. It pushes nothing. A next page Graph
-// names has the access token in it, which a cursor would keep in the clear; it goes, and the client signs each request
-// with it again.
 func init() {
 	Register(&Connector{
 		ID: "meta_ads", Name: "Meta Ads", Integration: true,
@@ -40,8 +28,6 @@ func init() {
 			}),
 		},
 		Sync: []*Sync{
-			// Campaigns archived or deleted there are no longer listed: a listing keeps the rows it does not see, as their days
-			// of results still name them.
 			{Name: "campaigns", Gap: time.Second, Keep: true, Req: Req{URL: "/campaigns", Query: Q{"fields": "id,name,objective,effective_status,created_time,updated_time,start_time,stop_time", "limit": "200"}},
 				Items: "data", Updated: "updated_time", Page: metaPage,
 				Doc: "Every campaign of the ad account, with its name, objective, status and when it runs: listed each sync; one archived or " +
@@ -56,7 +42,6 @@ func init() {
 				Doc: "Each campaign's results of each day, by <campaign id>/<day>: spend, impressions, reach, clicks, and the purchases, their " +
 					"value and the leads Meta credits it with. Three years of days the first time, a month at a time, and then the last 28 days " +
 					"each sync.",
-				// The purchases and leads Meta credits a day with, as their pixel counts them or else as Meta does.
 				To: Map{Table: "ad_metric",
 					Cols: map[string]SQL{"on_date": "archive.sync_day(data->>'date_start')", "campaign_name": "data->>'campaign_name'",
 						"spend":       "archive.sync_money(data->>'spend', coalesce(nullif(data->>'account_currency', ''), 'USD'))",

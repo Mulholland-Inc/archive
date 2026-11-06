@@ -1,0 +1,129 @@
+# The Archive app for iPhone. xcodegen generate makes Archive.xcodeproj from this.
+name: Archive
+options:
+  bundleIdPrefix: dev.archive
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Archive:
+    type: application
+    platform: iOS
+    sources: [Archive, Shared]
+    dependencies:
+      - target: Share
+      - target: Widget
+    entitlements:
+      path: Archive/Archive.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: [health-records]
+        com.apple.developer.healthkit.background-delivery: true
+        com.apple.developer.devicecheck.appattest-environment: $(APP_ATTEST)
+        com.apple.security.application-groups: [group.dev.archive.app]
+        keychain-access-groups: [$(AppIdentifierPrefix)dev.archive.app.shared]
+    info:
+      path: Archive/Info.plist
+      properties:
+        CFBundleDisplayName: Archive
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ArchiveAPI: $(ARCHIVE_API)
+        ArchiveWallet: $(ARCHIVE_WALLET)
+        KeychainGroup: $(AppIdentifierPrefix)dev.archive.app.shared
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIBackgroundModes: [fetch, processing]
+        BGTaskSchedulerPermittedIdentifiers: [dev.archive.app.refresh, dev.archive.app.backfill]
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSHealthShareUsageDescription: Archive keeps your Health data in your own Archive, where only you can see it.
+        NSHealthUpdateUsageDescription: Archive writes sample Health data in the Simulator only.
+        NSPhotoLibraryUsageDescription: Archive keeps your photos and videos in your Archive, full size, with when and where each was taken.
+        NSContactsUsageDescription: Archive keeps your contacts in your Archive.
+        NSCalendarsFullAccessUsageDescription: Archive keeps your calendar's events in your Archive.
+        NSRemindersFullAccessUsageDescription: Archive keeps your reminders in your Archive.
+        NSHealthClinicalHealthRecordsShareUsageDescription: Archive keeps the health records your hospitals sent to Health in your own Archive, where only you can see them.
+        NSLocationWhenInUseUsageDescription: Archive keeps the places you spend time in your Archive, so you can find where you were.
+        NSLocationAlwaysAndWhenInUseUsageDescription: Archive keeps the places you spend time in your Archive, from your iPhone's visits, which barely use the battery.
+        NSFinancialDataUsageDescription: Archive keeps your Apple Card, Apple Cash and Apple Savings balances and transactions in your Archive.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.archive.app
+        SWIFT_OBJC_BRIDGING_HEADER: Archive/Bridging.h
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        ARCHIVE_API: https://api.archive.dev
+        APP_ATTEST: production
+        # YES once Apple grants the FinanceKit entitlement and com.apple.developer.financekit is in the entitlements above.
+        ARCHIVE_WALLET: NO
+      configs:
+        Debug:
+          ARCHIVE_API: http://localhost:8080
+          APP_ATTEST: development
+  Share:
+    type: app-extension
+    platform: iOS
+    sources: [Share, Shared, Archive/Client.swift]
+    entitlements:
+      path: Share/Share.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.archive.app]
+        keychain-access-groups: [$(AppIdentifierPrefix)dev.archive.app.shared]
+    info:
+      path: Share/Info.plist
+      properties:
+        CFBundleDisplayName: Archive
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ArchiveAPI: $(ARCHIVE_API)
+        KeychainGroup: $(AppIdentifierPrefix)dev.archive.app.shared
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsAttachmentsWithMaxCount: 20
+              NSExtensionActivationSupportsFileWithMaxCount: 20
+              NSExtensionActivationSupportsImageWithMaxCount: 20
+              NSExtensionActivationSupportsMovieWithMaxCount: 10
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.archive.app.share
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) EXTENSION
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
+        ARCHIVE_API: https://api.archive.dev
+      configs:
+        Debug:
+          ARCHIVE_API: http://localhost:8080
+  Widget:
+    type: app-extension
+    platform: iOS
+    sources: [Widget, Shared]
+    entitlements:
+      path: Widget/Widget.entitlements
+      properties:
+        com.apple.security.application-groups: [group.dev.archive.app]
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Archive
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.archive.app.widget
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic

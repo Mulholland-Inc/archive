@@ -6,20 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Microsoft Teams: the chats and the channel posts of a Microsoft 365 work or school account, read only through
-// Microsoft Graph. It reads ARCHIVE_OUTLOOK, the app registration in Microsoft Entra that Outlook and SharePoint
-// connect with: its web redirect URIs list <API>/connect/teams/callback too, and its delegated Graph permissions
-// add User.ReadBasic.All, Chat.Read, Team.ReadBasic.All, Channel.ReadBasic.All and ChannelMessage.Read.All, which
-// last a tenant's admin consents to once for everyone. Teams is work and school only, so it signs in through the
-// organizations endpoint. Microsoft has no endpoint that revokes one grant: a person removes Archive at
-// myapps.microsoft.com.
-//
-// It syncs the messages of every chat the account is in, and the posts of every channel of every team it is in,
-// into chat_message, each sender as the person of their address. Graph keeps no delta of a person's chats, so a
-// sync asks each chat for the messages changed since it last read it, which is one cheap call; a channel it
-// reads by Graph's delta of it, as Outlook reads a folder. Graph's delta of a channel holds its posts, not their
-// replies. Graph pushes chats and channels only to subscriptions that need resource data encrypted, so it pushes
-// nothing yet: connecting, asking and reading start a sync.
 func init() {
 	Register(&Connector{
 		ID: "teams", Name: "Microsoft Teams", Env: "ARCHIVE_OUTLOOK",
@@ -59,7 +45,6 @@ func init() {
 			}),
 		},
 		Sync: []*Sync{
-			// Teams says what it has done itself, like a member added, in messages that are left out.
 			{Name: "chats", Gap: time.Second, Keep: true,
 				Parts:  &Parts{Req: Req{URL: "/me/chats?$expand=members&$top=50"}, Items: "value", Page: teamsPage, Vals: Obj{"name": "{topic;members/*/displayName,, }"}},
 				Req:    Req{URL: "/me/chats/{part}/messages", Query: Q{"$top": "50", "$orderby": "lastModifiedDateTime desc"}},
@@ -90,8 +75,6 @@ var (
 	teamsPage = NextURL{At: "@odata.nextLink"}
 	teamsGone = []Test{{At: "@removed"}, {At: "deletedDateTime"}}
 	teamsSkip = []Test{{At: "messageType", Not: "message"}}
-	// A message's text, and the address of who sent it, which Graph does not say and User.ReadBasic.All looks up, once a
-	// page for each sender.
 	teamsMore = []Hydrate{
 		Fetch{If: Test{At: "from/user/id"}, Once: "{from/user/id}", Soft: true, Req: Req{URL: "/users/{from/user/id}?$select=mail,userPrincipalName"}, As: "sender"},
 		Decode{Codec: Words, At: "body/content", As: "words", If: Test{At: "body/contentType", Is: "html"}},

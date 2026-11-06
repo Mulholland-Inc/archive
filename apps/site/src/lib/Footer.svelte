@@ -29,5 +29,6 @@
     </div>
     <div class="big" aria-hidden="true"><Word class="" /></div>
     <div class="fine"><span>© {new Date().getFullYear()} Mulholland, Inc.</span><span>Archive</span></div>
+    <p class="marks">We are not affiliated, associated, or in any way officially connected with YNAB or any of its subsidiaries or affiliates. The official YNAB website can be found at <a href="https://www.ynab.com">https://www.ynab.com</a>. The names YNAB and You Need A Budget, as well as related names, tradenames, marks, trademarks, emblems, and images are registered trademarks of YNAB.</p>
   </div>
 </footer>

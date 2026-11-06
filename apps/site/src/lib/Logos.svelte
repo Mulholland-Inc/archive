@@ -13,7 +13,7 @@
       <div class={['marquee-row', r && 'reverse']}>
         <div class="marquee-track">
           {#each [...row, ...row] as item, i}<span role={i < row.length ? 'listitem' : undefined} aria-hidden={i >= row.length || undefined}
-              >{#if BRANDS[item]}<svg class="brand" viewBox={BRANDS[item][0]} aria-hidden="true">{@html BRANDS[item][1]}</svg>{/if}{item}</span
+              >{#if BRANDS[item]}<svg class="brand" aria-hidden="true"><use href="/brands.svg#{BRANDS[item]}" /></svg>{/if}{item}</span
             >{/each}
         </div>
       </div>

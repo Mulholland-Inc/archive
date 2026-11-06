@@ -2,17 +2,17 @@
   import { ChevronLeft } from '@lucide/svelte';
   import IconButton from './IconButton.svelte';
 
-  let { title, onback, backNarrow = false, tabs, tools, children } = $props();
+  let { title, onback, backNarrow = false, lead, tools, children } = $props();
 </script>
 
 <section class="pane">
-  <header class={{ narrow: !title && !tabs && !tools && (!onback || backNarrow) }}>
+  <header class={{ narrow: !title && !lead && !tools && (!onback || backNarrow) }}>
     <div class="lead">
       {#if onback}
         <span class={['back', { narrow: backNarrow }]}><IconButton icon={ChevronLeft} label="Back" tooltip={false} onclick={onback} /></span>
       {/if}
       {#if title}<h2>{title}</h2>{/if}
-      {#if tabs}{@render tabs()}{/if}
+      {#if lead}{@render lead()}{/if}
     </div>
     {#if tools}<div class="tools">{@render tools()}</div>{/if}
   </header>

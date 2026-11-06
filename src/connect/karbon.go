@@ -2,11 +2,6 @@ package connect
 
 import "time"
 
-// Karbon, the practice-management platform of accounting firms, through its API v3. It has no sign-in for apps: a
-// firm's admin registers an API application with Karbon, and once Karbon approves it, Settings, Connected Apps, API
-// Applications shows its Authorization token, a GUID, and its AccessKey, a JWT, which an owner pastes in to connect
-// the firm for everyone. Karbon's webhooks need a subscription per kind, which it does not make yet: connecting,
-// asking and reading start a sync.
 func init() {
 	Register(&Connector{
 		ID: "karbon", Name: "Karbon", Integration: true,

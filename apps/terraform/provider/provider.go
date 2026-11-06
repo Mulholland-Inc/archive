@@ -32,7 +32,7 @@ func (p *archiveProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 		Description: "Manage what lives inside an Archive instance: its tables and views (as migrations), members and tokens.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{Optional: true, Description: "Base URL of the Archive API, like https://api.example.com. Defaults to ARCHIVE_URL, the web app's URL, with app. made api., so https://app.example.com calls https://api.example.com."},
-			"token":    schema.StringAttribute{Optional: true, Sensitive: true, Description: "Archive token. Defaults to ARCHIVE_TOKEN. Changing the schema and the members needs an owner's token that is not viewer-only; managing tokens needs a token that is not viewer-only."},
+			"token":    schema.StringAttribute{Optional: true, Sensitive: true, Description: "Archive token. Defaults to ARCHIVE_TOKEN. Changing the schema and the members needs a manager's, engineer's or the owner's token that is not viewer-only; managing tokens needs an engineer's or the owner's token that is not viewer-only."},
 		},
 	}
 }

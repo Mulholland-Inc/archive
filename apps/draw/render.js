@@ -17,7 +17,7 @@ export async function loadPalette() {
 
 export async function loadSources(name) {
   const [lib, scene, palette] = await Promise.all([text('sdf.glsl'), text(`scenes/${name}.glsl`), text('palette.json')]);
-  return { lib, scene, palette: JSON.parse(palette) };
+  return { lib: /^(bot|agent)-/.test(name) ? `#define ICON\n${lib}` : lib, scene, palette: JSON.parse(palette) };
 }
 
 function parseFrame(scene) {
@@ -25,7 +25,7 @@ function parseFrame(scene) {
   if (!m) throw new Error('scene has no "#pragma frame {...}" line');
   const f = JSON.parse(m[1]);
   return {
-    size: f.size,
+    size: f.size ?? [320, 320],
     center: f.center ?? [0, 0, 0],
     zoom: f.zoom ?? 200,
     yaw: f.yaw ?? 45,
@@ -34,6 +34,7 @@ function parseFrame(scene) {
     shade: f.shade ?? 0,
     trim: f.trim ?? true,
     body: scene.replace(m[0], ''),
+    pragma: f,
   };
 }
 
@@ -328,6 +329,7 @@ export class Renderer {
         gl.uniform2f(u.uHalf, W * S / 2, H * S / 2);
         gl.uniform1f(u.uPx, px);
         gl.uniform1f(u.uAO, o.ao);
+        gl.uniform1f(u.uTurn, o.turn ?? 0.785);
         this.draw(w * S + 2 * Mg, h * S + 2 * Mg);
 
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.fbos[1]);
@@ -389,24 +391,69 @@ export async function bake(name, opts = {}) {
   return cv.toDataURL('image/png');
 }
 
-function trim(img) {
+function drawn(img) {
   const { width: W, height: H, data } = img;
   let x0 = W, y0 = H, x1 = -1, y1 = -1;
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      if (data[(y * W + x) * 4 + 3] > 8) {
-        if (x < x0) x0 = x;
-        if (x > x1) x1 = x;
-        if (y < y0) y0 = y;
-        if (y > y1) y1 = y;
-      }
-    }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (data[(y * W + x) * 4 + 3] > 8) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   }
-  if (x1 < 0) return [0, 0, W, H];
-  const pad = Math.round(Math.max(x1 - x0, y1 - y0) * 0.02);
-  x0 = Math.max(0, x0 - pad);
-  y0 = Math.max(0, y0 - pad);
-  x1 = Math.min(W - 1, x1 + pad);
-  y1 = Math.min(H - 1, y1 + pad);
-  return [x0, y0, x1 - x0 + 1, y1 - y0 + 1];
+  return x1 < 0 ? null : [x0, y0, x1 + 1, y1 + 1];
+}
+
+function trim(img) {
+  const b = drawn(img);
+  if (!b) return [0, 0, img.width, img.height];
+  const pad = Math.round((Math.max(b[2] - b[0], b[3] - b[1]) - 1) * 0.02);
+  const x0 = Math.max(0, b[0] - pad), y0 = Math.max(0, b[1] - pad);
+  return [x0, y0, Math.min(img.width, b[2] + pad) - x0, Math.min(img.height, b[3] + pad) - y0];
+}
+
+const TURNS = [0.3, 0.46, 0.6, 0.785];
+const GLANCE = [0.42, 0.54, 0.66, 0.785];
+const CELL = 256;
+let renderer;
+
+export async function icon(name) {
+  renderer ??= new Renderer();
+  const agent = name.startsWith('agent-');
+  const turns = agent ? GLANCE : TURNS;
+  const src = await loadSources(name);
+  const frame = parseFrame(src.scene);
+  const tilt = frame.pragma.pitch ?? 18;
+  const framed = (size, center, zoom) => ({ ...src, scene: `#pragma frame ${JSON.stringify({ size: [size, size], center, zoom, pitch: tilt, bounds: frame.pragma.bounds ?? [[-2.5, -0.6, -2.5], [2.5, 3.4, 2.5]] })}\n${frame.body}` });
+  const from = frame.pragma.center ?? [0, 1, 0];
+  const probe = framed(256, from, 64);
+  const box = [256, 256, 0, 0];
+  for (const turn of turns) {
+    const b = drawn(await renderer.render(probe, { ss: 1, line: 0.5, turn }));
+    if (!b) throw new Error('nothing to draw');
+    box[0] = Math.min(box[0], b[0]); box[1] = Math.min(box[1], b[1]); box[2] = Math.max(box[2], b[2]); box[3] = Math.max(box[3], b[3]);
+  }
+  const w = (box[2] - box[0]) / 256, h = (box[3] - box[1]) / 256;
+  const fill = agent ? Math.min(0.96 / Math.max(w, h), Math.sqrt(0.7 / (w * h))) : Math.min(0.84 / Math.max(w, h), Math.sqrt(0.56 / (w * h)));
+  const rad = Math.PI / 180, yaw = frame.yaw * rad, pitch = tilt * rad;
+  const right = [Math.cos(yaw), 0, -Math.sin(yaw)];
+  const up = [-Math.sin(pitch) * Math.sin(yaw), Math.cos(pitch), -Math.sin(pitch) * Math.cos(yaw)];
+  const dx = ((box[0] + box[2]) / 2 - 128) / 64, dy = (128 - (box[1] + box[3]) / 2) / 64;
+  const center = from.map((c, i) => c + right[i] * dx + up[i] * dy);
+  const fine = framed(CELL, center, (fill * CELL) / 4);
+  const cv = document.createElement('canvas');
+  cv.width = CELL * turns.length * (agent ? 2 : 1);
+  cv.height = CELL;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  for (const [i, turn] of turns.entries()) {
+    const img = await renderer.render(fine, { ss: 4, line: CELL / (agent ? 220 : 320), turn });
+    const d = img.data;
+    const eyes = new ImageData(CELL, CELL);
+    for (let p = 0; p < d.length; p += 4) {
+      const eye = agent ? Math.max(0, (d[p + 2] - d[p] - 7) / 190) : 0;
+      const of = eye < 0.05 ? 0 : Math.min(1, eye);
+      const [r, g, b] = [d[p] + of * 244, d[p + 1] + of * (245 - 102), d[p + 2] + of * (247 - 197)];
+      d[p] = d[p + 1] = d[p + 2] = Math.min(255, Math.round(0.2126 * r + 0.7152 * g + 0.0722 * b));
+      eyes.data.set([244, 245, 247, Math.round(of * d[p + 3])], p);
+    }
+    ctx.putImageData(img, i * CELL, 0);
+    if (agent) ctx.putImageData(eyes, (i + turns.length) * CELL, 0);
+  }
+  return cv.toDataURL('image/png');
 }
