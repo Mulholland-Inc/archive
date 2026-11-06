@@ -915,7 +915,7 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		return nil, nil, nil, err
 	}
 	role := a.roleID("u", m.ID)
-	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID}
+	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID, entry: m}
 	ac.scoped = t.Workspace != ""
 	if t.Kind != "session" {
 		ac.TokenName = t.Name

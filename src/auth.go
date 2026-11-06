@@ -53,6 +53,7 @@ type Actor struct {
 	Role      string    `json:"-"`
 	UserRole  string    `json:"-"`
 	member    uuid.UUID
+	entry     generated.MemberEntryRow
 	scoped    bool
 }
 
@@ -198,12 +199,9 @@ func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberE
 
 func (a *Archive) me(ctx context.Context) (map[string]any, error) {
 	ac := ActorFrom(ctx)
-	m, err := a.memberOf(ctx, ac.Email)
-	if err != nil {
-		return nil, err
-	}
+	role := ac.entry.Role
 	if ac.Role != ac.UserRole {
-		m.Role = "viewer"
+		role = "viewer"
 	}
 	rows, err := a.hub.q().UserWorkspaces(ctx, ac.UserID)
 	if err != nil {
@@ -221,7 +219,7 @@ func (a *Archive) me(ctx context.Context) (map[string]any, error) {
 			all = append(all, w)
 		}
 	}
-	return map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
+	return map[string]any{"actor": ac, "role": role, "group": ac.entry.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {

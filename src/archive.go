@@ -722,7 +722,7 @@ const (
 	storeAppConns  = 6
 	storeSysConns  = 3
 	storeRoleConns = 2
-	storeIdle      = time.Minute
+	storePing      = time.Minute
 )
 
 func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved func(table, id string), fn func(*pgx.ConnConfig)) (*pgxpool.Pool, error) {
@@ -733,7 +733,8 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 	cfg.ConnConfig = base.Copy()
 	cfg.ConnConfig.RuntimeParams["search_path"] = "archive, public"
 	cfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
-	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, storeIdle
+	cfg.MaxConns, cfg.MinConns, cfg.MaxConnIdleTime = conns, 0, hubIdle
+	cfg.ShouldPing = func(_ context.Context, p pgxpool.ShouldPingParams) bool { return p.IdleDuration > storePing }
 	if fn != nil {
 		fn(cfg.ConnConfig)
 	}
