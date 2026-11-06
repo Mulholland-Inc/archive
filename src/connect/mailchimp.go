@@ -6,19 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Mailchimp's audiences, members and campaigns, through its Marketing API, read, and when asked a member added,
-// changed or tagged; it never sends a campaign, changes a member's consent or deletes anything. It reads
-// ARCHIVE_MAILCHIMP, an app registered in a Mailchimp account whose redirect URI is
-// <API>/connect/mailchimp/callback. Mailchimp has no scopes, and its tokens never expire and come without a
-// refresh token, so the grant keeps the access token itself; disconnecting leaves the app in the account's
-// Connected Apps, where an owner removes it. Each account lives in its own data center, whose API the token's
-// metadata names. An owner connects the account for everyone.
-//
-// It syncs every member of every audience into crm_contact, the person of their email, one row for each audience
-// they are in, and every campaign into marketing_campaign. Members are listed whole the first time and a week
-// after, which deletes those gone, and in between read by when they changed since the sync before; campaigns, which
-// are few, are listed whole each sync. Tags and reports have no table: the assistant reads them with get. It pushes
-// nothing: Mailchimp's webhooks are made per audience.
 func init() {
 	Register(&Connector{
 		ID: "mailchimp", Name: "Mailchimp", Integration: true, Lasts: true,
@@ -59,7 +46,6 @@ func init() {
 		},
 		Sync: []*Sync{
 			{Name: "members", Gap: time.Second, Req: Req{URL: "/lists/{part}/members", Query: mailchimpMembers}, Items: "members", Updated: "last_changed", Page: mailchimpPage,
-				// A member is the same id in each audience they are in.
 				Key:   []Reads{{Of: "{list_id}/{id}"}},
 				Parts: &Parts{Req: Req{URL: "/lists", Query: Q{"count": "1000", "offset": "{page}", "fields": "lists.id,total_items"}}, Items: "lists", Page: Offset{Size: 1000, Step: 1000}},
 				Change: SinceTime{Req: Req{URL: "/lists/{part}/members",
@@ -83,7 +69,6 @@ func init() {
 				To: Map{Table: "marketing_campaign",
 					Cols: map[string]SQL{"title": "coalesce(nullif(data#>>'{settings,title}', ''), data#>>'{settings,subject_line}')", "channel": "'email'",
 						"status": "data->>'status'", "archived": "data->>'status' = 'archived'",
-						// send_time is when a scheduled campaign goes, and when a sent one went.
 						"scheduled_at": "CASE WHEN data->>'status' = 'schedule' THEN archive.sync_at(data->>'send_time') END",
 						"sent_at":      "CASE WHEN data->>'status' IN ('sending', 'sent') THEN archive.sync_at(data->>'send_time') END",
 						"made_at":      "archive.sync_at(data->>'create_time')"}}},
@@ -93,9 +78,7 @@ func init() {
 
 var (
 	mailchimpMembers = Q{"count": "1000", "offset": "{page}", "exclude_fields": "members._links,_links"}
-	// Pages overlap by 50, so a member gone while a listing runs, or one that changes while a delta runs, which moves
-	// the ones after it a place back, skips none.
-	mailchimpPage = Offset{Size: 1000, Step: 950}
+	mailchimpPage    = Offset{Size: 1000, Step: 950}
 )
 
 type (

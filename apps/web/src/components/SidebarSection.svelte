@@ -1,7 +1,7 @@
 <script>
   import { getContext } from 'svelte';
 
-  let { title, children, action } = $props();
+  let { title, children } = $props();
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
@@ -10,7 +10,6 @@
   {#if title}
     <div class="title">
       <span>{title}</span>
-      {#if action}{@render action()}{/if}
     </div>
   {/if}
   <div class="items">{@render children()}</div>
@@ -28,8 +27,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    height: var(--control-sm);
-    padding: var(--space-1-5);
+    height: var(--space-5);
+    padding-inline: var(--space-1-5);
     color: var(--color-text-tertiary);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);

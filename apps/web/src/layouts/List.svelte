@@ -1,10 +1,8 @@
 <script>
   import { titleOf } from '../lib/app.svelte.js';
 
-  // A list: one narrow column of rows, like notes, each its name and the start of its longest text.
   let { view, rows, shown, text, pick } = $props();
 
-  // The body is the long text column, or the text column whose values run longest.
   const body = $derived.by(() => {
     const long = shown.find((c) => c.type === 'long');
     if (long) return long;
@@ -38,7 +36,6 @@
     border-top: var(--border-width) solid var(--color-border-subtle);
   }
 
-  /* A note's text starts where the dividers do; its hover reaches out past them. */
   .note {
     display: flex;
     width: calc(100% + 2 * var(--space-3));

@@ -12,19 +12,16 @@
 
   const PROMPT = [
     `Help me run Archive, the open-source data server at ${GITHUB}, in my own Google Cloud account.`,
-    '1. Clone the repo, then read apps/terraform/gcp and the Environment section of src/main.go before you change anything.',
+    '1. Clone the repo, then read apps/terraform/gcp before you change anything.',
     '2. Check that I have gcloud, Terraform 1.9 or newer, a Google Cloud project with billing where I am Owner, and a domain on Cloudflare.',
-    '3. Ask me which email should be the first owner, which subdomains the web app and the API should get, and which sign-in provider I want (Google, Microsoft, Slack or GitHub).',
+    '3. Ask me which subdomains the web app and the API should get, and which sign-in provider I want (Google, Microsoft, Slack or GitHub).',
     '4. Run gcloud auth application-default login, create the Terraform state bucket, then terraform init with that bucket and terraform apply in apps/terraform/gcp with my project and domain. Ask me before you apply anything.',
-    '5. When the API answers 204 on /health, add me as the first owner with the Cloud Run job: gcloud run jobs execute archive --region us-central1 --wait --args=user,add,<my email>.',
-    '6. Make me an access token with the same job and token,create, and show me how to connect Claude Code to my API address plus /mcp.',
     'Never write secrets into files that get committed, and tell me each step before you run it.'
   ].join('\n');
 
   const WAYS = [
     ['Your AI agent', 'Claude, ChatGPT, Gemini, Cursor and others connect over MCP and run scripts for you'],
     ['The API', 'Records, files and search from your own apps and services'],
-    ['The command line', 'Scripts, scheduled jobs and quick changes from your terminal'],
     ['Terraform', 'Your structure, people and access keys kept with the rest of your setup'],
     ['Connectors', 'Mail, calendars, files, chat and business tools, kept up to date']
   ];
@@ -72,7 +69,7 @@
   <Row art="connectors" alt="Cables from mail, chat and file services plugged into one Archive socket">
     <h2>Connect it to everything else.</h2>
     <p>Bring in mail, calendars, files, chat and business tools like Gmail, Slack, Google Drive, HubSpot and Stripe. Connectors keep up as things change, and act, like sending an email or updating a deal, only when you ask.</p>
-    <p>Reach Archive from your own apps, scripts and services through the API and the command line, with the same permissions everywhere.</p>
+    <p>Reach Archive from your own apps, scripts and services through the API, with the same permissions everywhere.</p>
   </Row>
   <Row flip art="factory" alt="A factory turning a jumble of documents into neatly packed crates">
     <h2>Open source. Make it yours.</h2>

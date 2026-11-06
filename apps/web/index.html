@@ -15,6 +15,15 @@
         var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
         document.documentElement.dataset.theme = dark ? 'dark' : 'light';
       })();
+      (function () {
+        window.API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
+        if (location.pathname === '/authorize') return;
+        var named = new URLSearchParams(location.search).get('workspace');
+        try {
+          named = named || localStorage.getItem('workspace');
+        } catch (e) {}
+        window.boot = fetch(window.API + '/api/boot', { credentials: 'include', headers: named ? { 'Archive-Workspace': named } : {} });
+      })();
     </script>
   </head>
   <body>

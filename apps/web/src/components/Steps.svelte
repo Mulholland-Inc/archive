@@ -2,6 +2,8 @@
   import { Check, LoaderCircle, CircleAlert, Hand } from '@lucide/svelte';
   import Icon from './Icon.svelte';
   import Disclosure from './Disclosure.svelte';
+  import CodeBlock from './CodeBlock.svelte';
+  import { app } from '../lib/app.svelte.js';
   import { rise } from '../lib/motion.js';
 
   let { steps = [], running = false, worked, open = $bindable(false) } = $props();
@@ -38,7 +40,21 @@
         </span>
         <span class="body">
           <span class="title">{step.label}</span>
-          {#if step.detail}<span class="detail">{step.detail}</span>{/if}
+          {#if step.detail && (!app.developer || step.status === 'failed')}<span class="detail">{step.detail}</span>{/if}
+          {#if app.developer}
+            <span class="technical">
+              {#if step.code}<CodeBlock code={step.code} lang="typescript" label="Code" />{/if}
+              {#if step.logs?.length}<CodeBlock code={step.logs.join('\n')} label="Logs" />{/if}
+              {#if step.result != null}<CodeBlock code={JSON.stringify(step.result, null, 2)} lang="json" label="Result" />{/if}
+              {#if step.files?.length}
+                <ul class="files">
+                  {#each step.files as file (file.id)}
+                    <li><span class="action">{file.action}</span> {file.name}</li>
+                  {/each}
+                </ul>
+              {/if}
+            </span>
+          {/if}
         </span>
         {#if step.time}<span class="time">{step.time}</span>{/if}
       </li>
@@ -138,6 +154,26 @@
   .detail {
     color: var(--color-text-tertiary);
     font-size: var(--text-sm);
+  }
+
+  .technical {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding-block-start: var(--space-2);
+  }
+
+  .files {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-0-5);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .action {
+    color: var(--color-text-tertiary);
+    text-transform: capitalize;
   }
 
   .time {

@@ -1,37 +1,14 @@
 package connect
 
 import (
-	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"net/http"
 	"strings"
-	"sync"
 	"time"
 )
 
-// Dentrix, Henry Schein One's dental practice management system, on the practice's server (G-series) or in the cloud
-// (Ascend), read only through NexHealth's Synchronizer API, which reads Dentrix for its developers without Henry
-// Schein One's own developer program. It is a key connector with a key of the server's own: ARCHIVE_DENTRIX is
-// https://<API key>@nexhealth.info, Mulholland's NexHealth API key, which POST /authenticates trades for a bearer
-// token that lasts an hour, every call sending Nex-Api-Version v3.0.0. Mulholland adds each practice in NexHealth's
-// developer portal, and the practice installs NexHealth's Synchronizer on its Dentrix server (or, on Ascend, gives
-// NexHealth a user); NexHealth names it by a subdomain and a location id.
-//
-// One API key reads every practice Mulholland added, so a practice connects with an access code Mulholland gives it:
-// <subdomain>/<location id>/<signature>, the signature the first 16 hex digits of the HMAC-SHA256 of
-// <subdomain>/<location id> keyed with the API key, which connecting checks. Every request then goes to that
-// subdomain and location, whatever it asked.
-//
-// What it syncs is health information under the practice's agreement with Mulholland, and NexHealth's: its
-// providers, patients, appointments, procedures and payments, into the dental tables. An owner should narrow the
-// connection to the group that may see them. NexHealth lists up to 1,000 a page, by cursor, and lists what changed
-// since a time with updated_since: a stream asks from the newest updated_at it has seen, NexHealth's clock, not
-// Archive's. Each is listed whole the first time and a week after, which deletes what is gone; providers, which are
-// few, each sync. Appointment times are the practice's local ones, by the time zone NexHealth gives each; edited_at
-// is NexHealth's, in UTC. NexHealth takes 8 procedure listings a second, so requests go at most that fast.
 func init() {
 	Register(&Connector{
 		ID: "dentrix", Name: "Dentrix", Integration: true, Env: "ARCHIVE_DENTRIX", Host: "https://nexhealth.info",
@@ -41,8 +18,18 @@ func init() {
 		Pace: 125 * time.Millisecond,
 		Keys: []Key{{Name: "code", Label: "Access code", Secret: true,
 			Help: "The code Mulholland sends once NexHealth's Synchronizer is set up on your Dentrix, like acme/123/9f86d081884c7d65"}},
-		Authorize: dxAuthorize,
-		Account:   dxAccount,
+		Mint: []Step{
+			{In: Obj{"secret": "{client/id}", "code": "{key/code}"}, Codec: dxSigned},
+			{As: "key/subdomain", In: "{key/code}", Find: `^([^/]+)/`},
+			{As: "key/location", In: "{key/code}", Find: `^[^/]+/([^/]+)/`},
+			{As: "got", Req: Req{Method: POST, URL: "https://nexhealth.info/authenticates",
+				Header: map[string][]string{"Authorization": {"{client/id}"}, "Nex-Api-Version": {dxVersion}}}},
+			{As: "key/access", In: "{got/data/token}"},
+			{Only: Test{At: "key/access", Off: true}, Fail: "NexHealth gave no token for Archive's API key"},
+		},
+		Sign: map[string]string{"Authorization": "Bearer {key/access}", "Nex-Api-Version": dxVersion},
+		Pin:  Q{"subdomain": "{key/subdomain}", "location_id": "{key/location}"},
+		Who:  &Who{Req: Req{URL: "/locations/{key/location}"}, Names: []Path{"data/name"}},
 		Actions: map[string]*Action{
 			"get": Call[dxGet, any](Plan{
 				Doc: "Read one of NexHealth's GET endpoints for the practice's Dentrix, like { path: \"/appointments\", " +
@@ -107,23 +94,19 @@ func init() {
 
 const (
 	dxVersion = "v3.0.0"
-	// dxStart is before any practice's records, for listings NexHealth will not give without a time.
-	dxStart  = "1990-01-01T00:00:00Z"
-	dxPaths  = `^/(patients|providers|appointments|procedures|payments|charges|adjustments|claims|insurance_plans|insurance_coverages|treatment_plans|patient_recalls|appointment_types|operatories|payment_types|adjustment_types|working_hours)(/[0-9]+)?$`
-	dxEdited = SQL("archive.sync_at(data->>'updated_at') AT TIME ZONE 'UTC'")
+	dxStart   = "1990-01-01T00:00:00Z"
+	dxPaths   = `^/(patients|providers|appointments|procedures|payments|charges|adjustments|claims|insurance_plans|insurance_coverages|treatment_plans|patient_recalls|appointment_types|operatories|payment_types|adjustment_types|working_hours)(/[0-9]+)?$`
+	dxEdited  = SQL("archive.sync_at(data->>'updated_at') AT TIME ZONE 'UTC'")
 )
 
 var (
-	dxPage = Cursor{At: "page_info/end_cursor", More: "page_info/has_next_page"}
-	dxDeny = []Deny{{Status: []int{403}, Why: "NexHealth does not let Archive read {stream} of this Dentrix: {message}"}}
-	// dxBoth lists active and inactive apart, as NexHealth lists only one or the other.
+	dxPage     = Cursor{At: "page_info/end_cursor", More: "page_info/has_next_page"}
+	dxDeny     = []Deny{{Status: []int{403}, Why: "NexHealth does not let Archive read {stream} of this Dentrix: {message}"}}
 	dxBoth     = &Parts{Fixed: []Obj{{"id": "false"}, {"id": "true"}}}
 	dxInactive = Q{"inactive": "{part}"}
-	// dxEver is every appointment's time, which NexHealth asks for.
-	dxEver = Q{"start": dxStart, "end": "2100-01-01T00:00:00Z"}
+	dxEver     = Q{"start": dxStart, "end": "2100-01-01T00:00:00Z"}
 )
 
-// dxAt is a listing's query: qs, 1,000 a page, from the cursor.
 func dxAt(qs ...Q) Q {
 	q := Q{"per_page": "1000", "end_cursor": "{page}"}
 	for _, x := range qs {
@@ -134,8 +117,6 @@ func dxAt(qs ...Q) Q {
 	return q
 }
 
-// dxLocal is the time at key in the practice's own clock, by the record's time zone when it has one Postgres knows,
-// else as NexHealth wrote it.
 func dxLocal(key string) SQL {
 	return SQL("CASE WHEN data->>'timezone' <> '' AND pg_input_is_valid('2000-01-01 00:00 ' || (data->>'timezone'), 'timestamptz') " +
 		"THEN archive.sync_at(data->>'" + key + "') AT TIME ZONE (data->>'timezone') " +
@@ -147,81 +128,14 @@ type dxGet struct {
 	Query string `json:"query,omitempty" jsonschema:"Its query, like patient_id=12&per_page=100"`
 }
 
-// dxCode is the subdomain and location an access code is for, if it is one the server's API key signed.
-func dxCode(key, code string) (sub, loc string, ok bool) {
-	parts := strings.Split(strings.TrimSpace(code), "/")
-	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || key == "" {
-		return "", "", false
+var dxSigned = &Codec{"dentrix_signed", func(v any) (any, error) {
+	key, parts := text(pick(v, "secret")), strings.Split(strings.TrimSpace(text(pick(v, "code"))), "/")
+	if len(parts) == 3 && parts[0] != "" && parts[1] != "" && key != "" {
+		mac := hmac.New(sha256.New, []byte(key))
+		mac.Write([]byte(parts[0] + "/" + parts[1]))
+		if hmac.Equal([]byte(strings.ToLower(parts[2])), []byte(hex.EncodeToString(mac.Sum(nil))[:16])) {
+			return nil, nil
+		}
 	}
-	mac := hmac.New(sha256.New, []byte(key))
-	mac.Write([]byte(parts[0] + "/" + parts[1]))
-	want := hex.EncodeToString(mac.Sum(nil))[:16]
-	return parts[0], parts[1], hmac.Equal([]byte(strings.ToLower(parts[2])), []byte(want))
-}
-
-// dxAccount checks the access code and names the location it is for.
-func dxAccount(c *Client) (string, error) {
-	key, _ := c.Credentials()
-	_, loc, ok := dxCode(key, c.Key("code"))
-	if !ok {
-		return "", errors.New("that access code is not one Mulholland made; ask Mulholland for the practice's code")
-	}
-	var ans struct {
-		Data struct{ Name string } `json:"data"`
-	}
-	if err := c.Get("https://nexhealth.info/locations/"+loc, &ans); err != nil {
-		return "", err
-	}
-	return cmp.Or(ans.Data.Name, "Dentrix"), nil
-}
-
-// dxTokens are the bearer tokens of API keys, kept until shortly before NexHealth's hour is up.
-var dxTokens = struct {
-	sync.Mutex
-	m map[string]dxToken
-}{m: map[string]dxToken{}}
-
-type dxToken struct {
-	token string
-	until time.Time
-}
-
-// dxAuthorize signs a request with the API key's bearer token, and sends it to the access code's subdomain and
-// location; the request that makes the token carries the key itself.
-func dxAuthorize(r *http.Request, c *Client) {
-	key, _ := c.Credentials()
-	r.Header.Set("Nex-Api-Version", dxVersion)
-	if strings.HasSuffix(r.URL.Path, "/authenticates") {
-		r.Header.Set("Authorization", key)
-		return
-	}
-	sub, loc, ok := dxCode(key, c.Key("code"))
-	if !ok {
-		return
-	}
-	q := r.URL.Query()
-	q.Set("subdomain", sub)
-	q.Set("location_id", loc)
-	r.URL.RawQuery = q.Encode()
-	if t := dxBearer(c, key); t != "" {
-		r.Header.Set("Authorization", "Bearer "+t)
-	}
-}
-
-// dxBearer is the API key's bearer token, made when it has none that lasts; a request without one is refused as
-// NexHealth refuses it.
-func dxBearer(c *Client, key string) string {
-	dxTokens.Lock()
-	defer dxTokens.Unlock()
-	if t := dxTokens.m[key]; time.Now().Before(t.until) {
-		return t.token
-	}
-	var ans struct {
-		Data struct{ Token string } `json:"data"`
-	}
-	if err := c.Send("POST", "https://nexhealth.info/authenticates", nil, nil, &ans); err != nil || ans.Data.Token == "" {
-		return ""
-	}
-	dxTokens.m[key] = dxToken{ans.Data.Token, time.Now().Add(50 * time.Minute)}
-	return ans.Data.Token
-}
+	return nil, errors.New("that access code is not one Mulholland made; ask Mulholland for the practice's code")
+}}

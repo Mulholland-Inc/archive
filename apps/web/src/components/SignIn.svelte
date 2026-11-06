@@ -3,24 +3,29 @@
   import Art from './Art.svelte';
   import Heading from './Heading.svelte';
   import Button from './Button.svelte';
+  import CodeInput from './CodeInput.svelte';
   import ConnectorIcon from './ConnectorIcon.svelte';
   import Text from './Text.svelte';
-  import { API, api, devicePasskey, passkeyLogin, passkeys } from '../lib/api.js';
+  import { API, api, devicePasskey, passkeyLogin, passkeys, rememberPasskey, said, signOut, Unauthorized } from '../lib/api.js';
   import { boot } from '../lib/app.svelte.js';
   import { fade } from '../lib/motion.js';
 
-  // The sign-in screen. Elsewhere than the app itself, like an MCP client's /authorize, it says what signing in
-  // is for, comes back to next after a provider's sign-in, and calls done after a passkey's.
   let { title = 'Sign in to Archive', art = 'cli', next = '', done = boot } = $props();
 
   let error = $state('');
   let busy = $state(false);
   let providers = $state([]);
   let loaded = $state(false);
+  let pending = $state(false);
+  let code = $state('');
+  let passkeyed = false;
   const first = passkeys && devicePasskey();
 
   api('/auth/methods')
-    .then((m) => (providers = m.providers ?? []))
+    .then((m) => {
+      providers = m.providers ?? [];
+      pending = m.code;
+    })
     .catch((e) => (error = e.message))
     .finally(() => (loaded = true));
 
@@ -28,38 +33,66 @@
     error = '';
     busy = true;
     try {
-      await passkeyLogin();
-      await done();
+      const out = await passkeyLogin();
+      if (out.code) pending = passkeyed = true;
+      else await done();
     } catch (err) {
       if (err.name !== 'NotAllowedError' && err.name !== 'AbortError') error = err.message;
     }
     busy = false;
   }
+
+  async function verify() {
+    error = '';
+    busy = true;
+    try {
+      const out = await api('/auth/totp/verify', { method: 'POST', body: { code } });
+      if (passkeyed) rememberPasskey(out.user.id, 'yes');
+      await done();
+    } catch (err) {
+      pending = !(err instanceof Unauthorized);
+      error = said(err);
+      code = '';
+    }
+    busy = false;
+  }
+
+  async function back() {
+    await signOut();
+    pending = false;
+    code = error = '';
+  }
 </script>
 
 <div class="screen" transition:fade={{ speed: 'normal' }}>
   <div class="card">
-    <Art name={art} size="lg" />
-    <Heading level={1} size="xl" leading="inherit" wrap="normal">{title}</Heading>
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-    <div class="methods">
-      {#if passkeys && first}
-        <Button variant="primary" size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
+    <Art name={pending ? 'totp' : art} size="lg" />
+    <Heading level={1} size="xl" leading="inherit" wrap="normal">{pending ? 'Enter your code' : title}</Heading>
+    {#if pending}
+      <CodeInput bind:value={code} {busy} invalid={error && !code} done={verify} />
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <Button variant="ghost" size="lg" full onclick={back}>Back</Button>
+    {:else if loaded}
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <div class="methods">
+        {#if passkeys && first}
+          <Button variant="primary" size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
+        {/if}
+        {#each providers as p (p.id)}
+          <a class="provider" href="{API}/auth/oidc/{encodeURIComponent(p.id)}{next ? `?next=${encodeURIComponent(next)}` : ''}">
+            <ConnectorIcon id={p.id} size="xs" />
+            <span>Continue with {p.name}</span>
+          </a>
+        {/each}
+        {#if passkeys && !first}
+          <Button variant={providers.length ? 'ghost' : 'primary'} size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
+        {/if}
+      </div>
+      {#if !providers.length && !passkeys}
+        <Text as="p" tone="secondary">This browser can’t use passkeys, and no sign-in provider is set up. Ask whoever runs this Archive to set one.</Text>
+      {:else}
+        <Text as="p" size="sm" tone="tertiary">Archive is invite-only. Sign in with the account you were invited under.</Text>
       {/if}
-      {#each providers as p (p.id)}
-        <a class="provider" href="{API}/auth/oidc/{encodeURIComponent(p.id)}{next ? `?next=${encodeURIComponent(next)}` : ''}">
-          <ConnectorIcon id={p.id} size="xs" />
-          <span>Continue with {p.name}</span>
-        </a>
-      {/each}
-      {#if passkeys && !first}
-        <Button variant={providers.length ? 'ghost' : 'primary'} size="lg" icon={KeyRound} full loading={busy} onclick={passkey}>Use a passkey</Button>
-      {/if}
-    </div>
-    {#if loaded && !providers.length && !passkeys}
-      <Text as="p" tone="secondary">This browser can’t use passkeys, and no sign-in provider is set up. Ask whoever runs this Archive to set one.</Text>
-    {:else}
-      <Text as="p" size="sm" tone="tertiary">Archive is invite-only. Sign in with the account you were invited under.</Text>
     {/if}
   </div>
 </div>

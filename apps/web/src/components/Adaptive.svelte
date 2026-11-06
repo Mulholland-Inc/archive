@@ -1,6 +1,4 @@
 <script>
-  // Shows wide on screens of 40rem and up and narrow below. inline leaves no box of its own around them, so
-  // they sit in a toolbar's row as if they were placed there.
   let { wide, narrow, inline = false } = $props();
 </script>
 

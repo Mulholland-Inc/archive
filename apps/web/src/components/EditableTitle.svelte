@@ -16,7 +16,6 @@
 {/if}
 
 <style>
-  /* A long title ends in an ellipsis instead of pushing past the buttons beside it. */
   .title {
     display: flex;
     min-width: 0;

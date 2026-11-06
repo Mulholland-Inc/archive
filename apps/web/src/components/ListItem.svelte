@@ -1,7 +1,6 @@
 <script>
   import Icon from './Icon.svelte';
 
-  // One row of a List: an icon and a line of text, a link when it has an href.
   let { href, icon, children } = $props();
 </script>
 

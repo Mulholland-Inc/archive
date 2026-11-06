@@ -2,17 +2,6 @@ package connect
 
 import "time"
 
-// Vanta, the compliance platform, read only through its API. Vanta's partner apps cannot read a customer's
-// compliance data, only an app of the customer's own can, so this connects as an app the customer makes in
-// Vanta's Developer Console (Settings, Developer console, a "Manage Vanta" application), whose client id and secret
-// an owner pastes in. Each is traded for a token with the scope vanta-api.all:read, which lasts an hour; Vanta ends
-// the token before whenever another is made, so the app should be Archive's alone. The secret lasts until the
-// customer rotates it or deletes the app. One host answers for every region.
-//
-// It syncs the organization's frameworks with how far along each is, its controls, its automated tests with their
-// status and what to fix, its vendors and their risk, its people and their onboarding tasks, its policies and its
-// documents, all into compliance, its kind saying which. Vanta says nothing of what changed when, so each is listed
-// whole, 100 a page, at most an hour apart, which deletes what is gone. Vanta takes 50 requests a minute.
 func init() {
 	Register(&Connector{
 		ID: "vanta", Name: "Vanta", Integration: true,
@@ -101,13 +90,10 @@ func init() {
 
 var vantaPage = Cursor{At: "results/pageInfo/endCursor", More: "results/pageInfo/hasNextPage"}
 
-// vantaName is a person's name.
 const vantaName SQL = "coalesce(nullif(data#>>'{name,display}', ''), nullif(btrim(concat(data#>>'{name,first}', ' ', data#>>'{name,last}')), ''), data->>'emailAddress')"
 
-// vantaDomains are a control's domains, comma separated.
 const vantaDomains SQL = "(SELECT string_agg(d, ', ') FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(data->'domains') = 'array' THEN data->'domains' ELSE '[]' END) d)"
 
-// vantaList is a listing's query: q, 100 a page, from {page}.
 func vantaList(q Q) Q {
 	out := Q{"pageSize": "100", "pageCursor": "{page}"}
 	for k, v := range q {

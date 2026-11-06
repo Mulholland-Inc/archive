@@ -25,8 +25,8 @@ func init() {
 				"Copy the pair that is there; generating a new one stops the old one working"},
 			{Name: "client_secret", Label: "Client Secret", Secret: true, Help: "On the same page: the Client Secret"},
 		},
-		Sign: map[string]string{"Authorization": "Basic {key/client_id}:{key/client_secret}"},
-		API:  "https://{+database}/api/v2/reports",
+		Basic: [2]string{"client_id", "client_secret"},
+		API:   "https://{+database}/api/v2/reports",
 		Let: []Step{
 			{As: "database", In: "{key/database}", Find: `^(?:[^/]*://)?([^/]*)`},
 			{Only: Test{At: "database", Re: `^[^.]*$`}, As: "database", In: "{database}.appfolio.com"},

@@ -19,12 +19,10 @@
   import EmptyState from '../components/EmptyState.svelte';
   import RowLink from '../components/RowLink.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
+  import Menu from '../components/Menu.svelte';
   import { ws, schema, groups, members, rowOf, rowRelations, linkOf, tableOf, baseOf, shownOf, titleOf, groupById, mayLimit, accessOptions, setAccess } from '../lib/app.svelte.js';
   import { show, relative } from '../lib/live.js';
 
-  // One row of a view, a table or one of Archive's own, laid out like a table's page: its name, its fields as
-  // properties, links by the names of the rows they name, and the rows of other tables that point at it.
   let { view: vid, id } = $props();
 
   schema.use();
@@ -57,7 +55,6 @@
   const linked = $derived(view ? [...new Set(fields.map((c) => linkOf(view, c)).filter(Boolean))] : []);
   const empty = (v) => v == null || v === '' || (Array.isArray(v) && !v.length);
   const name = $derived(row ? titleOf(row, view) : '');
-  // Who sees the row: the group its access is, which is set on the table a view reads, one of the workspace's.
   const base = $derived(tableOf(baseOf(view)));
   const limited = $derived(Boolean(base?.columns.some((c) => c.name === 'access')) && ws().schema.includes(base));
   const group = $derived(row?.access ? groupById(row.access) : null);
@@ -86,7 +83,7 @@
         {#if limited}
           <Property label="Who sees it" icon={Lock}>
             {#if mayLimit(row.access)}
-              <Select value={row.access ?? ''} options={accessOptions(row.access)} size="sm" variant="ghost" label="Who sees it" onchange={(v) => setAccess(base.id, row, v || null)} />
+              <Menu value={row.access ?? ''} options={accessOptions(row.access)} size="sm" variant="ghost" label="Who sees it" onchange={(v) => setAccess(base.id, row, v || null)} />
             {:else if group}
               <Chip size="sm" href={`/access/groups/${group.id}`}>{group.name}</Chip>
             {:else}
