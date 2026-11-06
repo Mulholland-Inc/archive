@@ -331,7 +331,7 @@ icon: receipt'</span>;
 <p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
 
 <h3 id="schema-breaks">Breaks</h3>
-<p>A schema change keeps every saved workflow valid or is refused: a column it reads is gone, a query no longer parses, a number now reads as a string, or its trigger table is gone. A saved workflow needs constant table names and constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves it clean.</p>
+<p>A schema change keeps every saved workflow valid or is refused: a column it reads is gone, a query no longer parses, a number now reads as a string, or its trigger table is gone. A saved workflow needs constant table names and constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves a changed source that passes the checks. A saved workflow cannot drop data or use <code>breaks</code>.</p>
 
 <h3 id="schema-history">History</h3>
 <p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
