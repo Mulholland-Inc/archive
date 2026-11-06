@@ -153,6 +153,7 @@ const (
 	CatDental    Category = "Dental"
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
+	CatSupport   Category = "Support"
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
