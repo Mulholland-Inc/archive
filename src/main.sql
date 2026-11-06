@@ -102,6 +102,8 @@ CREATE TABLE archive.due (
     workspace uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
     kind      text NOT NULL,
     at        timestamptz NOT NULL,
+    lease     timestamptz,
+    again     boolean NOT NULL DEFAULT false,
     PRIMARY KEY (workspace, kind)
 );
 
@@ -315,11 +317,13 @@ UPDATE archive.workspace SET name = coalesce(sqlc.narg(name), name), type = coal
 -- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = sqlc.arg(workspace) AND x.kind = sqlc.arg(kind))
 INSERT INTO archive.due (workspace, kind, at) VALUES (sqlc.arg(workspace), sqlc.arg(kind), sqlc.arg(at))
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+ON CONFLICT (workspace, kind) DO UPDATE SET
+    at = CASE WHEN archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease THEN archive.due.at ELSE least(archive.due.at, EXCLUDED.at) END,
+    again = archive.due.again OR (archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed;
 
 -- name: ClaimDueFor :one
-UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz
+UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz, lease = sqlc.arg(lease)::timestamptz, again = false
 WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at <= now()
 RETURNING d.at;
 
@@ -330,12 +334,16 @@ SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
 SELECT workspace, kind, at FROM archive.due;
 
 -- name: SetDue :execrows
-UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz, lease = NULL FROM archive.workspace w
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND NOT d.again;
 
--- name: ClearDue :exec
+-- name: ClearDue :execrows
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND NOT d.again;
+
+-- name: AgainDue :execrows
+UPDATE archive.due d SET again = false
+WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND d.again;
 
 -- name: OAuthClient :one
 SELECT client FROM archive.oauth_client WHERE provider = $1;
