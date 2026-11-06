@@ -1,22 +1,5 @@
 package main
 
-// MCP has a host of its own, mcp.<domain>, where the stateless MCP server is at the root, and where MCP clients
-// like Claude or ChatGPT connect with OAuth 2.1, as MCP's authorization spec has it:
-//
-//   - a 401 from MCP names its protected resource metadata (RFC 9728), which names this authorization server;
-//   - its metadata (RFC 8414) names the endpoints below;
-//   - a client registers itself (RFC 7591) at /oauth/register, with the redirect URIs its codes may go to;
-//   - /oauth/authorize checks the client and its redirect URI and PKCE challenge (S256 only), and sends the
-//     browser to the web app's /authorize, sealed, where the person signs in as they do to the app, picks one of
-//     their workspaces and lets the client in (/auth/oauth/*);
-//   - /oauth/token turns the code, once, into an access token and a refresh token for that one workspace, with
-//     the code's client, redirect URI and PKCE verifier; a refresh turns the refresh token into new ones;
-//   - /oauth/revoke (RFC 7009), or revoking it in the app's token list, ends the grant.
-//
-// The screen is the web app's, on app.<domain>, not mcp.<domain>'s: passkeys belong to app.<domain>, sign-in's
-// session is api.<domain>'s cookie the app already sends, and the providers send people back to the app. MCP's
-// host takes bearer tokens only and reads no cookie, and an MCP token is good for MCP alone, not the API.
-
 import (
 	"cmp"
 	"crypto/rand"
@@ -45,19 +28,15 @@ const (
 	mcpRefreshTTL = 90 * 24 * time.Hour
 	mcpAskTTL     = 15 * time.Minute
 	mcpRedirects  = 10
-	// mcpNoName names, in your token list, the grant of a client that registered with no client_name; the
-	// screen calls it "an app".
-	mcpNoName = "MCP client"
+	mcpNoName     = "MCP client"
 )
 
 var (
 	mcpPKCE   = regexp.MustCompile(`^[A-Za-z0-9._~-]{43,128}$`)
 	mcpScheme = regexp.MustCompile(`^[a-z][a-z0-9+.-]*$`)
-	// mcpUnsafe are schemes no redirect URI may have: ones a browser runs or reads, or that leave the app.
 	mcpUnsafe = []string{"javascript", "data", "file", "vbscript", "about", "blob", "filesystem", "ftp", "ws", "wss", "mailto", "tel", "sms"}
 )
 
-// mcpAsk is an authorization request /oauth/authorize found sound, sealed for the web app to show and hand back.
 type mcpAsk struct {
 	Client    uuid.UUID `json:"c"`
 	Redirect  string    `json:"r"`
@@ -66,7 +45,6 @@ type mcpAsk struct {
 	Exp       int64     `json:"x"`
 }
 
-// mcpHost says whether r came to MCP's own host, which serves MCP and its OAuth and nothing else.
 func (h *Hub) mcpHost(r *http.Request) bool {
 	if h.mcpURL == h.api {
 		return false
@@ -79,7 +57,6 @@ func (h *Hub) mcpHost(r *http.Request) bool {
 	return err == nil && strings.EqualFold(host, u.Hostname())
 }
 
-// mcpBase is the origin r's MCP is at: MCP's own host, or in development, where there is none, the API's.
 func (h *Hub) mcpBase(r *http.Request) string {
 	if h.mcpHost(r) {
 		return h.mcpURL
@@ -87,7 +64,6 @@ func (h *Hub) mcpBase(r *http.Request) string {
 	return h.api
 }
 
-// mcpAt is where MCP is: the root of its own host, or /mcp on the API in development, where they are one host.
 func (h *Hub) mcpAt() string {
 	if h.mcpURL == h.api {
 		return h.api + "/mcp"
@@ -95,8 +71,6 @@ func (h *Hub) mcpAt() string {
 	return h.mcpURL
 }
 
-// mcpRoutes adds MCP and its authorization server to mux: own is MCP's host, which serves them at its root. The
-// API's host serves them only in development, at /mcp, where it is MCP's host too; otherwise it has no MCP.
 func (h *Hub) mcpRoutes(mux *http.ServeMux, own bool) {
 	switch {
 	case own:
@@ -116,8 +90,6 @@ func (h *Hub) mcpRoutes(mux *http.ServeMux, own bool) {
 	mux.HandleFunc("POST /oauth/revoke", h.mcpRevoke)
 }
 
-// mcpCORS lets a browser-based MCP client call MCP and its OAuth from anywhere, with a bearer token and never a
-// cookie, and read the 401's WWW-Authenticate.
 func mcpCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") == "" {
@@ -137,7 +109,6 @@ func mcpCORS(next http.Handler) http.Handler {
 	})
 }
 
-// mcpRefuse answers an MCP request that has no good token with a 401 that names where to get one (RFC 9728 5.1).
 func (h *Hub) mcpRefuse(w http.ResponseWriter, r *http.Request, err error) {
 	status, v := httpError(err)
 	if status == http.StatusUnauthorized {
@@ -160,7 +131,6 @@ func mcpJSON(w http.ResponseWriter, status int, v any) {
 	json.NewEncoder(w).Encode(v)
 }
 
-// mcpFail is an OAuth error (RFC 6749 5.2).
 func mcpFail(w http.ResponseWriter, status int, code, desc string) {
 	if status == http.StatusUnauthorized {
 		w.Header().Set("WWW-Authenticate", `Basic realm="archive"`)
@@ -168,7 +138,6 @@ func mcpFail(w http.ResponseWriter, status int, code, desc string) {
 	mcpJSON(w, status, map[string]string{"error": code, "error_description": desc})
 }
 
-// mcpResource is the protected resource metadata of the MCP at r's host and path.
 func (h *Hub) mcpResource(w http.ResponseWriter, r *http.Request) {
 	mcpJSON(w, http.StatusOK, &oauthex.ProtectedResourceMetadata{
 		Resource:               h.mcpBase(r) + strings.TrimPrefix(r.URL.Path, "/.well-known/oauth-protected-resource"),
@@ -198,15 +167,11 @@ func (h *Hub) mcpServerMeta(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// mcpResourceOK says whether resource (RFC 8707), if a client names one, is this Archive's MCP.
 func (h *Hub) mcpResourceOK(resource string) bool {
 	resource = strings.TrimSuffix(resource, "/")
 	return resource == "" || resource == h.mcpAt()
 }
 
-// mcpRedirectValid says whether a client may register s as a redirect URI: https, http to this machine (a
-// native app's loopback listener, RFC 8252 7.3), or a native app's own scheme (7.1), with no fragment and no
-// user in it.
 func mcpRedirectValid(s string) bool {
 	u, err := url.Parse(s)
 	if err != nil || len(s) > 2000 || strings.Contains(s, "#") || u.User != nil || !mcpScheme.MatchString(u.Scheme) {
@@ -223,8 +188,6 @@ func mcpRedirectValid(s string) bool {
 	return u.Host != "" || u.Path != "" || u.Opaque != ""
 }
 
-// mcpRedirectMatch says whether given is one of the client's redirect URIs, exactly; only a loopback one's port
-// may differ, since a native app listens on whichever port is free (RFC 8252 7.3).
 func mcpRedirectMatch(registered []string, given string) bool {
 	if !mcpRedirectValid(given) {
 		return false
@@ -245,7 +208,6 @@ func mcpRedirectMatch(registered []string, given string) bool {
 	return false
 }
 
-// mcpSendTo is the redirect URI with the response's parameters added, and iss (RFC 9207).
 func (h *Hub) mcpSendTo(redirect string, params map[string]string) string {
 	u, _ := url.Parse(redirect)
 	q := u.Query()
@@ -294,8 +256,6 @@ func (h *Hub) mcpClient(r *http.Request, id string) (*generated.ArchiveMcpClient
 	return &c, err
 }
 
-// mcpAuthorize checks an authorization request and sends the browser to the web app's screen for it. Until the
-// client and its redirect URI check out, nothing goes to the redirect URI: the screen says what is wrong.
 func (h *Hub) mcpAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	screen := func(msg string) {
@@ -333,8 +293,6 @@ func (h *Hub) mcpAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// mcpClientAuth is the client a token or revocation request is from: a public one by its client_id, a
-// confidential one by its secret too, in the form or in Basic auth.
 func (h *Hub) mcpClientAuth(r *http.Request) (*generated.ArchiveMcpClient, bool) {
 	id, secret := r.PostForm.Get("client_id"), r.PostForm.Get("client_secret")
 	if u, p, ok := r.BasicAuth(); ok {
@@ -364,8 +322,6 @@ func mcpForm(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// mcpToken is the token endpoint: a code, used once, becomes a grant's first tokens; a refresh token, used once,
-// becomes its next ones.
 func (h *Hub) mcpToken(w http.ResponseWriter, r *http.Request) {
 	if !mcpForm(w, r) {
 		return
@@ -388,7 +344,6 @@ func (h *Hub) mcpToken(w http.ResponseWriter, r *http.Request) {
 		id, hash := coreNewID(), authHash(f.Get("code"))
 		code, err := h.q().UseMCPCode(ctx, &id, hash)
 		if errors.Is(err, pgx.ErrNoRows) {
-			// A code used twice may have been stolen: the token it became goes too.
 			if tok, err := h.q().UsedMCPCode(ctx, hash); err == nil && tok != nil {
 				if ws, err := h.q().DeleteMCPToken(ctx, *tok); err == nil && ws != nil {
 					h.live.moved(ws.String(), liveChange{Table: "archive.token"})
@@ -441,8 +396,6 @@ func (h *Hub) mcpToken(w http.ResponseWriter, r *http.Request) {
 	mcpJSON(w, http.StatusOK, map[string]any{"access_token": access, "token_type": "Bearer", "expires_in": int(mcpAccessTTL.Seconds()), "refresh_token": refresh})
 }
 
-// mcpRevoke ends the grant whose access or refresh token the client sends (RFC 7009); one that is not, or not
-// the client's, is no error.
 func (h *Hub) mcpRevoke(w http.ResponseWriter, r *http.Request) {
 	if !mcpForm(w, r) {
 		return
@@ -464,8 +417,6 @@ func (h *Hub) mcpRevoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// mcpRegister registers a client (RFC 7591). Anyone may; its client_name, if it gives one, is what the screen
-// and your token list call it, and its redirect URIs are the only places its codes ever go.
 func (h *Hub) mcpRegister(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		RedirectURIs []string `json:"redirect_uris"`
@@ -532,9 +483,6 @@ func (h *Hub) mcpRegister(w http.ResponseWriter, r *http.Request) {
 	mcpJSON(w, http.StatusCreated, out)
 }
 
-// mcpUser is who is signed in to the web app, by the API's session cookie alone: no bearer token, an API
-// token's or an MCP client's, ever lets a client in. On this machine in development it is the first admin, as
-// everywhere else in the app.
 func (h *Hub) mcpUser(r *http.Request) (*generated.AuthenticateRow, error) {
 	if r.Header.Get("Authorization") != "" {
 		return nil, fmt.Errorf("let an app in from the browser you are signed in with, not with a token: %w", ErrForbidden)
@@ -560,8 +508,6 @@ func (h *Hub) mcpUser(r *http.Request) (*generated.AuthenticateRow, error) {
 	return t, nil
 }
 
-// mcpRoutesSignin are the web app's side of authorizing a client, on the API, where its session is: what the
-// request is and which workspaces you could pick, then your answer. An answer must come from the app itself.
 func (h *Hub) mcpRoutesSignin(open func(string, func(http.ResponseWriter, *http.Request) (int, any, error))) {
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 	open("GET /auth/oauth/request", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -615,7 +561,6 @@ func (h *Hub) mcpRoutesSignin(open func(string, func(http.ResponseWriter, *http.
 		if !body.Allow {
 			return ok(map[string]string{"redirect": h.mcpSendTo(ask.Redirect, map[string]string{"error": "access_denied", "error_description": "you said no", "state": ask.State})}, nil)
 		}
-		// Entering the workspace checks you are a member of it, as an API token's first request would.
 		_, _, release, err := h.enter(r.Context(), *t, body.Workspace)
 		if err != nil {
 			return 0, nil, err

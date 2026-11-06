@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type ArchiveWorkspaceType string
@@ -56,26 +57,16 @@ func (ns NullArchiveWorkspaceType) Value() (driver.Value, error) {
 	return string(ns.ArchiveWorkspaceType), nil
 }
 
-type ArchiveChat struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Title     string
-	Messages  json.RawMessage
-	CreatedAt time.Time
-	UpdatedAt time.Time
-}
-
 // One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 // icon: plug
 type ArchiveConnection struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	Member    uuid.UUID
 	// Which service, a connector: gmail, notion, quickbooks, ...
@@ -89,22 +80,17 @@ type ArchiveConnection struct {
 	Error string
 	// What the service said about the account when it connected, like QuickBooks' realmId
 	Meta map[string]string
-	// When Archive next reads what changed there; null once it has it all, until the service says something changed, you ask, or you read what it syncs
+	// When Archive next reads what changed there: on a schedule, sooner when the service says something changed or you ask
 	SyncAt *time.Time
 	// When Archive last had everything there
 	SyncedAt *time.Time
 	Cursor   json.RawMessage
-	AskedAt  time.Time
 	LeaseAt  *time.Time
 	Revoked  bool
-	// It is the archive's, like its QuickBooks, which an owner connects for everyone, not one person's own
+	// It is the archive's, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person's own
 	Integration bool
-}
-
-type ArchiveDue struct {
-	Workspace uuid.UUID
-	Kind      string
-	At        time.Time
+	// How many rows it synced; counted when a sync finishes
+	Items int64
 }
 
 type ArchiveMcpClient struct {
@@ -145,6 +131,11 @@ type ArchiveUser struct {
 	Signin     json.RawMessage
 	CreatedAt  time.Time
 	Admin      bool
+	Unread     []uuid.UUID
+	Totp       []byte
+	TotpStep   int64
+	TotpFails  int32
+	TotpUntil  *time.Time
 }
 
 type ArchiveWatch struct {
@@ -162,13 +153,12 @@ type ArchiveWatch struct {
 // icon: workflow
 type ArchiveWorkflow struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	UserID    uuid.UUID
 	Role      string
@@ -184,19 +174,20 @@ type ArchiveWorkflow struct {
 	Member *uuid.UUID
 	// When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run
 	On json.RawMessage
+	// Why a migration stopped it, with line and column; it does not run until a save changes its source and passes the checks, which clears this. Read only
+	Broken *string
 }
 
 // A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
 // icon: list-checks
 type ArchiveWorkflowRun struct {
 	ID uuid.UUID
-	// The field's name
+	// The linked card, like visa 4242; empty until one is linked
 	Name string
-	// Group that sees it, its connection's: null for everyone who sees the connection
+	// The id of the group an integration and what it syncs are narrowed to; null for everyone
 	Access *uuid.UUID
 	// When it started
 	CreatedAt time.Time
-	// When Archive last saw it change
 	UpdatedAt time.Time
 	Workflow  uuid.UUID
 	// What started it: cron, table, webhook, or run (archive.run, or the Run button in the app; start in runs from before it was called run)
@@ -219,4 +210,7 @@ type ArchiveWorkspace struct {
 	Type      ArchiveWorkspaceType
 	Icon      *string
 	Color     *int16
+	Sent      int32
+	SentOn    pgtype.Date
+	Slug      string
 }

@@ -8,12 +8,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path"
 	"reflect"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,28 +40,72 @@ const (
 	runMaxResult = 256 << 10
 	runMaxLogs   = 64 << 10
 	runMaxFetch  = 5 << 20
-	runTimeout   = 30 * time.Second
-	runWrap      = "WITH q AS (\n"
+
+	runEsbuildCommand = "esbuild"
+	runCompileHere    = 2 << 10
+	runCompileTime    = 5 * time.Second
+	runCompileStack   = 256 << 20
+	runCompileMemory  = 512 << 20
+	runTimeout        = 30 * time.Second
+	runWrap           = "WITH q AS (\n"
 )
 
 type RunOutput struct {
 	Result json.RawMessage `json:"result"`
 	Logs   []string        `json:"logs"`
 	Error  string          `json:"error"`
+	Files  []runChange     `json:"files,omitempty"`
+}
+
+type runChange struct {
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
+	Action string    `json:"action"`
+}
+
+const runReadMax = 20
+
+var runActions = map[string]int{"read": 0, "edited": 1, "created": 2}
+
+func (o *RunOutput) change(c runChange) {
+	i := slices.IndexFunc(o.Files, func(x runChange) bool { return x.ID == c.ID })
+	if i < 0 {
+		if c.Action != "read" || len(o.Files) < runReadMax {
+			o.Files = append(o.Files, c)
+		}
+		return
+	}
+	if runActions[o.Files[i].Action] > runActions[c.Action] {
+		c.Action = o.Files[i].Action
+	}
+	o.Files[i] = c
 }
 
 type runFile struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
-	Text      string         `json:"text"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"hash"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	Text       string         `json:"text"`
 }
 
 type runTable struct {
@@ -67,6 +114,7 @@ type runTable struct {
 	Description string      `json:"description"`
 	Layout      string      `json:"layout,omitempty"`
 	By          string      `json:"by,omitempty"`
+	Icon        string      `json:"icon,omitempty"`
 	Columns     []runColumn `json:"columns"`
 	DDL         string      `json:"ddl"`
 }
@@ -88,6 +136,10 @@ type runQueryErr struct {
 func (e *runQueryErr) Error() string { return e.err.Error() }
 func (e *runQueryErr) Unwrap() error { return e.err }
 
+type runWroteKey struct{}
+
+type runFreshKey struct{}
+
 type runner struct {
 	a         *Archive
 	vm        *goja.Runtime
@@ -96,6 +148,8 @@ type runner struct {
 	out       *RunOutput
 	input     json.RawMessage
 	at        time.Time
+	stamp     bool
+	wrote     *bool
 	depth     int
 	clock     *runClock
 	logBytes  int
@@ -127,10 +181,81 @@ func (e runCompileErr) text() string {
 	return fmt.Sprintf("line %d:%d: %s", e.line, e.col, e.msg)
 }
 
-// runTransform strips the TypeScript in code down to JavaScript with esbuild, as the body of an async function;
-// that is all the checking code gets. Its errors give the line and column in code.
+var runCompiles = make(chan struct{}, 2)
+
 func runTransform(code string) (string, []runCompileErr) {
-	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts"})
+	res, errs := runBuild(code, api.SourceMapNone)
+	return string(res.Code), errs
+}
+
+func runEsbuild(code string, sm api.SourceMap) api.TransformResult {
+	return api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts", Sourcemap: sm})
+}
+
+type runEsbuildIn struct {
+	Code string
+	Map  api.SourceMap
+}
+
+func runEsbuildChild() error {
+	debug.SetMaxStack(runCompileStack)
+	go func() {
+		var m runtime.MemStats
+		for {
+			if runtime.ReadMemStats(&m); m.Sys > runCompileMemory {
+				os.Exit(1)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	var in runEsbuildIn
+	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(runEsbuild(in.Code, in.Map))
+}
+
+func runEsbuildApart(code string, sm api.SourceMap) (api.TransformResult, error) {
+	var res api.TransformResult
+	ctx, cancel := context.WithTimeout(context.Background(), runCompileTime)
+	defer cancel()
+	select {
+	case runCompiles <- struct{}{}:
+		defer func() { <-runCompiles }()
+	case <-ctx.Done():
+		return res, errors.New("too many long scripts are compiling; try again")
+	}
+	in, err := json.Marshal(runEsbuildIn{code, sm})
+	if err != nil {
+		return res, err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return res, err
+	}
+	cmd := exec.CommandContext(ctx, self, runEsbuildCommand)
+	cmd.Env = []string{}
+	cmd.Stdin = bytes.NewReader(in)
+	out, err := cmd.Output()
+	if e := (*exec.ExitError)(nil); errors.As(err, &e) {
+		return res, errors.New("this script nests too deeply to compile; flatten it")
+	}
+	if err != nil {
+		return res, err
+	}
+	return res, json.Unmarshal(out, &res)
+}
+
+func runBuild(code string, sm api.SourceMap) (api.TransformResult, []runCompileErr) {
+	var res api.TransformResult
+	if len(code) <= runCompileHere {
+		res = runEsbuild(code, sm)
+	} else {
+		var err error
+		if res, err = runEsbuildApart(code, sm); err != nil {
+			return res, []runCompileErr{{msg: err.Error()}}
+		}
+	}
 	var errs []runCompileErr
 	for _, m := range res.Errors {
 		e := runCompileErr{msg: m.Text}
@@ -139,7 +264,7 @@ func runTransform(code string) (string, []runCompileErr) {
 		}
 		errs = append(errs, e)
 	}
-	return string(res.Code), errs
+	return res, errs
 }
 
 func runCompile(code string) (string, error) {
@@ -159,11 +284,11 @@ func runCompile(code string) (string, error) {
 }
 
 func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
-	out, _, err := a.run(ctx, code, nil)
+	out, _, err := a.run(ctx, code, nil, false)
 	return out, err
 }
 
-func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (*RunOutput, time.Time, error) {
+func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, stamp bool) (*RunOutput, time.Time, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -172,7 +297,9 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		return nil, time.Time{}, err
 	}
 	defer free()
-	a.refresh(ctx)
+	if ctx.Value(runFreshKey{}) == nil {
+		a.refresh(ctx)
+	}
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	js, err := runCompile(code)
 	if err != nil {
@@ -182,10 +309,11 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 	limit := runTimeout
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout}
+	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout, do: doTimeout}
 	defer clock.t.Stop()
-	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), clock: clock}
-	err = a.as(ctx, r.run)
+	wrote := new(bool)
+	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), stamp: stamp, wrote: wrote, clock: clock}
+	err = a.as(context.WithValue(ctx, runWroteKey{}, wrote), r.run)
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
 		out.Error = fmt.Sprintf("timed out after %s; nothing was saved", limit)
@@ -193,12 +321,40 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage) (
 		out.Error = runMessage(err)
 	}
 	if out.Error != "" {
-		out.Result = json.RawMessage("null")
+		out.Result, out.Files = json.RawMessage("null"), nil
 	}
 	return out, r.at, nil
 }
 
-// nested runs a saved workflow inside this run, in a savepoint it rolls back when the workflow fails.
+type runClock struct {
+	t                 *time.Timer
+	end               time.Time
+	browse, model, do time.Duration
+	paused            int
+	left              time.Duration
+}
+
+func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string) (resume func(), err error) {
+	if *budget <= 0 {
+		return nil, fmt.Errorf("this run already %s for %s, its limit", what, limit)
+	}
+	if c.paused == 0 {
+		if !c.t.Stop() {
+			return nil, errors.New("the run timed out")
+		}
+		c.left = time.Until(c.end)
+	}
+	c.paused++
+	start := time.Now()
+	return func() {
+		*budget -= time.Since(start)
+		if c.paused--; c.paused == 0 {
+			c.end = time.Now().Add(c.left)
+			c.t.Reset(c.left)
+		}
+	}, nil
+}
+
 func (r *runner) nested(ctx context.Context, code string, input json.RawMessage) (*RunOutput, error) {
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	if r.depth >= workflowDepth {
@@ -219,7 +375,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 		return nil, err
 	}
 	after := &[]func(){}
-	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, depth: r.depth + 1, clock: r.clock}
+	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, wrote: r.wrote, depth: r.depth + 1, clock: r.clock}
 	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after, t.sch}))
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -228,11 +384,14 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 		out.Error = runMessage(err)
 	}
 	if out.Error != "" {
-		out.Result = json.RawMessage("null")
+		out.Result, out.Files = json.RawMessage("null"), nil
 		return out, sp.Rollback(ctx)
 	}
 	if err := sp.Commit(ctx); err != nil {
 		return nil, err
+	}
+	for _, c := range out.Files {
+		r.out.change(c)
 	}
 	if t.after != nil {
 		*t.after = append(*t.after, *after...)
@@ -243,8 +402,10 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 func (r *runner) run(ctx context.Context) error {
 	r.ctx = ctx
 	defer r.closeClients()
-	if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
-		r.at = at
+	if r.stamp {
+		if at, err := r.a.st.db(ctx).TxNow(ctx); err == nil {
+			r.at = at
+		}
 	}
 	r.vm = goja.New()
 	r.vm.SetMaxCallStackSize(10000)
@@ -663,7 +824,11 @@ func runAfter(fn, s string) (uuid.UUID, error) {
 
 func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, call goja.FunctionCall) (any, error)) {
 	o.Set(name, func(call goja.FunctionCall) goja.Value {
-		return r.promise(r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) }))
+		if !runReads[name] || name == "email" || name == "action" {
+			*r.wrote = true
+		}
+		v, err := r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) })
+		return r.promise(v, err)
 	})
 }
 
@@ -681,7 +846,7 @@ func (r *runner) promise(v any, err error) goja.Value {
 	return r.vm.ToValue(p)
 }
 
-var runReads = map[string]bool{"action": true, "query": true, "schema": true, "revisions": true, "list": true, "get": true, "search": true, "files": true, "file": true}
+var runReads = map[string]bool{"email": true, "action": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
 func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any, error) {
 	t, ok := r.ctx.Value(storeTxKey{}).(storeTx)
@@ -700,22 +865,39 @@ func (r *runner) call(read bool, f func(ctx context.Context) (any, error)) (any,
 	return v, storeErr(sp.Commit(r.ctx))
 }
 
-func (r *runner) sdk() {
-	a, o := r.a, r.vm.NewObject()
-	r.def(o, "query", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		q, err := r.str(call, 0, "query", "sql")
+func (r *runner) read(ctx context.Context, id uuid.UUID) {
+	if f, err := r.a.GetFile(ctx, id); err == nil && f.Kind != "folder" {
+		r.out.change(runChange{f.ID, f.Name, "read"})
+	}
+}
+
+func (r *runner) noted(action string) func(*File, error) (any, error) {
+	return func(f *File, err error) (any, error) {
 		if err != nil {
 			return nil, err
+		}
+		r.out.change(runChange{f.ID, f.Name, action})
+		return f, nil
+	}
+}
+
+func (r *runner) sdk() {
+	a, o := r.a, r.vm.NewObject()
+	o.Set("query", func(call goja.FunctionCall) goja.Value {
+		q, err := r.str(call, 0, "query", "sql")
+		if err != nil {
+			return r.promise(nil, err)
 		}
 		params := make([]any, 0, len(call.Arguments))
 		for i := 1; i < len(call.Arguments); i++ {
 			var p any
 			if err := r.arg(call, i, "query", fmt.Sprintf("param $%d", i), &p); err != nil {
-				return nil, err
+				return r.promise(nil, err)
 			}
 			params = append(params, runParam(p))
 		}
-		return a.runQuery(ctx, q, params)
+		rows, err := a.runQuery(r.ctx, q, params)
+		return r.promise(rows, storeErr(err))
 	})
 	r.def(o, "list", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "list", "table")
@@ -723,10 +905,10 @@ func (r *runner) sdk() {
 			return nil, err
 		}
 		var opts struct {
-			Where  map[string]any `json:"where"`
-			Limit  int            `json:"limit"`
-			After  string         `json:"after"`
-			Reveal bool           `json:"reveal"`
+			Where map[string]any `json:"where"`
+			Limit int            `json:"limit"`
+			After string         `json:"after"`
+			Desc  bool           `json:"desc"`
 		}
 		if err := r.arg(call, 1, "list", "opts", &opts); err != nil {
 			return nil, err
@@ -735,26 +917,16 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		rs, err := a.List(ctx, table, opts.Where, opts.Limit, after)
-		if err == nil && opts.Reveal {
-			err = a.Reveal(ctx, table, rs...)
-		}
-		return rs, err
+		return a.List(ctx, table, opts.Where, opts.Limit, after, opts.Desc)
 	})
 	r.def(o, "get", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, id, err := r.row(call, "get")
 		if err != nil {
 			return nil, err
 		}
-		var opts struct {
-			Reveal bool `json:"reveal"`
-		}
-		if err := r.arg(call, 2, "get", "opts", &opts); err != nil {
-			return nil, err
-		}
 		row, err := a.Get(ctx, table, id)
-		if err == nil && opts.Reveal {
-			err = a.Reveal(ctx, table, row)
+		if err == nil && table == "file" {
+			r.read(ctx, id)
 		}
 		return row, err
 	})
@@ -771,7 +943,7 @@ func (r *runner) sdk() {
 			if err := r.arg(call, 1, "create", "opts", &opts); err != nil {
 				return nil, err
 			}
-			return a.CreateDocument(ctx, opts.Access, table)
+			return r.noted("created")(a.CreateDocument(ctx, opts.Access, table))
 		}
 		if err := r.arg(call, 1, "create", "data", &data); err != nil {
 			return nil, err
@@ -800,7 +972,13 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return nil, a.Delete(ctx, table, id)
+		if err := a.Delete(ctx, table, id); err != nil {
+			return nil, err
+		}
+		if table == "file" {
+			r.out.Files = slices.DeleteFunc(r.out.Files, func(c runChange) bool { return c.ID == id })
+		}
+		return nil, nil
 	})
 	r.def(o, "search", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		text, err := r.str(call, 0, "search", "text")
@@ -835,20 +1013,13 @@ func (r *runner) sdk() {
 		}
 		var opts struct {
 			Confirm string `json:"confirm"`
+			Name    string `json:"name"`
+			Breaks  bool   `json:"breaks"`
 		}
 		if err := r.arg(call, 1, "migrate", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.Migrate(ctx, sql, "", opts.Confirm)
-	})
-	r.def(o, "revisions", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		var opts struct {
-			Limit int `json:"limit"`
-		}
-		if err := r.arg(call, 0, "revisions", "opts", &opts); err != nil {
-			return nil, err
-		}
-		return a.SchemaRevisions(ctx, opts.Limit)
+		return a.Migrate(ctx, sql, opts.Name, opts.Confirm, opts.Breaks)
 	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {
@@ -869,20 +1040,42 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, err
 		}
-		return coreDo(a, ctx, func(ctx context.Context) (*runFile, error) {
+		f, err := coreDo(a, ctx, func(ctx context.Context) (*runFile, error) {
 			r, err := a.st.db(ctx).FileWithText(ctx, id)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
 			}
 			return (*runFile)(&r), err
 		})
+		if err == nil {
+			r.read(ctx, id)
+		}
+		return f, err
+	})
+	r.def(o, "copy", func(ctx context.Context, call goja.FunctionCall) (any, error) {
+		id, err := r.id(call, 0, "copy")
+		if err != nil {
+			return nil, err
+		}
+		var opts struct {
+			Name   string  `json:"name"`
+			Access *string `json:"access"`
+		}
+		if err := r.arg(call, 1, "copy", "opts", &opts); err != nil {
+			return nil, err
+		}
+		return r.noted("created")(a.CopyFile(ctx, id, opts.Name, opts.Access))
 	})
 	r.def(o, "read", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "read")
 		if err != nil {
 			return nil, err
 		}
-		return a.ReadDocument(ctx, id)
+		m, err := a.ReadDocument(ctx, id)
+		if err == nil {
+			r.read(ctx, id)
+		}
+		return m, err
 	})
 	r.def(o, "edit", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		id, err := r.id(call, 0, "edit")
@@ -897,11 +1090,14 @@ func (r *runner) sdk() {
 		if err != nil {
 			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
 		}
-		return a.EditDocument(ctx, id, ops)
+		return r.noted("edited")(a.EditDocument(ctx, id, ops))
 	})
 	r.workflowSDK(o)
 	r.browseSDK(o)
+	r.modelSDK(o)
+	r.doSDK(o)
 	r.actionSDK(o)
+	r.emailSDK(o)
 	r.vm.Set("archive", o)
 }
 
@@ -923,13 +1119,8 @@ func runParam(v any) any {
 	return v
 }
 
-// runQuery runs one statement as the user, under row-level security, in a read-only savepoint that it rolls
-// back, so Postgres refuses any write.
 func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]map[string]any, error) {
 	q := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool { return r == ';' || unicode.IsSpace(r) })
-	if runSyncedRe.MatchString(q) {
-		a.syncOnRead(ctx)
-	}
 	fail := func(err error) error {
 		var pe *pgconn.PgError
 		if errors.As(err, &pe) && pe.Code == "25006" {
@@ -939,23 +1130,26 @@ func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]m
 	}
 	return coreDo(a, ctx, func(ctx context.Context) ([]map[string]any, error) {
 		t, _ := ctx.Value(storeTxKey{}).(storeTx)
-		ro, err := t.tx.Begin(ctx)
+		readOnly := func() (pgx.Tx, error) {
+			ro, err := t.tx.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return ro, generated.New(ro).SetLocal(ctx, "transaction_read_only", "on")
+		}
+		ro, err := readOnly()
+		defer func() {
+			if ro != nil {
+				ro.Rollback(context.WithoutCancel(ctx))
+			}
+		}()
 		if err != nil {
 			return nil, err
 		}
-		defer ro.Rollback(context.WithoutCancel(ctx))
-		if err := generated.New(ro).SetLocal(ctx, "transaction_read_only", "on"); err != nil {
-			return nil, err
-		}
-		sp, err := ro.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
+		rows, err := storeRows(context.WithValue(ctx, storeTxKey{}, storeTx{ro, t.role, t.after, t.sch}), a.st, runWrap+q+"\n) SELECT to_jsonb(q) FROM q", params...)
 		if err == nil {
 			return rows, nil
 		}
-		sp.Rollback(ctx)
 		var pe *pgconn.PgError
 		if !errors.As(err, &pe) || pe.Code != "42601" && pe.Code != "0A000" {
 			if pe != nil && pe.Position > int32(len([]rune(runWrap))) {
@@ -964,6 +1158,10 @@ func (a *Archive) runQuery(ctx context.Context, query string, params []any) ([]m
 				pe.Position = 0
 			}
 			return nil, fail(err)
+		}
+		ro.Rollback(ctx)
+		if ro, err = readOnly(); err != nil {
+			return nil, err
 		}
 		res, err := ro.Query(ctx, q, append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, params...)...)
 		if err != nil {
@@ -1007,7 +1205,7 @@ func runTables(cat *Catalog) []runTable {
 	out := []runTable{}
 	for _, name := range cat.names() {
 		tb := cat.Tables[name]
-		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Layout: tb.Layout, By: tb.By, Columns: []runColumn{}}
+		t := runTable{Name: name, Kind: tb.Kind, Description: tb.Description, Layout: tb.Layout, By: tb.By, Icon: tb.Icon, Columns: []runColumn{}}
 		for _, c := range tb.Columns {
 			if c.Type == "tsvector" {
 				continue
@@ -1023,24 +1221,31 @@ func runTables(cat *Catalog) []runTable {
 	return out
 }
 
-// RunDocs is the SDK's documentation with an interface per table of this workspace: runDocs, then RunTypes.
 func (a *Archive) RunDocs(ctx context.Context) string {
-	return runDocs + "\n" + a.RunTypes(ctx)
+	return runDocs + "\n" + a.RunTypes(ctx) + a.RunConnections(ctx)
 }
 
-// runDocs is the SDK's documentation without this workspace's tables: the same bytes in every workspace, so
-// the chat's run tool, which it describes, is one prompt cache entry for all of them.
 var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 
-// RunTypes is the TypeScript of this workspace's types and tables, as the live database has them, and of the
-// actions and synced streams of the caller's connections.
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
-	return runTypes(a.Catalog()) + a.actionTypes(ctx) + a.streamTypes(ctx)
+	cat := a.Catalog()
+	return runTypesFor(cat, a.syncShown(ctx, cat))
 }
 
-var runStatic = []string{"Actions", "Streams", "Base", "Row", "Hit", "Migration", "SchemaChange", "Table", "StoredFile", "Tables", "FetchResponse", "RunResult", "BrowseResult", "WorkflowOn", "CronInput", "TableInput", "WebhookInput",
-	"Money", "Timestamp", "Time", "Interval", "Address", "Name", "Postcode", "Geo", "Quantity"}
+func (a *Archive) RunConnections(ctx context.Context) string {
+	return a.actionTypes(ctx) + a.streamTypes(ctx)
+}
+
+var runStatic = append(runSDKTypes(runSDK), "Actions", "Streams", "Tables", "Synced")
+
+func runSDKTypes(src string) []string {
+	var out []string
+	for _, m := range regexp.MustCompile(`(?m)^(?:interface|type) (\w+)`).FindAllStringSubmatch(src, -1) {
+		out = append(out, m[1])
+	}
+	return out
+}
 
 func runPascal(s string) string {
 	var b strings.Builder
@@ -1115,7 +1320,10 @@ func runFormat(schema, name string) string {
 		"timestamp": "YYYY-MM-DDTHH:MM:SS, no zone", "interval": "Postgres interval, like 1 day 02:00:00"}[name]
 }
 
-func runTypes(cat *Catalog) string {
+var runSyncedCols = []string{"access", "connection", "stream", "source_id"}
+
+func runTypesFor(cat *Catalog, shown map[string]bool) string {
+	names := slices.DeleteFunc(cat.names(), func(name string) bool { return !shown[name] })
 	n := &runNames{cat: cat, used: map[string]bool{}, names: map[string]string{}}
 	for _, s := range runStatic {
 		n.used[s] = true
@@ -1166,69 +1374,91 @@ func runTypes(cat *Catalog) string {
 	b.WriteString("\n/** Your types, from the live database. */\n")
 	decl("public")
 	tables := map[string]string{}
-	for _, name := range cat.names() {
+	for _, name := range names {
 		tables[name] = n.name("table."+name, name)
 	}
 	b.WriteString("\n/** Table name to row type. */\ninterface Tables {\n")
-	for _, name := range cat.names() {
+	for _, name := range names {
 		fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), tables[name])
 	}
 	b.WriteString("}\n")
-	for _, name := range cat.names() {
+	field := func(tb *Table, c *Column) string {
+		ref := ""
+		if tg := c.target(); tg == "archive.file" {
+			ref = "References a file: archive.file(id)"
+		} else if tg != "" && !strings.HasPrefix(strings.ToLower(c.Description), "references") {
+			ref = "References " + strings.TrimPrefix(tg, "public.")
+		}
+		gen := ""
+		if c.Generated {
+			gen = "Generated; read only"
+		}
+		desc := c.Description
+		if c.Name == "access" && desc == "" && tb.Schema == "public" {
+			desc = "The id of the group that sees the row, null for the whole workspace; a write may name the group instead, like hr"
+		}
+		if c.Name == "name" && desc == "" {
+			desc = "The row's title, which the app shows it and every link to it by"
+			if tb.Schema == "public" && tb.Kind == "table" {
+				desc += "; set it on every create"
+			}
+		}
+		opt := "?"
+		if c.required() {
+			opt = ""
+		}
+		ts := n.ts(c.Schema, c.Type, c.List)
+		switch {
+		case tb.isWorkflow() && c.Name == "on":
+			ts = "WorkflowOn | null"
+		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
+			ts = "string[]"
+		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
+			ts = "any"
+		}
+		return runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen) + fmt.Sprintf("    %s%s: %s;\n", runProp(c.Name), opt, ts)
+	}
+	syncedFields := func(tb *Table) string {
+		var out strings.Builder
+		for _, name := range runSyncedCols {
+			c := tb.col(name)
+			if c == nil {
+				return ""
+			}
+			out.WriteString(field(tb, c))
+		}
+		return out.String()
+	}
+	synced := ""
+	if tb := cat.Tables["mail_message"]; tb != nil {
+		synced = syncedFields(tb)
+	}
+	extends := func(tb *Table) bool { return synced != "" && tb.synced() && syncedFields(tb) == synced }
+	if slices.ContainsFunc(names, func(name string) bool { return extends(cat.Tables[name]) }) {
+		b.WriteString("\n/** What every table of a connection's rows has. */\ninterface Synced extends Base {\n" + synced + "}\n")
+	}
+	for _, name := range names {
 		tb := cat.Tables[name]
 		ro := ""
 		if tb.Kind == "view" {
 			ro = "View; read only"
 		}
+		base := "Base"
+		if extends(tb) {
+			base = "Synced"
+		}
 		b.WriteString("\n" + runDoc("", tb.Description, ro))
-		fmt.Fprintf(&b, "interface %s extends Base {\n", tables[name])
+		fmt.Fprintf(&b, "interface %s extends %s {\n", tables[name], base)
 		for _, c := range tb.Columns {
-			if catalogSystem[c.Name] || c.Type == "tsvector" {
+			if catalogSystem[c.Name] || c.Type == "tsvector" || base == "Synced" && slices.Contains(runSyncedCols, c.Name) {
 				continue
 			}
-			ref := ""
-			if tg := c.target(); tg == "archive.file" {
-				ref = "References a file: archive.file(id)"
-			} else if tg != "" && !strings.HasPrefix(strings.ToLower(c.Description), "references") {
-				ref = "References " + strings.TrimPrefix(tg, "public.")
-			}
-			gen := ""
-			if c.Generated {
-				gen = "Generated; read only"
-			}
-			desc := c.Description
-			if c.Name == "access" && desc == "" && tb.Schema == "public" {
-				desc = "The id of the group that sees the row, null for the whole workspace; a write may name the group instead, like hr"
-			}
-			if c.Name == "name" && desc == "" {
-				desc = "The row's title, which the app shows it and every link to it by"
-				if tb.Schema == "public" && tb.Kind == "table" {
-					desc += "; set it on every create"
-				}
-			}
-			b.WriteString(runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen))
-			opt := "?"
-			if c.required() {
-				opt = ""
-			}
-			ts := n.ts(c.Schema, c.Type, c.List)
-			switch {
-			case tb.isWorkflow() && c.Name == "on":
-				ts = "WorkflowOn | null"
-			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
-				ts = "string[]"
-			case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
-				ts = "any"
-			}
-			fmt.Fprintf(&b, "    %s%s: %s;\n", runProp(c.Name), opt, ts)
+			b.WriteString(field(tb, c))
 		}
 		b.WriteString("}\n")
 	}
 	return b.String()
 }
-
-// runSyncedRe finds a query that may read a table Archive syncs from connections, whose syncs a read catches up.
-var runSyncedRe = regexp.MustCompile(`(?i)\b(known_person|known_org|` + strings.Join(slices.Sorted(maps.Keys(syncSchema)), "|") + `)\b`)
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
 

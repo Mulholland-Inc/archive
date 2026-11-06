@@ -3,10 +3,8 @@
   import Stack from '../components/Stack.svelte';
   import { titleOf } from '../lib/app.svelte.js';
 
-  // A month, each row on the day of the view's by date.
   let { view, rows, pick } = $props();
 
-  // The calendar is the month of the earliest upcoming row, or this month.
   const month = $derived.by(() => {
     const days = rows.map((r) => r[view.by]).filter(Boolean).map((d) => new Date(d));
     const now = new Date();
@@ -74,8 +72,6 @@
     width: 100%;
     text-align: start;
     cursor: pointer;
-    /* A long name wraps onto more lines rather than end in an ellipsis: the day is narrow, and the name is the
-       only thing an entry shows. */
     overflow-wrap: anywhere;
     line-height: var(--leading-tight);
     padding: var(--space-0-5) var(--space-1);

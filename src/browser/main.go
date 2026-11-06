@@ -1,6 +1,3 @@
-// Command browser serves one fresh headless Chrome per WebSocket connection, for archive.browse.
-// Each connection is proxied to that Chrome's DevTools socket; Chrome and its profile go when it closes.
-// The next Chrome starts as soon as the current one is ready, so a connection rarely waits for one.
 package main
 
 import (
@@ -40,7 +37,6 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// launch starts Chrome; ready closes once its DevTools address is known or it failed.
 func launch() *chrome {
 	start := time.Now()
 	c := &chrome{ready: make(chan struct{})}
@@ -85,7 +81,6 @@ func (c *chrome) close() {
 	os.RemoveAll(c.dir)
 }
 
-// take returns a ready Chrome: the waiting one, or a new one when that failed.
 func take(r *http.Request) (*chrome, net.Conn, error) {
 	var c *chrome
 	select {

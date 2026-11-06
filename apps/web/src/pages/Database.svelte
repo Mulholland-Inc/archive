@@ -1,13 +1,14 @@
 <script>
   import { onMount } from 'svelte';
-  import { Box, Database as DatabaseIcon, SearchX, Table2, Kanban, CalendarDays } from '@lucide/svelte';
+  import { Box, Database as DatabaseIcon, SearchX } from '@lucide/svelte';
+  import { viewIcon } from '../layouts/icons.svelte.js';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import StickyHeader from '../components/StickyHeader.svelte';
   import Stack from '../components/Stack.svelte';
   import SearchField from '../components/SearchField.svelte';
   import Chip from '../components/Chip.svelte';
-  import Select from '../components/Select.svelte';
+  import Menu from '../components/Menu.svelte';
   import Spacer from '../components/Spacer.svelte';
   import Table from '../components/Table.svelte';
   import Text from '../components/Text.svelte';
@@ -28,8 +29,7 @@
     { value: 'tables', label: 'Tables' },
     { value: 'views', label: 'Views' },
     { value: 'linked', label: 'Linked' },
-    { value: 'automated', label: 'Used by workflows' },
-    { value: 'shared', label: 'Shared' }
+    { value: 'automated', label: 'Used by workflows' }
   ];
   const sorts = [
     { value: 'name', label: 'Name' },
@@ -52,16 +52,13 @@
   const types = $derived(ws().schema);
   const nameOf = (id) => types.find((t) => t.id === id)?.name ?? id;
   const linksOf = (t) => [...new Set(t.links.map((l) => l.to))].map(nameOf);
-  // A view shows as its layout, like in the sidebar; a table as a box.
-  const iconOf = (t) => (t.kind !== 'view' ? Box : ({ board: Kanban, calendar: CalendarDays })[t.layout] ?? Table2);
-  const shared = (t) => ws().shares.some((s) => s.kind === 'table' && s.target === t.id);
+  const iconOf = (t) => (t.kind !== 'view' ? Box : viewIcon(t));
   const keep = {
     all: () => true,
     tables: (t) => t.kind !== 'view',
     views: (t) => t.kind === 'view',
     linked: (t) => t.links.length || types.some((o) => o.links.some((l) => l.to === t.id)),
-    automated: (t) => t.workflows.length,
-    shared
+    automated: (t) => t.workflows.length
   };
   const rows = $derived.by(() => {
     const q = query.trim().toLowerCase();
@@ -101,7 +98,7 @@
       <Chip selected={filter === f.value} onclick={() => (filter = f.value)}>{f.label}</Chip>
     {/each}
     <Spacer />
-    <Select bind:value={sort} options={sorts} variant="ghost" label="Sort by" placement="bottom-end" />
+    <Menu bind:value={sort} options={sorts} variant="ghost" label="Sort by" />
   </Stack>
 
   {#if !types.length}

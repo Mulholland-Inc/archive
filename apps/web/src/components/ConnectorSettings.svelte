@@ -1,11 +1,10 @@
 <script>
-  import { SearchX, ChevronDown, Plus, ListFilter, Code } from '@lucide/svelte';
+  import { SearchX, ListFilter } from '@lucide/svelte';
   import SettingsPane from './SettingsPane.svelte';
   import PaneHeader from './PaneHeader.svelte';
   import SearchField from './SearchField.svelte';
   import ConnectorCard from './ConnectorCard.svelte';
   import EmptyState from './EmptyState.svelte';
-  import Button from './Button.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
@@ -38,7 +37,7 @@
   <PaneHeader title="Connectors" description="Your own accounts that Archive can read from and act in. Only you can use them." art="api">
     {#snippet search()}
       <div class="search"><SearchField bind:value={query} size="sm" placeholder="Search" label="Search connectors" /></div>
-      <Menu label="Filter" placement="bottom-end">
+      <Menu label="Filter" end>
         {#snippet trigger(props)}<IconButton icon={ListFilter} label="Filter" pressed={categories.length > 0} {...props} />{/snippet}
         <MenuLabel>Category</MenuLabel>
         {#each allCategories as c (c)}
@@ -49,19 +48,13 @@
           <MenuItem onselect={() => (categories = [])}>Clear filters</MenuItem>
         {/if}
       </Menu>
-      <div class="end">
-        <Menu label="Add" placement="bottom-end" width="sm">
-          {#snippet trigger(props)}<Button variant="inverse" icon={Plus} iconEnd={ChevronDown} {...props}>Add</Button>{/snippet}
-          <MenuItem icon={Code} disabled>Custom connector, coming soon</MenuItem>
-        </Menu>
-      </div>
     {/snippet}
   </PaneHeader>
   <div class="list">
     {#if matches.length}
       <div class="grid">
         {#each matches as c (c.id)}
-          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => connect(c.id)} />
+          <ConnectorCard connector={c} onopen={() => onopen?.(c.id)} onconnect={() => (c.link || c.keys?.length || c.ask ? onopen?.(c.id) : connect(c.id))} />
         {/each}
       </div>
     {:else}
@@ -81,11 +74,6 @@
     flex: 1 1 var(--col-sm);
     max-width: var(--col-lg);
     min-width: 0;
-  }
-
-  .end {
-    display: flex;
-    margin-inline-start: auto;
   }
 
   .grid {

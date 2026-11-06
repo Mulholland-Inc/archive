@@ -1,8 +1,8 @@
 <script>
-  let { width = 'page', center = false, children, element = $bindable() } = $props();
+  let { width = 'page', center = false, children, element = $bindable(), onscroll } = $props();
 </script>
 
-<div class="scroll" bind:this={element}>
+<div class="scroll" bind:this={element} {onscroll}>
   <div class={['inner', width, { center }]}>
     {@render children()}
   </div>
@@ -25,7 +25,6 @@
     padding: var(--space-8);
   }
 
-  /* Only a chat has the composer dock floating over its end, so only a chat keeps room for it. */
   .chat { max-width: calc(var(--chat-width) + var(--space-16)); padding-block-end: calc(var(--space-8) + var(--dock-height)); }
   .home { max-width: calc(var(--home-width) + var(--space-16)); }
   .page { max-width: calc(var(--page-width) + var(--space-16)); }

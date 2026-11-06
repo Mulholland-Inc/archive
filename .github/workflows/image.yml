@@ -16,7 +16,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Builds both images and, on main, rolls them out to Cloud Run in the same job: a second job cost ~8s of handoff.
   image:
     runs-on: marzy-devbox
     env:
@@ -33,10 +32,8 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
-          # The runner keeps Go's caches between jobs; restoring and saving them took two minutes.
           cache: false
 
-      # ko and the browser image at once; wait fails the step if ko failed.
       - working-directory: src
         run: |
           export KO_DOCKER_REPO="ghcr.io/${GITHUB_REPOSITORY,,}"
@@ -59,27 +56,23 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
 
-      # Not from the runner's tool cache: this job and app unpack it at once on the same host, and a cache one
-      # is still writing breaks the other's gcloud.
       - if: env.DEPLOY == 'true'
         uses: google-github-actions/setup-gcloud@v3
 
       - if: env.DEPLOY == 'true'
         run: |
           image="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA::7}"
-          # All three at once; each wait fails the step if its update failed.
+          gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image"
+          gcloud run jobs execute archive --project "$GCP_PROJECT" --region "$GCP_REGION" --wait
           gcloud run services update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" & api=$!
-          gcloud run jobs update archive --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$image" & job=$!
           if gcloud run services describe archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" >/dev/null 2>&1; then
             gcloud run services update archive-browser --project "$GCP_PROJECT" --region "$GCP_REGION" --image "$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/ghcr/${GITHUB_REPOSITORY,,}:browser-sha-${GITHUB_SHA::7}"
           fi
           wait $api
-          wait $job
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           GCP_REGION: ${{ vars.GCP_REGION }}
 
-  # Runs alongside image rather than after the rollout, so the web app can be live up to ~25s before the API.
   app:
     if: ${{ github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     runs-on: marzy-devbox
@@ -97,8 +90,6 @@ jobs:
 
       - run: npm run build
 
-      # The Worker deploy token and the key the API announces live changes with, both in Secret Manager
-      # (apps/terraform/gcp); the deploy identity may read only those two.
       - uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -106,8 +97,6 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
-      # LIVE_KEY goes up with the deploy itself (--secrets-file), so a rotated key lands on the next deploy
-      # without a second Worker version. JSON, not dotenv, so nothing in the key expands.
       - run: |
           CLOUDFLARE_API_TOKEN=$(gcloud secrets versions access latest --secret archive-cloudflare-deploy-token --project "$GCP_PROJECT")
           echo "::add-mask::$CLOUDFLARE_API_TOKEN"
@@ -117,7 +106,7 @@ jobs:
           secrets="$RUNNER_TEMP/secrets.json"
           trap 'rm -f "$secrets"' EXIT
           (umask 077; node -e 'process.stdout.write(JSON.stringify({ LIVE_KEY: process.env.LIVE_KEY }))' > "$secrets")
-          npx wrangler deploy --secrets-file "$secrets"
+          npx wrangler@4.156.2 deploy --secrets-file "$secrets"
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

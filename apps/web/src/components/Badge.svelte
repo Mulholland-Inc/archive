@@ -27,7 +27,6 @@
     white-space: nowrap;
   }
 
-  /* The icon brings its own room on the left; the text needs it on the right. */
   .badge:has(.glyph) {
     padding-inline-start: var(--space-1);
   }
