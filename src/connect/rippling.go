@@ -78,10 +78,10 @@ func init() {
 					People: map[string]SQL{"person": "data->>'work_email'"},
 					Refs:   map[string]SQL{"company": ripplingRef, "department": "data->>'department_id'", "manager": "data->>'manager_id'"},
 					Children: []Kids{
-						{Table: "payroll_job", From: "(SELECT 1) j WHERE coalesce(data->>'title', '') <> ''",
+						{Table: "payroll_job", From: "(SELECT data) j WHERE coalesce(data->>'title', '') <> ''",
 							Cols: map[string]SQL{"title": "data->>'title'", "hired_on": "archive.sync_day(data->>'start_date')", "primary_job": "true"},
 							Refs: map[string]SQL{"location": "data#>>'{location,work_location_id}'"}},
-						{Table: "payroll_employment", From: "(SELECT 1) e",
+						{Table: "payroll_employment", From: "(SELECT data) e",
 							Cols: map[string]SQL{"status": "data->>'status'", "hired_on": "archive.sync_day(coalesce(nullif(data->>'original_start_date', ''), data->>'start_date'))",
 								"terminated_on": "CASE WHEN data->>'status' = 'TERMINATED' THEN archive.sync_day(data->>'end_date') END"}},
 					}}},
