@@ -122,11 +122,15 @@ var (
 )
 
 func catalogParse(b []byte) (*Catalog, error) {
-	c := &Catalog{}
-	if err := json.Unmarshal(b, c); err != nil {
+	var p struct {
+		Catalog
+		Sync map[string][]*Column `json:"sync"`
+	}
+	if err := json.Unmarshal(b, &p); err != nil {
 		return nil, fmt.Errorf("catalog: %w", err)
 	}
-	c.sync = c.syncTables()
+	c := &p.Catalog
+	c.sync = syncTables(p.Sync)
 	for _, t := range c.Tables {
 		t.Description, t.meta = catalogComment(t.Description)
 		for _, kv := range t.meta {
@@ -194,25 +198,22 @@ func (t *Table) synced() bool {
 	return t.syncs() || t.Schema == "archive" && (t.Name == "known_person" || t.Name == "known_org")
 }
 
-func (c *Catalog) syncTables() map[string]syncTable {
+func syncTables(tables map[string][]*Column) map[string]syncTable {
 	out := map[string]syncTable{}
-	for _, t := range c.Tables {
-		if !t.syncs() {
-			continue
-		}
-		st := syncTable{links: map[string]string{}}
-		for _, col := range t.Columns {
+	for name, cols := range tables {
+		st := syncTable{cols: cols, links: map[string]string{}}
+		for _, col := range cols {
 			to, ok := strings.CutPrefix(col.Ref, "archive.")
-			if !ok || c.Tables[to] == nil || !c.Tables[to].syncs() {
+			if !ok || tables[to] == nil {
 				continue
 			}
-			if t.col(col.Name+"_source") != nil {
+			if st.has(col.Name + "_source") {
 				st.links[col.Name] = to
 			} else if col.NotNull {
 				st.parent, st.of = to, col.Name
 			}
 		}
-		out[t.Name] = st
+		out[name] = st
 	}
 	return out
 }

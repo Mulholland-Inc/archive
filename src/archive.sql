@@ -4707,6 +4707,10 @@ SELECT jsonb_build_object(
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
         FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
+    'sync', coalesce((SELECT jsonb_object_agg(c.relname, (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid))
+        FROM pg_catalog.pg_class c WHERE c.relnamespace = 'archive'::regnamespace AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_constraint k
+            JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = ANY(k.conkey)
+            WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive.connection'::regclass AND a.attname = 'connection')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
         'schema', t.typnamespace::regnamespace::text,
