@@ -990,10 +990,10 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		for i, d := range out.Drops {
 			names[i] = d.Kind + " " + d.Name
 		}
-		return nil, fmt.Errorf("this migration deletes or rewrites data (%s): tell the person what it drops and confirm it only after they agree, in a later turn: %w", strings.Join(names, ", "), ErrForbidden)
+		return nil, fmt.Errorf("this migration deletes or rewrites data (%s): tell the person what it drops, and stop; once they agree, in a later turn, run it with confirm: %q: %w", strings.Join(names, ", "), out.Confirm, ErrForbidden)
 	}
 	if breaks && len(out.Breaks) > 0 && turn != "" && from == turn {
-		return nil, fmt.Errorf("this migration stops %d workflows until they are saved clean: tell the person which and confirm with breaks only after they agree, in a later turn: %w", len(out.Breaks), ErrForbidden)
+		return nil, fmt.Errorf("this migration stops %d workflows until they are saved clean: tell the person which, and stop; once they agree, in a later turn, run it with breaks: true and confirm: %q: %w", len(out.Breaks), out.Confirm, ErrForbidden)
 	}
 	if breaks && len(out.Breaks) > 0 && shown != hex.EncodeToString(bh[:]) {
 		return nil, fmt.Errorf("what this migration breaks changed since its dry run; dry-run it again, show the person, and use the new confirm: %w", ErrConflict)
