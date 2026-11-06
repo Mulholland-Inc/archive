@@ -1,28 +1,25 @@
 <script>
   import AppSidebar from './components/AppSidebar.svelte';
   import ContextMenu from './components/ContextMenu.svelte';
-  import Agent from './pages/Agent.svelte';
-  import LibraryPage from './pages/Library.svelte';
-  import DatabasePage from './pages/Database.svelte';
-  import Workflows from './pages/Workflows.svelte';
-  import Workflow from './pages/Workflow.svelte';
-  import DatabaseTable from './pages/DatabaseTable.svelte';
-  import ViewPage from './pages/View.svelte';
-  import RowPage from './pages/Row.svelte';
-  import AccessPage from './pages/Access.svelte';
-  import GroupPage from './pages/Group.svelte';
-  import Canvas from './components/Canvas.svelte';
-  import AppSettings from './components/AppSettings.svelte';
-  import Onboarding from './pages/Onboarding.svelte';
   import { route, replace } from './lib/router.svelte.js';
   import { app, ws, onboards, toggleSidebar, closeDrawer, openSettings, boot, account, lastAgent } from './lib/app.svelte.js';
   import PromptHost from './components/PromptHost.svelte';
-  import HelpDialog from './components/HelpDialog.svelte';
-  import SignIn from './components/SignIn.svelte';
-  import PasskeyPrompt from './components/PasskeyPrompt.svelte';
   import Loading from './components/Loading.svelte';
+  import { pageOf } from './lib/preload.js';
 
   boot();
+
+  const page = $derived(pageOf(route.parts, onboards()));
+  const load = $derived(page.load);
+  load();
+
+  let settings = $state(false);
+  let help = $state(false);
+
+  $effect(() => {
+    settings ||= app.settings.open;
+    help ||= app.help;
+  });
 
   account.use(() => app.status === 'ready');
 
@@ -61,7 +58,7 @@
 <svelte:window {onkeydown} />
 
 {#if app.status === 'signedOut'}
-  <SignIn />
+  {#await import('./components/SignIn.svelte') then m}<m.default />{/await}
 {:else if app.status !== 'ready' || !ws()}
   <Loading />
 {:else}
@@ -70,42 +67,20 @@
   <main class="main">
   {#key key}
     <div class="view">
-      {#if route.parts[0] === 'agent'}
-        <Agent id={route.parts[1]} />
-      {:else if route.parts[0] === 'library'}
-        <LibraryPage />
-      {:else if route.parts[0] === 'view' && route.parts[2]}
-        <RowPage view={route.parts[1]} id={route.parts[2]} />
-      {:else if route.parts[0] === 'view' && route.parts[1]}
-        <ViewPage id={route.parts[1]} />
-      {:else if route.parts[0] === 'database' && route.parts[1]}
-        <DatabaseTable id={route.parts[1]} />
-      {:else if route.parts[0] === 'database'}
-        <DatabasePage />
-      {:else if route.parts[0] === 'workflows' && route.parts[1]}
-        <Workflow id={route.parts[1]} />
-      {:else if route.parts[0] === 'workflows'}
-        <Workflows />
-      {:else if route.parts[0] === 'access' && route.parts[1] === 'groups' && route.parts[2]}
-        <GroupPage id={route.parts[2]} />
-      {:else if route.parts[0] === 'access'}
-        <AccessPage />
-      {:else if route.parts[0] === 'onboarding' && onboards()}
-        <Onboarding />
-      {:else}
-        {#key lastAgent()?.id}<Agent id={lastAgent()?.id} />{/key}
-      {/if}
+      {#await load() then m}
+        {#key page.home && lastAgent()?.id}<m.default {...page.props} id={page.home ? lastAgent()?.id : page.props.id} />{/key}
+      {/await}
     </div>
   {/key}
   </main>
-  {#if app.canvas}{#key app.canvas.id}<Canvas />{/key}{/if}
+  {#if app.canvas}{#await import('./components/Canvas.svelte') then m}{#key app.canvas.id}<m.default />{/key}{/await}{/if}
 </div>
 
-<AppSettings />
+{#if settings}{#await import('./components/AppSettings.svelte') then m}<m.default />{/await}{/if}
 <PromptHost />
-<HelpDialog bind:open={app.help} />
+{#if help}{#await import('./components/HelpDialog.svelte') then m}<m.default bind:open={app.help} />{/await}{/if}
 <ContextMenu />
-{#if app.askPasskey}<PasskeyPrompt />{/if}
+{#if app.askPasskey}{#await import('./components/PasskeyPrompt.svelte') then m}<m.default />{/await}{/if}
 {/if}
 
 <style>

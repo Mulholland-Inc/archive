@@ -8,7 +8,8 @@ import './styles/base.css';
 import './lib/theme.svelte.js';
 import './lib/viewport.js';
 import App from './App.svelte';
-import Authorize from './pages/Authorize.svelte';
 import './lib/preload.js';
 
-export default mount(location.pathname === '/authorize' ? Authorize : App, { target: document.getElementById('app') });
+const target = document.getElementById('app');
+if (location.pathname === '/authorize') import('./pages/Authorize.svelte').then((m) => mount(m.default, { target }));
+else mount(App, { target });

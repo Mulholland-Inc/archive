@@ -120,7 +120,7 @@
           <Button onclick={clear}>Show everything</Button>
         </EmptyState>
       {:else if layout.component && (!layout.by || view.by)}
-        <layout.component {view} {rows} {shown} {text} {pick} />
+        {#await layout.component() then m}<m.default {view} {rows} {shown} {text} {pick} />{/await}
       {:else}
         <Table {columns} rows={cells} label={view.name} onrowclick={(c) => pick(c.row)}>
           {#snippet cell(row, col)}

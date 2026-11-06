@@ -1,11 +1,13 @@
 <script>
   import { Copy, Check } from '@lucide/svelte';
   import Icon from './Icon.svelte';
-  import { highlighted } from '../lib/syntax.js';
 
   let { code = '', lang = 'text', full = false, size = 'code' } = $props();
   let copied = $state(false);
-  const html = $derived(highlighted(code.replace(/^(\s*\n)+/, '').trimEnd(), lang));
+  let syntax = $state(null);
+  import('../lib/syntax.js').then((m) => (syntax = m));
+  const shown = $derived(code.replace(/^(\s*\n)+/, '').trimEnd());
+  const html = $derived(syntax ? syntax.highlighted(shown, lang) : shown.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`));
 
   async function copy() {
     try {
