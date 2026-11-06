@@ -54,10 +54,11 @@ export function toTables(catalog, schema = [], counts = {}, workflows = [], arch
       const columns = t.columns.filter((c) => c.type !== 'tsvector').map((c) => column(c, catalog.types ?? {}, catalog.tables ?? {}));
       return {
         id: t.name,
-        name: t.name.replaceAll('_', ' ').replace(/^./, (s) => s.toUpperCase()),
+        name: t.name.replaceAll('_', ' ').replace(/\b\w/g, (s) => s.toUpperCase()),
         kind: t.kind,
         layout: t.layout,
         by: t.by,
+        icon: t.icon,
         description: t.description,
         rows: counts[t.name]?.rows ?? null,
         updated: counts[t.name]?.updated ? relative(counts[t.name].updated) : '',
