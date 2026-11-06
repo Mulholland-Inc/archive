@@ -31,8 +31,9 @@
  *   part of this run, and later calls see it. A confirm goes stale when the schema changes: that throws conflict, so dry-run
  *   again. Change rows with create, update and delete, not in a migration. Locks wait up to 10s.
  * - drops lists what deletes or rewrites data. Confirm those only when the people you work for asked for exactly them or
- *   agreed after you showed them. Talking with an agent, that confirm throws forbidden until a later turn: dry-run, tell
- *   them what it deletes, and stop.
+ *   agreed after you showed them. Talking with an agent, a confirm from a dry run in this turn throws forbidden, and so does
+ *   dry-running again in the later turn: dry-run, return the confirm, tell them what it deletes, and stop. Once they agree, in a
+ *   later turn, use that confirm. The error has it too.
  * - A migration runs with your own access, so a function it reaches (a CHECK, a column DEFAULT, an ALTER COLUMN ... USING,
  *   a domain check, a trigger) cannot write a row or read one your role may not: that throws forbidden with the rule it broke.
  * - A schema change keeps every saved workflow valid or is refused. The report's breaks names what it would break, with line and
@@ -43,7 +44,7 @@
  *   it, so stop it instead: archive.migrate(sql, { confirm, breaks: true }) commits and sets broken on each one until its owner
  *   saves a changed source that passes the checks; saving the same source again is refused. breaks: true follows the same rule as
  *   drops: confirm it only when the people you work for agreed after you showed them, with the confirm from the dry run that showed
- *   them, and talking with an agent it throws forbidden until a later turn. A saved workflow cannot drop data or use breaks. A workflow that passes rows on whole, by
+ *   them, and talking with an agent it needs a confirm from an earlier turn in the same way. A saved workflow cannot drop data or use breaks. A workflow that passes rows on whole, by
  *   returning them or handing them to a helper, counts as reading every column; read the columns by name to depend on fewer.
  * - unfollowed in the report counts places in saved workflows the check could not follow, such as rows handed to a helper.
  *   Those reads are not checked: a column that is gone reads undefined.
