@@ -508,7 +508,7 @@ export const viewRows = resource({
       const from = ` FROM ${sourceOf(t)} t${sql}`;
       const fields = t.columns.map((c) => `t.${quoted(c.name)}`).join(', ');
       try {
-        const got = await runCode(`return { rows: await ${queryCode(`SELECT ${fields}${from}${orderOf(t, state)} LIMIT ${VIEW_PAGE} OFFSET ${(state.page - 1) * VIEW_PAGE}`, params)}, total: (await ${queryCode(`SELECT count(*)::int AS n${from}`, params)})[0].n };`, v.id);
+        const got = await runCode(`return { rows: await ${queryCode(`SELECT ${fields}${from}${orderOf(t, state)} LIMIT ${VIEW_PAGE} OFFSET ${(state.page - 1) * VIEW_PAGE}`, params)}, total: (await ${queryCode(`SELECT count(*)::int AS n${from}`, params)})[0]!.n };`, v.id);
         if (!got.rows.length && got.total) views[id] = { ...state, page: Math.ceil(got.total / VIEW_PAGE) };
         v.viewRows = { ...v.viewRows, [id]: got.rows };
         v.viewTotals = { ...v.viewTotals, [id]: { total: got.total, error: '' } };
