@@ -7,14 +7,14 @@
 
 <Meta title="Terms of Service — Archive" description="The terms for using Archive as hosted by Mulholland at app.archive.dev and archive.dev: accounts, your content, acceptable use, availability and liability." />
 
-<Hero kind="blog" title="Terms of Service" lead="The terms for using Archive as hosted by Mulholland. Effective November 3, 2026." />
+<Hero kind="blog" title="Terms of Service" lead="The terms for using Archive as hosted by Mulholland. Last updated and effective November 5, 2026." />
 
 <Section>
   <article class="prose">
 
 <h2 id="agreement">These terms</h2>
 <p>These terms are an agreement between you and Mulholland Inc. ("Mulholland", "we") for using Archive as we host it at app.archive.dev and api.archive.dev (the "service"), and this site at archive.dev. By using them, you accept these terms. If you use the service for an organization, you accept them on its behalf and confirm you may.</p>
-<p>If your organization has a separate written agreement with Mulholland, that agreement wins where the two differ. The <a href="/privacy">Privacy Policy</a> explains how we handle personal information.</p>
+<p>An organization that uses Archive under Mulholland's <a href="https://mulholland.ai/legal">Master Services Agreement</a>, or another written agreement with Mulholland, is governed by that agreement, which wins where the two differ. The <a href="/privacy">Privacy Policy</a> explains how we handle personal information.</p>
 
 <h2 id="open-source">Open source</h2>
 <p>Archive's source code is public on <a href={GITHUB}>GitHub</a>, and anyone can run it themselves. These terms cover only the service Mulholland runs. They do not grant or limit any rights in the source code, which come from its repository.</p>
@@ -30,7 +30,8 @@
 <h2 id="content">Your content</h2>
 <p>You own what you put in the service, and so does the customer whose workspace it is in. We claim no ownership of it.</p>
 <p>You let Mulholland store, copy, process and send your content only as needed to run the service for you, including through the providers listed in the Privacy Policy, such as Anthropic when your workspace uses the in-app agent. We do not sell your content or use it for advertising.</p>
-<p>You confirm that you have the right to put your content in the service, and that doing so breaks no law and no one else's rights. You can export your content at any time through the app, the API and the CLI.</p>
+<p>Mulholland makes decision models and fine-tuned language models. If your organization's Master Services Agreement with Mulholland is on version 1.4 or later, Mulholland may also de-identify content in its workspace and use the de-identified data to develop and train its own models, which it may sell or license to others, as that agreement and the Privacy Policy's <a href="/privacy#models">Models we make</a> describe. Without such an agreement, we do not.</p>
+<p>You confirm that you have the right to put your content in the service, and that doing so breaks no law and no one else's rights. You can export your content at any time through the app and the API.</p>
 
 <h2 id="connected">Accounts you connect</h2>
 <p>When you connect an account you hold at another service, like your Gmail, Outlook, Google Drive, SharePoint or your organization's QuickBooks, you let Archive read it on your behalf, keep a copy of what it reads in your workspace and keep that copy current, as the <a href="/privacy#collect-connected">Privacy Policy</a> describes. Connect only accounts you may let Archive read, and for an organization's account, only with its permission. Your use of that service is still under its own terms with you.</p>

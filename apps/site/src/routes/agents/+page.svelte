@@ -36,7 +36,6 @@
   ];
 
   const ANYWHERE = [
-    { art: 'cli', title: 'Command line', items: ['Run a saved set of steps from your terminal', 'Print every action, with your own records in it', 'Make a new access key for an assistant'] },
     { art: 'api', title: 'Your own apps', items: ['Send the same steps from anything you build', 'Every action is also available on its own', 'Each request carries a sign-in or an access key'] },
     { art: 'security', title: 'Guardrails', items: ['Sees only what its person can see', 'No reaching out to the internet or other files', 'Time and size limits on every job'] }
   ];
@@ -76,7 +75,7 @@
   </Row>
 </Section>
 
-<Section band body="What your assistant does in a chat works the same from your own apps and from the command line.">
+<Section band body="What your assistant does in a chat works the same from your own apps.">
   {#snippet title()}Works the same <em>everywhere</em>.{/snippet}
   <Specs items={ANYWHERE} />
 </Section>

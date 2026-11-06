@@ -1,41 +1,43 @@
 <script>
   import { onMount } from 'svelte';
   import { page as here } from '$app/state';
-  import Art from './Art.svelte';
   import Button from '#kit/Button.svelte';
   import Icon from '#kit/Icon.svelte';
-  import { EXPLAIN, PAGES } from './explain.js';
+  import { EXPLAIN, FILM } from './explain.js';
   import { START } from './site.js';
 
   const REST = { closed: 3, read: 30 };
+  const STARTS = FILM.map((_, i) => FILM.slice(0, i).reduce((n, c) => n + c.dur, 0));
 
-  let dialog;
+  let dialog, video;
   let gone = $state(false);
-  let at = $state(0);
+  let now = $state(0);
 
-  const page = $derived(PAGES[at]);
+  const at = $derived(STARTS.findLastIndex((s) => now >= s));
   const home = $derived(here.url.pathname === '/');
-  const last = $derived(at === PAGES.length - 1);
 
   function rest(kind) {
     gone = true;
     try { localStorage.explain = Date.now() + REST[kind] * 864e5; } catch {}
   }
 
-  export function open() {
-    at = 0;
-    rest('read');
-    dialog.showModal();
+  const play = () => video.play().catch(() => {});
+
+  function seek(i) {
+    video.currentTime = STARTS[i];
+    play();
   }
 
-  function rich(s) {
-    const bits = s.split(/\[([^\]]+)\]\(([^)]+)\)/);
-    return bits.flatMap((b, i) => (i % 3 === 0 ? [[b]] : i % 3 === 1 ? [[b, bits[i + 1]]] : []));
+  export function open() {
+    rest('read');
+    dialog.showModal();
+    video.currentTime = 0;
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) play();
   }
 
   function key(e) {
-    if (e.key === 'ArrowRight' && !last) at++;
-    if (e.key === 'ArrowLeft' && at > 0) at--;
+    if (e.key === 'ArrowRight' && at < FILM.length - 1) seek(at + 1);
+    if (e.key === 'ArrowLeft' && at > 0) seek(at - 1);
   }
 
   onMount(() => {
@@ -52,36 +54,18 @@
   {#if !home}<button type="button" class="icon-btn topbar-close" aria-label="Close" onclick={() => rest('closed')}><Icon name="close" /></button>{/if}
 </div>
 
-{#snippet text(s)}{#each rich(s) as [words, href]}{#if href}<a class="link" {href} onclick={() => dialog.close()}>{words}</a>{:else}{words}{/if}{/each}{/snippet}
-
-<dialog class="explain" bind:this={dialog} onkeydown={key} onclick={(e) => e.target === dialog && dialog.close()} aria-label={EXPLAIN.title}>
+<dialog class="explain" bind:this={dialog} onkeydown={key} onclick={(e) => e.target === dialog && dialog.close()} onclose={() => video.pause()} aria-label={EXPLAIN.title}>
   <div class="explain-page">
     <button type="button" class="icon-btn explain-close" aria-label="Close" onclick={() => dialog.close()}><Icon name="close" /></button>
-    <div class="explain-art">
-      {#key at}<Art name={page.art} alt={page.alt} />{/key}
-    </div>
-    <div class="explain-copy" aria-live="polite">
-      {#each PAGES as p, i}
-        <div class={['explain-text', i === at && 'on']}>
-          <h2>{@render text(p.title)}</h2>
-          {#if p.list}
-            <dl class="explain-list">{#each p.list as [name, what]}<dt>{@render text(name)}</dt><dd>{what}</dd>{/each}</dl>
-          {:else}
-            <p>{@render text(p.text)}</p>
-          {/if}
-        </div>
-      {/each}
-    </div>
+    <video bind:this={video} bind:currentTime={now} src="/art/explain.mp4" poster="/art/explain.webp" muted playsinline preload="none" aria-hidden="true" onclick={() => (video.paused ? play() : video.pause())}></video>
+    <ol class="explain-script">
+      {#each FILM as c}{#each c.lines as line}<li>{line}</li>{/each}{/each}
+    </ol>
     <div class="explain-foot">
       <div class="explain-dots">
-        {#each PAGES as p, i}<button type="button" class={[i === at && 'on']} aria-label="Page {i + 1}" onclick={() => (at = i)}></button>{/each}
+        {#each FILM as c, i}<button type="button" class={[i === at && 'on']} aria-label="Chapter {i + 1}" onclick={() => seek(i)}></button>{/each}
       </div>
-      {#if at > 0}<Button ghost small onclick={() => at--}>Back</Button>{/if}
-      {#if last}
-        <Button href={START[0]} small>{START[1]}</Button>
-      {:else}
-        <Button small onclick={() => at++}>Next</Button>
-      {/if}
+      <Button href={START[0]} small>{START[1]}</Button>
     </div>
   </div>
 </dialog>

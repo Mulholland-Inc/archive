@@ -22,7 +22,7 @@ import (
 // HMAC-SHA1.
 func init() {
 	Register(&Connector{
-		ID: "intercom", Name: "Intercom", Integration: true, Lasting: true,
+		ID: "intercom", Name: "Intercom", Integration: true, Lasts: true,
 		Info: Info{By: "Intercom", Description: "Read conversations, tickets, contacts and companies, and answer or update them when you ask", Category: CatSupport, Icon: IconInbox,
 			Scopes: []string{"Read conversations, tickets, contacts, companies and teammates", "Reply to, close, snooze and assign conversations and tickets, and add or change contacts, when you ask"}},
 		API:      "https://api.intercom.io",

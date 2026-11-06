@@ -2,11 +2,10 @@
   import EditableTitle from './EditableTitle.svelte';
   import Heading from './Heading.svelte';
 
-  let { title, size = 'md', leading, actions, onrename, renameLabel = 'Rename', children } = $props();
+  let { title, size = 'md', actions, onrename, renameLabel = 'Rename', children } = $props();
 </script>
 
 <header class={['header', size]}>
-  {#if leading}<div class="leading">{@render leading()}</div>{/if}
   <div class="row">
     <Heading level={1} size={size === 'lg' ? '2xl' : 'xl'} tracking={size === 'lg' ? 'tight' : undefined} wrap="anywhere" grow>{#if onrename}<EditableTitle value={title} label={renameLabel} variant="heading" onsave={onrename} />{:else}{title}{/if}</Heading>
     {#if actions}<div class="actions">{@render actions()}</div>{/if}
@@ -20,12 +19,6 @@
     flex-direction: column;
     gap: var(--space-4);
     min-width: 0;
-  }
-
-  .leading {
-    display: flex;
-    align-items: center;
-    min-height: var(--control-md);
   }
 
   .row {

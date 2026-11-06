@@ -1,5 +1,4 @@
 <script>
-  // A few figures in two columns, each a small label over its value, for a details sidebar.
   let { items = [] } = $props();
 </script>
 

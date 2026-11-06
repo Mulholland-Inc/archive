@@ -19,12 +19,12 @@ output "bucket" {
 }
 
 output "service" {
-  description = "Name of the Cloud Run service running the API, and of the Cloud Run job running the archive command."
+  description = "Name of the Cloud Run service running the API."
   value       = google_cloud_run_v2_service.this.name
 }
 
 output "service_account" {
-  description = "Email of the service account the API and the archive job run as."
+  description = "Email of the service account the API runs as."
   value       = google_service_account.this.email
 }
 
@@ -36,11 +36,6 @@ output "tasks_queue" {
 output "database_connection_name" {
   description = "Cloud SQL connection name."
   value       = google_sql_database_instance.this.connection_name
-}
-
-output "cli" {
-  description = "Runs an archive command in the cloud: add the words after --args=, separated by commas, like user,add,you@example.com."
-  value       = "gcloud run jobs execute ${google_cloud_run_v2_job.this.name} --project ${var.project} --region ${var.region} --wait --args="
 }
 
 output "github_variables" {

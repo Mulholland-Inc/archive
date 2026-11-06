@@ -3,8 +3,6 @@
   import { fill } from './fill.js';
   import { label, figure } from './format.js';
 
-  // A gallery: a card for each row, its name over up to four of its other columns, for listings, recipes and
-  // products. The cards fill the window and scroll.
   let { view, rows, shown, text, pick } = $props();
 
   const details = $derived(shown.filter((c) => c.type !== 'file' && c.type !== 'long').slice(0, 4));
@@ -71,7 +69,6 @@
     text-overflow: ellipsis;
   }
 
-  /* Each detail is its name on the left and its value on the right, like a sheet of specs. */
   dl {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);

@@ -17,58 +17,43 @@ const adminIfNone = `-- name: AdminIfNone :exec
 UPDATE archive."user" u SET admin = true WHERE u.id = $1 AND NOT EXISTS (SELECT FROM archive."user" x WHERE x.admin)
 `
 
-// The first person a new install adds becomes its admin: they are the first member of a workspace while there
-// is none.
 func (q *Queries) AdminIfNone(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, adminIfNone, id)
 	return err
 }
 
-const admins = `-- name: Admins :many
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE admin ORDER BY email
+const againDue = `-- name: AgainDue :execrows
+UPDATE archive.due d SET again = false
+WHERE d.workspace = $1 AND d.kind = $2 AND d.at = $3::timestamptz AND d.again
 `
 
-func (q *Queries) Admins(ctx context.Context) ([]ArchiveUser, error) {
-	rows, err := q.db.Query(ctx, admins)
+func (q *Queries) AgainDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, againDue, iD, kind, claimed)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	defer rows.Close()
-	var items []ArchiveUser
-	for rows.Next() {
-		var i ArchiveUser
-		if err := rows.Scan(
-			&i.ID,
-			&i.Email,
-			&i.Name,
-			&i.Workspaces,
-			&i.Signin,
-			&i.CreatedAt,
-			&i.Admin,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return result.RowsAffected(), nil
 }
 
 const allDue = `-- name: AllDue :many
 SELECT workspace, kind, at FROM archive.due
 `
 
-func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
+type AllDueRow struct {
+	Workspace uuid.UUID
+	Kind      string
+	At        time.Time
+}
+
+func (q *Queries) AllDue(ctx context.Context) ([]AllDueRow, error) {
 	rows, err := q.db.Query(ctx, allDue)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ArchiveDue
+	var items []AllDueRow
 	for rows.Next() {
-		var i ArchiveDue
+		var i AllDueRow
 		if err := rows.Scan(&i.Workspace, &i.Kind, &i.At); err != nil {
 			return nil, err
 		}
@@ -81,7 +66,7 @@ func (q *Queries) AllDue(ctx context.Context) ([]ArchiveDue, error) {
 }
 
 const allWorkspaces = `-- name: AllWorkspaces :many
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace ORDER BY created_at, id
 `
 
 func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error) {
@@ -101,6 +86,9 @@ func (q *Queries) AllWorkspaces(ctx context.Context) ([]ArchiveWorkspace, error)
 			&i.Type,
 			&i.Icon,
 			&i.Color,
+			&i.Sent,
+			&i.SentOn,
+			&i.Slug,
 		); err != nil {
 			return nil, err
 		}
@@ -150,7 +138,7 @@ func (q *Queries) Authenticate(ctx context.Context, hash string, kinds []string)
 }
 
 const claimDueFor = `-- name: ClaimDueFor :one
-UPDATE archive.due d SET at = $1::timestamptz
+UPDATE archive.due d SET at = $1::timestamptz, lease = $1::timestamptz, again = false
 WHERE d.workspace = $2 AND d.kind = $3 AND d.at <= now()
 RETURNING d.at
 `
@@ -162,13 +150,25 @@ func (q *Queries) ClaimDueFor(ctx context.Context, lease time.Time, iD uuid.UUID
 	return at, err
 }
 
-const clearDue = `-- name: ClearDue :exec
+const clearDue = `-- name: ClearDue :execrows
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz
+WHERE w.id = d.workspace AND w.id = $1 AND d.kind = $2 AND d.at = $3::timestamptz AND NOT d.again
 `
 
-func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) error {
-	_, err := q.db.Exec(ctx, clearDue, iD, kind, claimed)
+func (q *Queries) ClearDue(ctx context.Context, iD uuid.UUID, kind string, claimed time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, clearDue, iD, kind, claimed)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearUnread = `-- name: ClearUnread :exec
+UPDATE archive."user" SET unread = array_remove(unread, $1::uuid) WHERE id = $2
+`
+
+func (q *Queries) ClearUnread(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearUnread, workspace, iD)
 	return err
 }
 
@@ -205,6 +205,18 @@ func (q *Queries) ConnectionWatches(ctx context.Context, connection uuid.UUID) (
 	return items, nil
 }
 
+const countEmail = `-- name: CountEmail :one
+UPDATE archive.workspace SET sent = CASE WHEN sent_on = (now() AT TIME ZONE 'UTC')::date THEN sent + 1 ELSE 1 END, sent_on = (now() AT TIME ZONE 'UTC')::date
+WHERE id = $1 AND (sent_on IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR sent < $2::integer) RETURNING sent
+`
+
+func (q *Queries) CountEmail(ctx context.Context, iD uuid.UUID, cap int32) (int32, error) {
+	row := q.db.QueryRow(ctx, countEmail, iD, cap)
+	var sent int32
+	err := row.Scan(&sent)
+	return sent, err
+}
+
 const createMCPClient = `-- name: CreateMCPClient :one
 INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at
 `
@@ -236,7 +248,6 @@ type CreateMCPCodeParams struct {
 	Challenge   string
 }
 
-// A new code; codes that lapsed a while ago go, while a used one is kept long enough to catch its reuse.
 func (q *Queries) CreateMCPCode(ctx context.Context, arg CreateMCPCodeParams) error {
 	_, err := q.db.Exec(ctx, createMCPCode,
 		arg.Hash,
@@ -268,7 +279,6 @@ type CreateMCPTokenParams struct {
 	RefreshExpiresAt *time.Time
 }
 
-// A grant's first tokens; grants whose refresh token lapsed go.
 func (q *Queries) CreateMCPToken(ctx context.Context, arg CreateMCPTokenParams) error {
 	_, err := q.db.Exec(ctx, createMCPToken,
 		arg.ID,
@@ -329,9 +339,19 @@ func (q *Queries) CreateToken(ctx context.Context, arg CreateTokenParams) (Creat
 	return i, err
 }
 
+const createTotpToken = `-- name: CreateTotpToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'totp' AND x.expires_at < now())
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'totp', $2, now() + interval '5 minutes')
+`
+
+func (q *Queries) CreateTotpToken(ctx context.Context, userID uuid.UUID, hash string) error {
+	_, err := q.db.Exec(ctx, createTotpToken, userID, hash)
+	return err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO archive.workspace (id, name, key, type, icon, color) VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color
+ON CONFLICT DO NOTHING RETURNING id, name, key, created_at, type, icon, color, sent, sent_on, slug
 `
 
 type CreateWorkspaceParams struct {
@@ -361,6 +381,9 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Type,
 		&i.Icon,
 		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
 	)
 	return i, err
 }
@@ -419,6 +442,18 @@ func (q *Queries) DeleteWorkspaceTokens(ctx context.Context, userID uuid.UUID, w
 	return items, nil
 }
 
+const disableTotp = `-- name: DisableTotp :execrows
+UPDATE archive."user" SET totp = NULL, totp_step = 0, totp_fails = 0, totp_until = NULL WHERE id = $1 AND totp_step < $2
+`
+
+func (q *Queries) DisableTotp(ctx context.Context, iD uuid.UUID, step int64) (int64, error) {
+	result, err := q.db.Exec(ctx, disableTotp, iD, step)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dropWatches = `-- name: DropWatches :exec
 DELETE FROM archive.watch WHERE connection = $1 AND NOT key = ANY($2::text[])
 `
@@ -439,8 +474,37 @@ func (q *Queries) DueAt(ctx context.Context, workspace uuid.UUID, kind string) (
 	return at, err
 }
 
+const enableTotp = `-- name: EnableTotp :one
+WITH linked AS (
+    UPDATE archive."user" u SET totp = $1, totp_step = $2, totp_fails = 0, totp_until = NULL
+    WHERE u.id = $3 AND u.totp IS NULL RETURNING u.id
+), gone AS (
+    DELETE FROM archive.token x USING linked WHERE x.user_id = linked.id AND x.kind = 'session' AND x.hash <> $4
+)
+SELECT count(*) FROM linked
+`
+
+type EnableTotpParams struct {
+	Totp []byte
+	Step int64
+	ID   uuid.UUID
+	Keep string
+}
+
+func (q *Queries) EnableTotp(ctx context.Context, arg EnableTotpParams) (int64, error) {
+	row := q.db.QueryRow(ctx, enableTotp,
+		arg.Totp,
+		arg.Step,
+		arg.ID,
+		arg.Keep,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const firstAdmin = `-- name: FirstAdmin :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1
 `
 
 func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
@@ -454,44 +518,11 @@ func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
-	)
-	return i, err
-}
-
-const firstUser = `-- name: FirstUser :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE workspaces @> ARRAY[$1::uuid] ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstUser(ctx context.Context, workspace uuid.UUID) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, firstUser, workspace)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-		&i.Admin,
-	)
-	return i, err
-}
-
-const firstWorkspace = `-- name: FirstWorkspace :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace ORDER BY created_at, id LIMIT 1
-`
-
-func (q *Queries) FirstWorkspace(ctx context.Context) (ArchiveWorkspace, error) {
-	row := q.db.QueryRow(ctx, firstWorkspace)
-	var i ArchiveWorkspace
-	err := row.Scan(
-		&i.ID,
-		&i.Name,
-		&i.Key,
-		&i.CreatedAt,
-		&i.Type,
-		&i.Icon,
-		&i.Color,
+		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
@@ -508,7 +539,7 @@ func (q *Queries) InsertMainRevision(ctx context.Context, hash string) error {
 const joinWorkspace = `-- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES ($1, $2, ARRAY[$3::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
-RETURNING id, email, name, workspaces, signin, created_at, admin
+RETURNING id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until
 `
 
 func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, workspace uuid.UUID) (ArchiveUser, error) {
@@ -522,6 +553,11 @@ func (q *Queries) JoinWorkspace(ctx context.Context, email string, name string, 
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
@@ -538,7 +574,6 @@ type KeepWatchSecretParams struct {
 	Secret     []byte
 }
 
-// A handshake's secret, kept by the key in the URL only it was sent: the first one wins.
 func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams) (int64, error) {
 	result, err := q.db.Exec(ctx, keepWatchSecret,
 		arg.Provider,
@@ -553,8 +588,19 @@ func (q *Queries) KeepWatchSecret(ctx context.Context, arg KeepWatchSecretParams
 	return result.RowsAffected(), nil
 }
 
+const keyWorkspace = `-- name: KeyWorkspace :one
+SELECT workspace FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api'
+`
+
+func (q *Queries) KeyWorkspace(ctx context.Context, iD uuid.UUID, userID uuid.UUID) (*uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, keyWorkspace, iD, userID)
+	var workspace *uuid.UUID
+	err := row.Scan(&workspace)
+	return workspace, err
+}
+
 const leaveWorkspace = `-- name: LeaveWorkspace :exec
-UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid) WHERE id = $2
+UPDATE archive."user" SET workspaces = array_remove(workspaces, $1::uuid), unread = array_remove(unread, $1::uuid) WHERE id = $2
 `
 
 func (q *Queries) LeaveWorkspace(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
@@ -590,6 +636,15 @@ func (q *Queries) MainRevision(ctx context.Context) (string, error) {
 	return column_1, err
 }
 
+const markUnread = `-- name: MarkUnread :exec
+UPDATE archive."user" SET unread = array_append(array_remove(unread, $1::uuid), $1::uuid) WHERE id = $2
+`
+
+func (q *Queries) MarkUnread(ctx context.Context, workspace uuid.UUID, iD uuid.UUID) error {
+	_, err := q.db.Exec(ctx, markUnread, workspace, iD)
+	return err
+}
+
 const nameUser = `-- name: NameUser :exec
 UPDATE archive."user" SET name = $2 WHERE id = $1 AND name = ''
 `
@@ -603,7 +658,6 @@ const noUsers = `-- name: NoUsers :one
 SELECT (NOT EXISTS (SELECT FROM archive."user") AND NOT EXISTS (SELECT FROM archive.workspace))::bool
 `
 
-// A new install: no one and no workspace yet.
 func (q *Queries) NoUsers(ctx context.Context) (bool, error) {
 	row := q.db.QueryRow(ctx, noUsers)
 	var column_1 bool
@@ -642,7 +696,6 @@ type RefreshMCPTokenRow struct {
 	Workspace *uuid.UUID
 }
 
-// A refresh turns the grant's refresh token into a new access token and a new refresh token, once.
 func (q *Queries) RefreshMCPToken(ctx context.Context, arg RefreshMCPTokenParams) (RefreshMCPTokenRow, error) {
 	row := q.db.QueryRow(ctx, refreshMCPToken,
 		arg.Hash,
@@ -666,7 +719,6 @@ type RevokeMCPTokenRow struct {
 	Workspace *uuid.UUID
 }
 
-// Revoking either of a grant's tokens, by its client, ends the grant.
 func (q *Queries) RevokeMCPToken(ctx context.Context, client *uuid.UUID, hash string) (RevokeMCPTokenRow, error) {
 	row := q.db.QueryRow(ctx, revokeMCPToken, client, hash)
 	var i RevokeMCPTokenRow
@@ -675,11 +727,23 @@ func (q *Queries) RevokeMCPToken(ctx context.Context, client *uuid.UUID, hash st
 }
 
 const revokeToken = `-- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'mcp') AND (workspace = $3 OR (NOT $4::bool AND role IS NULL)) RETURNING coalesce(role, '')::text
 `
 
-func (q *Queries) RevokeToken(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) (string, error) {
-	row := q.db.QueryRow(ctx, revokeToken, iD, userID, workspace)
+type RevokeTokenParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Workspace *uuid.UUID
+	Scoped    bool
+}
+
+func (q *Queries) RevokeToken(ctx context.Context, arg RevokeTokenParams) (string, error) {
+	row := q.db.QueryRow(ctx, revokeToken,
+		arg.ID,
+		arg.UserID,
+		arg.Workspace,
+		arg.Scoped,
+	)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -739,31 +803,9 @@ func (q *Queries) SaveWatch(ctx context.Context, arg SaveWatchParams) error {
 	return err
 }
 
-const setAdmin = `-- name: SetAdmin :one
-UPDATE archive."user" u SET admin = $1::bool
-WHERE u.email = $2::text AND ($1::bool OR EXISTS (SELECT FROM archive."user" x WHERE x.admin AND x.id <> u.id))
-RETURNING id, email, name, workspaces, signin, created_at, admin
-`
-
-// An admin is named by their email, and stops being one unless they are the last.
-func (q *Queries) SetAdmin(ctx context.Context, admin bool, email string) (ArchiveUser, error) {
-	row := q.db.QueryRow(ctx, setAdmin, admin, email)
-	var i ArchiveUser
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.Workspaces,
-		&i.Signin,
-		&i.CreatedAt,
-		&i.Admin,
-	)
-	return i, err
-}
-
 const setDue = `-- name: SetDue :execrows
-UPDATE archive.due d SET at = $1::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz
+UPDATE archive.due d SET at = $1::timestamptz, lease = NULL FROM archive.workspace w
+WHERE w.id = d.workspace AND w.id = $2 AND d.kind = $3 AND d.at = $4::timestamptz AND NOT d.again
 `
 
 type SetDueParams struct {
@@ -806,7 +848,7 @@ func (q *Queries) SetSignin(ctx context.Context, iD uuid.UUID, signin json.RawMe
 }
 
 const signOut = `-- name: SignOut :exec
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'session'
+DELETE FROM archive.token WHERE hash = $1 AND kind IN ('session', 'totp')
 `
 
 func (q *Queries) SignOut(ctx context.Context, hash string) error {
@@ -817,7 +859,9 @@ func (q *Queries) SignOut(ctx context.Context, hash string) error {
 const soonDue = `-- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = $1 AND x.kind = $2)
 INSERT INTO archive.due (workspace, kind, at) VALUES ($1, $2, $3)
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+ON CONFLICT (workspace, kind) DO UPDATE SET
+    at = CASE WHEN archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease THEN archive.due.at ELSE least(archive.due.at, EXCLUDED.at) END,
+    again = archive.due.again OR (archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed
 `
 
@@ -833,21 +877,74 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 	return i, err
 }
 
-const tokenSealed = `-- name: TokenSealed :one
-SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL
+const terms = `-- name: Terms :many
+SELECT kind, doc FROM archive.terms
 `
 
-func (q *Queries) TokenSealed(ctx context.Context, iD uuid.UUID, userID uuid.UUID, workspace *uuid.UUID) ([]byte, error) {
-	row := q.db.QueryRow(ctx, tokenSealed, iD, userID, workspace)
+type TermsRow struct {
+	Kind string
+	Doc  []byte
+}
+
+func (q *Queries) Terms(ctx context.Context) ([]TermsRow, error) {
+	rows, err := q.db.Query(ctx, terms)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TermsRow
+	for rows.Next() {
+		var i TermsRow
+		if err := rows.Scan(&i.Kind, &i.Doc); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const termsOf = `-- name: TermsOf :one
+SELECT doc FROM archive.terms WHERE kind = $1
+`
+
+func (q *Queries) TermsOf(ctx context.Context, kind string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, termsOf, kind)
+	var doc []byte
+	err := row.Scan(&doc)
+	return doc, err
+}
+
+const tokenSealed = `-- name: TokenSealed :one
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT $3::bool OR workspace = $4)
+`
+
+type TokenSealedParams struct {
+	ID        uuid.UUID
+	UserID    uuid.UUID
+	Scoped    bool
+	Workspace *uuid.UUID
+}
+
+func (q *Queries) TokenSealed(ctx context.Context, arg TokenSealedParams) ([]byte, error) {
+	row := q.db.QueryRow(ctx, tokenSealed,
+		arg.ID,
+		arg.UserID,
+		arg.Scoped,
+		arg.Workspace,
+	)
 	var sealed []byte
 	err := row.Scan(&sealed)
 	return sealed, err
 }
 
 const tokens = `-- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
-FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id
+SELECT t.id, t.name, (t.role IS NOT NULL)::bool AS viewer, t.expires_at, t.refresh_expires_at, t.created_at, (t.kind = 'mcp')::bool AS app,
+    coalesce(w.id::text, '')::text AS workspace, coalesce(w.name, '')::text AS workspace_name
+FROM archive.token t LEFT JOIN archive.workspace w ON w.id = t.workspace
+WHERE t.user_id = $1 AND t.kind IN ('api', 'mcp') AND (NOT $2::bool OR t.workspace = $3) ORDER BY t.id
 `
 
 type TokensRow struct {
@@ -858,11 +955,12 @@ type TokensRow struct {
 	RefreshExpiresAt *time.Time
 	CreatedAt        time.Time
 	App              bool
+	Workspace        string
+	WorkspaceName    string
 }
 
-// Your API tokens and MCP grants in a workspace; a grant lapses when its refresh token does.
-func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) ([]TokensRow, error) {
-	rows, err := q.db.Query(ctx, tokens, userID, workspace)
+func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, scoped bool, workspace *uuid.UUID) ([]TokensRow, error) {
+	rows, err := q.db.Query(ctx, tokens, userID, scoped, workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -878,6 +976,8 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.
 			&i.RefreshExpiresAt,
 			&i.CreatedAt,
 			&i.App,
+			&i.Workspace,
+			&i.WorkspaceName,
 		); err != nil {
 			return nil, err
 		}
@@ -887,6 +987,55 @@ func (q *Queries) Tokens(ctx context.Context, userID uuid.UUID, workspace *uuid.
 		return nil, err
 	}
 	return items, nil
+}
+
+const totpSession = `-- name: TotpSession :execrows
+WITH gone AS (DELETE FROM archive.token x WHERE x.hash = $2 AND x.kind = 'totp' AND x.expires_at > now() RETURNING x.user_id)
+INSERT INTO archive.token (user_id, kind, hash, expires_at) SELECT gone.user_id, 'session', $1, now() + interval '30 days' FROM gone
+`
+
+func (q *Queries) TotpSession(ctx context.Context, hash string, pending string) (int64, error) {
+	result, err := q.db.Exec(ctx, totpSession, hash, pending)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const totpTry = `-- name: TotpTry :one
+UPDATE archive."user" SET
+    totp_fails = CASE WHEN totp_until > now() THEN totp_fails + 1 ELSE 1 END,
+    totp_until = CASE WHEN totp_until > now() THEN totp_until ELSE now() + interval '15 minutes' END
+WHERE id = $1 AND totp IS NOT NULL AND (totp_until IS NULL OR totp_until <= now() OR totp_fails < 5)
+RETURNING totp
+`
+
+func (q *Queries) TotpTry(ctx context.Context, id uuid.UUID) ([]byte, error) {
+	row := q.db.QueryRow(ctx, totpTry, id)
+	var totp []byte
+	err := row.Scan(&totp)
+	return totp, err
+}
+
+const totpUse = `-- name: TotpUse :execrows
+UPDATE archive."user" SET totp_step = $1, totp_fails = 0, totp_until = NULL WHERE id = $2 AND totp_step < $1
+`
+
+func (q *Queries) TotpUse(ctx context.Context, step int64, iD uuid.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, totpUse, step, iD)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const uncountEmail = `-- name: UncountEmail :exec
+UPDATE archive.workspace SET sent = greatest(sent - 1, 0) WHERE id = $1
+`
+
+func (q *Queries) UncountEmail(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, uncountEmail, id)
+	return err
 }
 
 const updateWorkspace = `-- name: UpdateWorkspace :exec
@@ -917,7 +1066,6 @@ const useMCPCode = `-- name: UseMCPCode :one
 UPDATE archive.mcp_code SET token = $1 WHERE hash = $2 AND token IS NULL AND expires_at > now() RETURNING hash, client, user_id, workspace, redirect_uri, challenge, token, expires_at, created_at
 `
 
-// A code is used once, by naming the token it becomes: a code used before, or lapsed, is no row.
 func (q *Queries) UseMCPCode(ctx context.Context, token *uuid.UUID, hash string) (ArchiveMcpCode, error) {
 	row := q.db.QueryRow(ctx, useMCPCode, token, hash)
 	var i ArchiveMcpCode
@@ -947,7 +1095,7 @@ func (q *Queries) UsedMCPCode(ctx context.Context, hash string) (*uuid.UUID, err
 }
 
 const userByEmail = `-- name: UserByEmail :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE email = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE email = $1
 `
 
 func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, error) {
@@ -961,12 +1109,17 @@ func (q *Queries) UserByEmail(ctx context.Context, email string) (ArchiveUser, e
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE id = $1
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, error) {
@@ -980,12 +1133,17 @@ func (q *Queries) UserByID(ctx context.Context, id uuid.UUID) (ArchiveUser, erro
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
 
 const userByOIDC = `-- name: UserByOIDC :one
-SELECT id, email, name, workspaces, signin, created_at, admin FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
+SELECT id, email, name, workspaces, signin, created_at, admin, unread, totp, totp_step, totp_fails, totp_until FROM archive."user" WHERE signin->'oidc' @> $1::jsonb
 `
 
 func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, error) {
@@ -999,12 +1157,17 @@ func (q *Queries) UserByOIDC(ctx context.Context, link []byte) (ArchiveUser, err
 		&i.Signin,
 		&i.CreatedAt,
 		&i.Admin,
+		&i.Unread,
+		&i.Totp,
+		&i.TotpStep,
+		&i.TotpFails,
+		&i.TotpUntil,
 	)
 	return i, err
 }
 
 const userWorkspaces = `-- name: UserWorkspaces :many
-SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
+SELECT w.id, w.name, w.key, w.created_at, w.type, w.icon, w.color, w.sent, w.sent_on, w.slug FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id)
 `
 
 func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWorkspace, error) {
@@ -1024,7 +1187,39 @@ func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWo
 			&i.Type,
 			&i.Icon,
 			&i.Color,
+			&i.Sent,
+			&i.SentOn,
+			&i.Slug,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const usersWorkspaces = `-- name: UsersWorkspaces :many
+SELECT id, workspaces FROM archive."user" WHERE id = ANY($1::uuid[])
+`
+
+type UsersWorkspacesRow struct {
+	ID         uuid.UUID
+	Workspaces []uuid.UUID
+}
+
+func (q *Queries) UsersWorkspaces(ctx context.Context, ids []uuid.UUID) ([]UsersWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, usersWorkspaces, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UsersWorkspacesRow
+	for rows.Next() {
+		var i UsersWorkspacesRow
+		if err := rows.Scan(&i.ID, &i.Workspaces); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1076,7 +1271,7 @@ func (q *Queries) WatchesFor(ctx context.Context, provider string, key string) (
 }
 
 const workspaceByID = `-- name: WorkspaceByID :one
-SELECT id, name, key, created_at, type, icon, color FROM archive.workspace WHERE id = $1
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace WHERE id = $1
 `
 
 func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorkspace, error) {
@@ -1090,6 +1285,31 @@ func (q *Queries) WorkspaceByID(ctx context.Context, id uuid.UUID) (ArchiveWorks
 		&i.Type,
 		&i.Icon,
 		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
+	)
+	return i, err
+}
+
+const workspaceBySlug = `-- name: WorkspaceBySlug :one
+SELECT id, name, key, created_at, type, icon, color, sent, sent_on, slug FROM archive.workspace WHERE slug = $1
+`
+
+func (q *Queries) WorkspaceBySlug(ctx context.Context, slug string) (ArchiveWorkspace, error) {
+	row := q.db.QueryRow(ctx, workspaceBySlug, slug)
+	var i ArchiveWorkspace
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Key,
+		&i.CreatedAt,
+		&i.Type,
+		&i.Icon,
+		&i.Color,
+		&i.Sent,
+		&i.SentOn,
+		&i.Slug,
 	)
 	return i, err
 }

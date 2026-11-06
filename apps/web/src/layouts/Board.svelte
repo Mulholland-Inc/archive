@@ -4,8 +4,6 @@
   import { linkOf, titleOf } from '../lib/app.svelte.js';
   import { fill } from './fill.js';
 
-  // A board: a lane for each value of the view's by column, a card for each row. The board fills the window
-  // and scrolls sideways; each lane is as tall as it and scrolls its own cards.
   let { view, rows, shown, text, pick } = $props();
 
   const byCol = $derived(shown.find((c) => c.name === view.by));
@@ -27,7 +25,6 @@
       <header><Text size="sm" weight="medium">{lane}</Text><Text size="sm" tone="tertiary" tabular>{items.length}</Text></header>
       <div class="cards">
         {#each items as r, i (r.id ?? i)}
-          <!-- The card opens its row; its chips, above that, open the rows they name. -->
           <div class="card">
             <button type="button" class="hit" aria-label={titleOf(r, view)} onclick={() => pick(r)}></button>
             <Text size="sm" weight="medium">{titleOf(r, view)}</Text>
