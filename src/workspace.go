@@ -168,7 +168,7 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
-	h.live = newLive(h.api)
+	h.live = newLive(h.api, key)
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}

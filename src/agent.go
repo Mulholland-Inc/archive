@@ -65,10 +65,10 @@ func (a *Archive) boot(ctx context.Context, only string) (map[string]any, error)
 	for _, k := range strings.Split(only, ",") {
 		switch {
 		case k == "":
-		case k == "me" || k == "types" || k == "signup" || bootLists[k] != "":
+		case k == "me" || k == "types" || k == "signup" || k == "live" || bootLists[k] != "":
 			want[k] = true
 		default:
-			return nil, fmt.Errorf("only: no %q; want me, agents, workflows, members, types or signup: %w", k, httpErrBadRequest)
+			return nil, fmt.Errorf("only: no %q; want me, agents, workflows, members, types, signup or live: %w", k, httpErrBadRequest)
 		}
 	}
 	all := len(want) == 0
@@ -108,6 +108,9 @@ func (a *Archive) boot(ctx context.Context, only string) (map[string]any, error)
 	}
 	if err != nil {
 		return nil, err
+	}
+	if (all || want["live"]) && a.hub.live.on() {
+		out["live"] = a.hub.live.ticket(a.ws.ID.String(), ActorFrom(ctx).UserID.String())
 	}
 	return out, nil
 }

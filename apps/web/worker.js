@@ -30,9 +30,11 @@ export class WorkspaceStream {
         .map((c) => (typeof c.id === 'string' && c.id ? { table: c.table, id: c.id } : { table: c.table }));
       if (changes.length) {
         const frame = JSON.stringify({ event: 'change', changes });
+        const now = Date.now() / 1000;
         for (const ws of this.ctx.getWebSockets()) {
           try {
-            ws.send(frame);
+            if (ws.deserializeAttachment()?.exp > now) ws.send(frame);
+            else ws.close(1000, 'ticket expired');
           } catch {}
         }
       }
@@ -43,6 +45,7 @@ export class WorkspaceStream {
       const user = request.headers.get('X-Archive-User') || '';
       const pair = new WebSocketPair();
       this.ctx.acceptWebSocket(pair[1], user ? [user] : []);
+      pair[1].serializeAttachment({ exp: Number(request.headers.get('X-Archive-Expires')) });
       pair[1].send(JSON.stringify({ event: 'ready', workspace: request.headers.get('X-Archive-Workspace') || '' }));
       return new Response(null, { status: 101, webSocket: pair[0] });
     }
@@ -92,27 +95,36 @@ async function announce(request, env) {
   return stream(env, workspace).fetch('https://stream/announce', { method: 'POST', body });
 }
 
+const fromBase64 = (s) => Uint8Array.from(atob(s.replaceAll('-', '+').replaceAll('_', '/')), (c) => c.charCodeAt(0));
+
+async function ticketOf(ticket, env) {
+  const [claims, sig] = ticket.split('.');
+  if (!env.LIVE_KEY || !claims || !sig) return null;
+  const encode = (s) => new TextEncoder().encode(s);
+  try {
+    const key = await crypto.subtle.importKey('raw', encode(env.LIVE_KEY), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    if (!(await crypto.subtle.verify('HMAC', key, fromBase64(sig), encode(`live ticket ${claims}`)))) return null;
+    const t = JSON.parse(new TextDecoder().decode(fromBase64(claims)));
+    return t.exp > Date.now() / 1000 && WORKSPACE.test(t.workspace) && t.user ? t : null;
+  } catch {
+    return null;
+  }
+}
+
 async function connect(request, env, url) {
   if (request.headers.get('Upgrade') !== 'websocket') return new Response('want a WebSocket', { status: 426 });
-  const workspace = url.searchParams.get('workspace') || '';
-  if (!WORKSPACE.test(workspace)) return new Response('want ?workspace=<id>', { status: 400 });
   const api = apiOrigin(url, env);
   const origin = request.headers.get('Origin');
   if (origin && origin !== api.replace('//api.', '//app.') && origin !== env.APP_ORIGIN) {
     return new Response('this origin may not listen', { status: 403 });
   }
-  const check = await fetch(`${api}/auth/live`, {
-    headers: { Cookie: request.headers.get('Cookie') || '', 'Archive-Workspace': workspace, Accept: 'application/json' }
-  });
-  if (!check.ok || !(check.headers.get('Content-Type') || '').startsWith('application/json')) {
-    return new Response(check.ok ? 'no answer from the API' : await check.text(), { status: check.ok ? 502 : check.status });
-  }
-  const who = await check.json();
-  if (who.workspace !== workspace || !who.user) return new Response('forbidden', { status: 403 });
+  const t = await ticketOf(url.searchParams.get('ticket') || '', env);
+  if (!t) return new Response('want a ticket from /api/boot?only=live', { status: 401 });
   const headers = new Headers(request.headers);
-  headers.set('X-Archive-User', who.user);
-  headers.set('X-Archive-Workspace', workspace);
-  return stream(env, workspace).fetch(new Request('https://stream/connect', { headers }));
+  headers.set('X-Archive-User', t.user);
+  headers.set('X-Archive-Workspace', t.workspace);
+  headers.set('X-Archive-Expires', String(t.exp));
+  return stream(env, t.workspace).fetch(new Request('https://stream/connect', { headers }));
 }
 
 export default {

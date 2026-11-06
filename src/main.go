@@ -108,7 +108,6 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	mux.HandleFunc("POST /device/{stream}", h.device(true, h.deviceRecords))
 	mux.HandleFunc("POST /email", h.emailHTTP)
 	mux.HandleFunc("GET /live", h.liveHTTP)
-	mux.HandleFunc("GET /auth/live", h.liveCheckHTTP)
 	own := http.NewServeMux()
 	h.mcpRoutes(own, true)
 	api, mcpOwn := h.cors(mux), mcpCORS(own)

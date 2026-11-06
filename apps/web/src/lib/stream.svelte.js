@@ -1,5 +1,5 @@
 
-import { API } from './api.js';
+import { API, api } from './api.js';
 
 const STEADY = 10_000;
 const SWEEP = 15_000;
@@ -12,6 +12,8 @@ const refusedListeners = new Set();
 export const live = $state({ status: 'off', workspace: '' });
 
 let socket = null;
+let ticket = null;
+let dialing = false;
 let retry = null;
 let refusals = 0;
 let heard = false;
@@ -128,9 +130,9 @@ function sweep() {
   changed([], true);
 }
 
-function url(workspace) {
+function url(t) {
   const base = (API || location.origin).replace(/^http/, 'ws');
-  return `${base}/live?workspace=${encodeURIComponent(workspace)}`;
+  return `${base}/live?ticket=${encodeURIComponent(t)}`;
 }
 
 function shut() {
@@ -154,11 +156,49 @@ function backoff() {
   retry = setTimeout(dial, wait);
 }
 
-function dial() {
+const refused = () => {
+  for (const fn of refusedListeners) fn();
+};
+
+const unexpired = (t) => {
+  if (!t) return false;
+  try {
+    return JSON.parse(atob(t.split('.')[0].replaceAll('-', '+').replaceAll('_', '/'))).exp > Date.now() / 1000;
+  } catch {
+    return false;
+  }
+};
+
+async function dial() {
   retry = null;
-  if (!live.workspace || socket || typeof WebSocket === 'undefined') return;
+  if (!live.workspace || socket || dialing || typeof WebSocket === 'undefined') return;
   live.status = 'connecting';
-  const s = new WebSocket(url(live.workspace));
+  const workspace = live.workspace;
+  dialing = true;
+  let got = null;
+  let reused = false;
+  let failed = false;
+  try {
+    got = await ticket;
+    reused = unexpired(got);
+    if (!reused) got = (await api('/api/boot?only=live', { workspace })).live;
+  } catch {
+    failed = true;
+  }
+  dialing = false;
+  if (workspace !== live.workspace) return dial();
+  if (socket) return;
+  if (failed) {
+    ticket = null;
+    refused();
+    return backoff();
+  }
+  ticket = got;
+  if (!ticket) {
+    live.status = 'off';
+    return;
+  }
+  const s = new WebSocket(url(ticket));
   socket = s;
   let steady;
   let waiting = false;
@@ -199,15 +239,18 @@ function dial() {
     ping = null;
     if (socket !== s) return;
     socket = null;
-    if (e.code === 4003 || !ready) for (const fn of refusedListeners) fn();
+    if (e.code === 4003 || !ready) ticket = null;
+    if (e.code === 4003 || (!ready && !reused)) refused();
+    if (!ready && reused) return dial();
     backoff();
   };
 }
 
-export function listen(workspace = '') {
-  if (workspace === live.workspace && (socket || retry)) return;
+export function listen(workspace = '', given = null) {
+  if (workspace === live.workspace && (socket || retry || dialing)) return;
   shut();
   live.workspace = workspace;
+  ticket = given;
   heard = false;
   refusals = 0;
   for (const r of all) r.reset();

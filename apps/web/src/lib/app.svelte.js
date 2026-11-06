@@ -117,7 +117,7 @@ export async function boot(booting = firstBoot) {
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
   prepare(ws(), Promise.resolve(data));
-  listen(app.archive);
+  listen(app.archive, data.live);
   account.seen();
   loadArchive(ws());
   resumeLink();
@@ -934,7 +934,7 @@ export async function switchArchive(id) {
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
   prepare(ws());
-  listen(id);
+  listen(id, ws().boot.then((data) => data.live));
   loadArchive(ws());
 }
 
