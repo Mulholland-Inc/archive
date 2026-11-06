@@ -634,7 +634,7 @@ CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) 
 CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
 CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
-COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
+COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint, Dropbox or Box, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
 icon: folder-open';
 COMMENT ON COLUMN archive.file.hash IS 'The sha256 of its bytes; empty while Archive has none, as for a folder or a file not yet copied';
 COMMENT ON COLUMN archive.file.name IS 'Its name; a Google Doc, Sheet or Slides deck''s ends in .docx, .xlsx or .pptx, as Archive keeps it';
@@ -2715,6 +2715,71 @@ COMMENT ON COLUMN archive.calendar_attendee.person IS 'references known_person; 
 COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resource, like a room';
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
 
+CREATE TABLE archive.sign_envelope (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    title        text,
+    status       text,
+    sender       uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    sender_name  text,
+    documents    text[],
+    made_at      timestamptz,
+    sent_at      timestamptz,
+    completed_at timestamptz,
+    voided_at    timestamptz,
+    edited_at    timestamptz,
+    text         text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX sign_envelope_sender_idx ON archive.sign_envelope (sender);
+CREATE INDEX sign_envelope_sent_at_idx ON archive.sign_envelope (sent_at);
+COMMENT ON TABLE archive.sign_envelope IS 'An envelope of an e-signature service you connected, like DocuSign: an agreement sent for signing; who it went to is in sign_recipient. Read only; Archive syncs them
+icon: file-signature';
+COMMENT ON COLUMN archive.sign_envelope.title IS 'Its subject';
+COMMENT ON COLUMN archive.sign_envelope.status IS 'Where it is: created (a draft), sent, delivered, completed, declined or voided';
+COMMENT ON COLUMN archive.sign_envelope.sender IS 'references known_person; who sent it, by their address';
+COMMENT ON COLUMN archive.sign_envelope.sender_name IS 'Who sent it, by name';
+COMMENT ON COLUMN archive.sign_envelope.documents IS 'The names of its documents';
+COMMENT ON COLUMN archive.sign_envelope.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.sign_envelope.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.sign_envelope.completed_at IS 'When everyone had signed';
+COMMENT ON COLUMN archive.sign_envelope.voided_at IS 'When it was voided';
+COMMENT ON COLUMN archive.sign_envelope.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.sign_envelope.text IS 'The words of its documents as signed, up to 64 KB, once it is completed';
+
+CREATE TABLE archive.sign_recipient (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    envelope   uuid NOT NULL REFERENCES archive.sign_envelope ON DELETE CASCADE,
+    person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
+    role       text,
+    status     text,
+    routing    int,
+    signed_at  timestamptz
+) INHERITS (archive.object);
+CREATE INDEX sign_recipient_envelope_idx ON archive.sign_recipient (envelope);
+CREATE INDEX sign_recipient_person_idx ON archive.sign_recipient (person);
+CREATE INDEX sign_recipient_connection_idx ON archive.sign_recipient (connection);
+COMMENT ON TABLE archive.sign_recipient IS 'Someone an envelope went to, and where they are with it. Read only; Archive syncs them
+icon: user-check';
+COMMENT ON COLUMN archive.sign_recipient.envelope IS 'references sign_envelope';
+COMMENT ON COLUMN archive.sign_recipient.person IS 'references known_person; who, by their address';
+COMMENT ON COLUMN archive.sign_recipient.role IS 'signer, cc, or another kind there, like certified delivery or in person signer';
+COMMENT ON COLUMN archive.sign_recipient.status IS 'Where they are: created, sent, delivered, signed, completed or declined';
+COMMENT ON COLUMN archive.sign_recipient.routing IS 'Their place in the order it goes round, from 1';
+COMMENT ON COLUMN archive.sign_recipient.signed_at IS 'When they signed';
+
 CREATE TABLE archive.ledger_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -4484,6 +4549,8 @@ BEGIN
         WHEN 'crm_deal' THEN r->>'title'
         WHEN 'calendar_event' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Busy')
         WHEN 'calendar_attendee' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
+        WHEN 'sign_envelope' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Envelope')
+        WHEN 'sign_recipient' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
         WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
         WHEN 'ledger_contact' THEN coalesce(nullif(r->>'title', ''), nullif(r->>'company', ''), r->>'email')
         WHEN 'ledger_item' THEN r->>'title'
