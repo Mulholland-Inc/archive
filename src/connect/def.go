@@ -2273,6 +2273,16 @@ func (c *Client) api() (string, error) {
 		c.letMu.Lock()
 		c.let = found
 		c.letMu.Unlock()
+		if m, _ := sc["meta"].(map[string]any); len(m) > 0 {
+			if c.Meta == nil {
+				c.Meta = map[string]string{}
+			}
+			for k, v := range m {
+				if s := text(v); s != "" && c.Meta[k] == "" {
+					c.Meta[k] = s
+				}
+			}
+		}
 		c.apiURL, c.apiErr = expand(c.p.API, sc)
 	})
 	return c.apiURL, c.apiErr
@@ -2842,8 +2852,19 @@ var (
 		}
 		return string(b), nil
 	}}
-	Basic        = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
-	Words        = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
+	Basic  = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
+	Words  = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
+	Claims = &Codec{"claims", func(v any) (any, error) {
+		parts := strings.Split(text(v), ".")
+		if len(parts) != 3 {
+			return nil, errors.New("a token that is not a JWT")
+		}
+		b, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+		if err != nil {
+			return nil, fmt.Errorf("a JWT that is not base64url: %v", err)
+		}
+		return readAll(b, "the token")
+	}}
 	GraphQLReads = &Codec{"graphql_reads", graphQLReads}
 	SQLReads     = &Codec{"sql_reads", sqlReads}
 	Sum          = &Codec{"sum", func(v any) (any, error) {
