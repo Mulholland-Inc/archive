@@ -55,7 +55,7 @@
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
  * - Tables: CREATE TABLE house (address text NOT NULL, price archive.money, owner uuid REFERENCES person) INHERITS (archive.object);
  *   COMMENT ON TABLE house IS 'A house you own'; object gives id, name, access, created_at and updated_at, and Archive
- *   adds the primary key, a search column, and row-level security. Comments become these docs. Use the built-in archive.* types to
+ *   adds the primary key, a search column, and row-level security, so write no policy. Comments become these docs. Use the built-in archive.* types to
  *   get their cleaning. A list of references is uuid[] with a column comment starting 'references other'.
  * - What points at a row: archive.query("SELECT * FROM archive.uses($1::regclass, $2)", "house", id) gives each column you can
  *   read that references it: schema, table, column, total, the first 20 rows as { id, name }, and restricts, whether it blocks deleting the row.

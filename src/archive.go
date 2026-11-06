@@ -783,6 +783,11 @@ func (s *pgStore) settle(ctx context.Context) error {
 		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
 			return err
 		}
+		for _, st := range []string{"SET LOCAL search_path = ''", "SET LOCAL lock_timeout = '1min'", storeMigrateAccess} {
+			if _, err := tx.Exec(ctx, st); err != nil {
+				return fmt.Errorf("row policies: %w", err)
+			}
+		}
 		return q.StoreCatalog(ctx)
 	})
 }

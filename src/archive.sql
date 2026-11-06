@@ -52,6 +52,11 @@ CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
 $$;
 
+CREATE FUNCTION archive.groups() RETURNS uuid[] LANGUAGE sql STABLE AS $$
+    SELECT ARRAY(SELECT g.id FROM archive."group" g WHERE pg_has_role(current_user, '{p}_manager', 'USAGE')
+        OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g.id) AND pg_has_role(current_user, r.oid, 'USAGE')))
+$$;
+
 CREATE FUNCTION archive.uses(target regclass, id uuid) RETURNS TABLE ("schema" text, "table" text, "column" text, total bigint, "rows" jsonb, restricts bool) LANGUAGE plpgsql STABLE AS $$
 DECLARE
     r record;
@@ -4378,21 +4383,21 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer"
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
 ALTER TABLE archive.file ENABLE ROW LEVEL SECURITY;
-CREATE POLICY see ON archive.file FOR SELECT USING (archive.can(access) AND (connection IS NULL OR EXISTS (SELECT FROM archive.connection c WHERE c.id = file.connection)));
-CREATE POLICY add ON archive.file FOR INSERT WITH CHECK (archive.can(access) AND connection IS NULL);
-CREATE POLICY change ON archive.file FOR UPDATE USING (archive.can(access) AND connection IS NULL) WITH CHECK (archive.can(access) AND connection IS NULL);
-CREATE POLICY remove ON archive.file FOR DELETE USING (archive.can(access) AND connection IS NULL);
+CREATE POLICY see ON archive.file FOR SELECT USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND (connection IS NULL OR EXISTS (SELECT FROM archive.connection c WHERE c.id = file.connection)));
+CREATE POLICY add ON archive.file FOR INSERT WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
+CREATE POLICY change ON archive.file FOR UPDATE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL) WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
+CREATE POLICY remove ON archive.file FOR DELETE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
 
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR archive.can(access)));
-CREATE POLICY shared ON archive.workflow FOR SELECT USING (access IS NOT NULL AND archive.can(access));
+CREATE POLICY mine ON archive.workflow USING (archive.mine(member)) WITH CHECK (archive.mine(member) AND (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])));
+CREATE POLICY shared ON archive.workflow FOR SELECT USING (access = ANY((SELECT archive.groups())::uuid[]));
 
 ALTER TABLE archive.agent ENABLE ROW LEVEL SECURITY;
-CREATE POLICY access ON archive.agent USING (archive.can(access)) WITH CHECK (archive.can(access));
+CREATE POLICY access ON archive.agent USING (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) WITH CHECK (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[]));
 
 ALTER TABLE archive.inbox ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.inbox FOR SELECT USING (archive.can(access));
+CREATE POLICY mine ON archive.inbox FOR SELECT USING (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[]));
 ALTER TABLE archive.turn ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.turn FOR SELECT USING (archive.mine(member));
 
@@ -4403,7 +4408,7 @@ ALTER TABLE archive.workflow_run ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM archive.workflow w WHERE w.id = workflow_run.workflow));
 
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND archive.can(access));
+CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND (access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])));
 
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
@@ -4432,7 +4437,7 @@ BEGIN
         WHERE c.contype = 'f' AND c.confrelid = 'archive.connection'::regclass AND a.attname = 'connection' AND a.attnotnull LOOP
         EXECUTE format('GRANT SELECT ON %s TO %I', t, '{p}_viewer');
         EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('CREATE POLICY mine ON %s FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = %s.connection))', t, t);
+        EXECUTE format('CREATE POLICY mine ON %s FOR SELECT USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = %s.connection))', t, t);
         EXECUTE format('CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION archive.object_name()', t);
         FOR k IN SELECT a.attname, v.text FROM pg_catalog.pg_attribute a JOIN (VALUES
             ('access', 'Group that sees it, its connection''s: null for everyone who sees the connection'),
@@ -4512,8 +4517,8 @@ CREATE FUNCTION archive.catalog() RETURNS jsonb LANGUAGE sql STABLE SET search_p
             'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
             'partitioned', c.relkind = 'p' OR c.relispartition,
             'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
-                AND regexp_replace(pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
-                AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
+                AND pg_get_expr(p.polqual, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))'
+                AND pg_get_expr(p.polwithcheck, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))')
                 FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
             'columns', col.cols))
             FROM pg_catalog.pg_class c LEFT JOIN col ON col.rel = c.oid

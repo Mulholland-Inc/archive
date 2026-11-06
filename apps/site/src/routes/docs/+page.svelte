@@ -692,7 +692,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <p>No passwords. Only invited people sign in: with Google, Microsoft, Slack or GitHub under the email they were invited with, as long as the provider says that email is verified. The first sign-in links that account, and the app then offers to add a passkey to the device.</p>
 
 <h3 id="people-security">Row-level security</h3>
-<p>Every table has one policy, <code>access</code>, that checks each row with <code>archive.can(access)</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
+<p>Every table has one policy, <code>access</code>, that checks each row against the groups you are in, <code>archive.groups()</code>. It applies to the web app, the API, your AI and raw SQL alike, so a bug in one surface cannot show another person's data.</p>
 
 <h2 id="groups">Groups</h2>
 <p>A group, like <code>hr</code> or <code>finance</code>, is a set of people, and each person is in one group at most. A row or file whose <code>access</code> is <code>hr</code> is seen only by the hr group and by managers, engineers and the owner. With no access, the whole workspace sees it.</p>

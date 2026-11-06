@@ -380,7 +380,7 @@ func (c *Catalog) Check() error {
 			}
 		}
 		if !t.RLS || !t.Force || !t.Policy {
-			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, CREATE POLICY access ON "+name+" USING (archive.can(access)) WITH CHECK (archive.can(access))")
+			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, which Archive adds when a table has none: CREATE POLICY access ON "+name+" USING ("+schemaAccess+") WITH CHECK ("+schemaAccess+")")
 		}
 		for _, col := range t.Columns {
 			if tg := col.target(); col.Ref == "" && tg != "" && c.Tables[strings.TrimPrefix(tg, "public.")] == nil {
@@ -1165,6 +1165,8 @@ func (c *Catalog) texty(schema, name string) bool {
 	return false
 }
 
+const schemaAccess = "access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])"
+
 func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[string]bool, prefix string, cols bool) ([]string, error) {
 	policed := map[string]bool{}
 	rows, err := tx.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
@@ -1238,7 +1240,7 @@ func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[stri
 			out = append(out, "ALTER TABLE "+id+" FORCE ROW LEVEL SECURITY")
 		}
 		if !policed[name] {
-			out = append(out, "CREATE POLICY access ON "+id+" USING (archive.can(access)) WITH CHECK (archive.can(access))")
+			out = append(out, "CREATE POLICY access ON "+id+" USING ("+schemaAccess+") WITH CHECK ("+schemaAccess+")")
 		}
 	}
 	if cols {
@@ -1411,6 +1413,22 @@ func (s *pgStore) migrate(ctx context.Context) error {
 	}
 	return syncCheckSQL(ctx, conn)
 }
+
+const storeMigrateAccess = `DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN SELECT c.oid::regclass AS ident, c.relowner::regrole AS owner FROM pg_catalog.pg_policy p JOIN pg_catalog.pg_class c ON c.oid = p.polrelid
+        WHERE c.relnamespace = 'public'::regnamespace AND p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+          AND regexp_replace(pg_catalog.pg_get_expr(p.polqual, p.polrelid), '^archive\.', '') = 'can(access)'
+          AND regexp_replace(pg_catalog.pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)'
+          AND EXISTS (SELECT FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+              WHERE k.conrelid = c.oid AND k.contype = 'f' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND a.attname = 'access') LOOP
+        EXECUTE format('SET LOCAL ROLE %s', r.owner);
+        EXECUTE format('ALTER POLICY access ON %s USING (%s) WITH CHECK (%s)', r.ident, '` + schemaAccess + `', '` + schemaAccess + `');
+        SET LOCAL ROLE NONE;
+    END LOOP;
+END $$`
 
 const storeMigrateAs = `DO $$
 BEGIN
