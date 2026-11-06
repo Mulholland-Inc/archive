@@ -12,10 +12,8 @@
   import Dialog from '../components/Dialog.svelte';
   import Field from '../components/Field.svelte';
   import Input from '../components/Input.svelte';
-  import Prose from '../components/Prose.svelte';
-  import { app, onboardingSteps, stepDone, signed, atLeast, openPanel, closeFile, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, signed, atLeast, openDocument, closeFile, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
   import { notify } from '../lib/dialogs.svelte.js';
-  import { markdown } from '../lib/live.js';
 
   let error = $state('');
   let busy = $state(false);
@@ -32,7 +30,7 @@
   let reading = $state(null);
 
   $effect(() => () => {
-    if (app.canvas?.panel) closeFile();
+    if (app.canvas?.doc) closeFile();
   });
 
   let linking = $state(null);
@@ -54,7 +52,7 @@
 
   const ready = (id) => {
     if (!owner) return false;
-    if (id === 'msa' || id === 'baa') return Boolean(app.signup.terms[id]?.trim());
+    if (id === 'msa' || id === 'baa') return Boolean(app.signup.terms[id]);
     return id === 'business' || Boolean(business);
   };
 
@@ -70,14 +68,20 @@
 
   function openReading(kind) {
     reading = signed(kind);
-    signing = null;
-    openPanel(`read:${kind}`, reading.name, agreement);
+    openDocument(`read:${kind}`, reading.name, reading.model, signature);
   }
 
+  const fills = () => ({
+    company: { value: company.trim(), label: 'Company' },
+    signer: { value: signer.trim(), label: 'Full name' },
+    title: { value: title.trim(), label: 'Title' },
+    email: { value: app.user.email, label: 'Email' },
+    date: { value: new Date().toLocaleDateString('en-US', { dateStyle: 'long' }), label: 'Date' }
+  });
+
   function openSigning(kind) {
-    reading = null;
     signing = kind;
-    openPanel(`sign:${kind}`, onboardingSteps.find((s) => s.id === kind).title, agreement);
+    openDocument(`sign:${kind}`, onboardingSteps.find((s) => s.id === kind).title, app.signup.terms[kind], signingRow, fills);
     company = business?.name ?? '';
     signer = '';
     title = '';
@@ -154,26 +158,26 @@
   }
 </script>
 
-{#snippet agreement()}
-  {#if reading}
-    <Prose blocks={markdown(reading.body)} />
-    <div class="sign">
-      <Text size="sm" tone="secondary">Signed by {reading.signer}, {reading.title}, for {reading.company} on {when(reading.created_at)}</Text>
+{#snippet signature()}
+  <Text size="sm" tone="secondary">Signed by {reading.signer}, {reading.title}, for {reading.company} on {when(reading.created_at)}</Text>
+{/snippet}
+
+{#snippet signingRow()}
+  <div class="sign">
+    <div class="fields">
+      <Field label="Company">{#snippet children(id)}<Input {id} size="sm" bind:value={company} />{/snippet}</Field>
+      <Field label="Full name">{#snippet children(id)}<Input {id} size="sm" bind:value={signer} />{/snippet}</Field>
+      <Field label="Title">{#snippet children(id)}<Input {id} size="sm" bind:value={title} />{/snippet}</Field>
     </div>
-  {:else if signing}
-    <Prose blocks={markdown(app.signup.terms[signing])} />
-    <div class="sign">
-      <Field label="Company">{#snippet children(id)}<Input {id} bind:value={company} />{/snippet}</Field>
-      <Field label="Full name">{#snippet children(id)}<Input {id} bind:value={signer} />{/snippet}</Field>
-      <Field label="Title">{#snippet children(id)}<Input {id} bind:value={title} />{/snippet}</Field>
+    {#if error}<Text size="sm" tone="danger" role="alert">{error}</Text>{/if}
+    <div class="confirm">
       <label class="bind">
         <Checkbox bind:checked={binding} label="I can sign for this company" />
         <Text>I can sign for this company</Text>
       </label>
-      {#if error}<Text size="sm" tone="danger" role="alert">{error}</Text>{/if}
-      <div><Button variant="primary" disabled={busy || !binding || !company.trim() || !signer.trim() || !title.trim()} onclick={sign}>Sign</Button></div>
+      <Button variant="primary" disabled={busy || !binding || !company.trim() || !signer.trim() || !title.trim()} onclick={sign}>Sign</Button>
     </div>
-  {/if}
+  </div>
 {/snippet}
 
 <TopBar mobile>{#snippet leading()}<MobileMenu />{/snippet}</TopBar>
@@ -250,10 +254,20 @@
   .sign {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
-    margin-block-start: var(--space-6);
-    padding-block-start: var(--space-6);
-    box-shadow: inset 0 var(--border-width) 0 var(--color-border-subtle);
+    gap: var(--space-3);
+  }
+
+  .fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: var(--space-2);
+  }
+
+  .confirm {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
   }
 
   .pair {

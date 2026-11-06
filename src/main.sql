@@ -126,7 +126,7 @@ CREATE INDEX watch_connection_idx ON archive.watch (connection);
 
 CREATE TABLE archive.terms (
     kind       text PRIMARY KEY CONSTRAINT terms_kind CHECK (kind IN ('msa', 'baa')),
-    body       text NOT NULL,
+    doc        bytea NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT now()
 );
 
@@ -366,7 +366,7 @@ INSERT INTO archive.watch (provider, key, workspace, connection, secret) VALUES 
 DELETE FROM archive.watch WHERE connection = sqlc.arg(connection) AND NOT key = ANY(sqlc.arg(keep)::text[]);
 
 -- name: Terms :many
-SELECT kind, body FROM archive.terms;
+SELECT kind, doc FROM archive.terms;
 
 -- name: TermsOf :one
-SELECT body FROM archive.terms WHERE kind = $1;
+SELECT doc FROM archive.terms WHERE kind = $1;

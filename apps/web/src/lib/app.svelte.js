@@ -283,8 +283,8 @@ export function openFile(id, name = '') {
   canvas.refresh(id);
 }
 
-export function openPanel(id, name, panel) {
-  app.canvas = { id, name, panel, file: null, model: null, error: '' };
+export function openDocument(id, name, model, footer, fills) {
+  app.canvas = { id, name, doc: true, footer, fills, file: null, model, error: '' };
 }
 
 export function closeFile() {

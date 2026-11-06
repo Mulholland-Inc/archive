@@ -854,12 +854,12 @@ func (q *Queries) SoonDue(ctx context.Context, workspace uuid.UUID, kind string,
 }
 
 const terms = `-- name: Terms :many
-SELECT kind, body FROM archive.terms
+SELECT kind, doc FROM archive.terms
 `
 
 type TermsRow struct {
 	Kind string
-	Body string
+	Doc  []byte
 }
 
 func (q *Queries) Terms(ctx context.Context) ([]TermsRow, error) {
@@ -871,7 +871,7 @@ func (q *Queries) Terms(ctx context.Context) ([]TermsRow, error) {
 	var items []TermsRow
 	for rows.Next() {
 		var i TermsRow
-		if err := rows.Scan(&i.Kind, &i.Body); err != nil {
+		if err := rows.Scan(&i.Kind, &i.Doc); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -883,14 +883,14 @@ func (q *Queries) Terms(ctx context.Context) ([]TermsRow, error) {
 }
 
 const termsOf = `-- name: TermsOf :one
-SELECT body FROM archive.terms WHERE kind = $1
+SELECT doc FROM archive.terms WHERE kind = $1
 `
 
-func (q *Queries) TermsOf(ctx context.Context, kind string) (string, error) {
+func (q *Queries) TermsOf(ctx context.Context, kind string) ([]byte, error) {
 	row := q.db.QueryRow(ctx, termsOf, kind)
-	var body string
-	err := row.Scan(&body)
-	return body, err
+	var doc []byte
+	err := row.Scan(&doc)
+	return doc, err
 }
 
 const tokenSealed = `-- name: TokenSealed :one

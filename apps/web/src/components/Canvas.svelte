@@ -15,13 +15,13 @@
 
   const { id } = app.canvas;
 
-  const panel = app.canvas.panel;
+  const { doc, footer, fills } = app.canvas;
 
-  canvas.use(() => !panel && id);
+  canvas.use(() => !doc && id);
 
   const file = $derived(app.canvas?.file);
   const model = $derived(app.canvas?.model);
-  const synced = $derived(Boolean(file?.connection));
+  const synced = $derived(doc || Boolean(file?.connection));
   const remove = async () => {
     if (await confirmDialog({ title: `Delete ${file.name}?`, confirm: 'Delete' })) removeFile(file.id);
   };
@@ -209,7 +209,22 @@
 
   const tableAt = (key) => model.tables?.[+key.slice(1)];
 
-  const inlineOf = (p) => (p.spans ? (el) => el.replaceChildren(...p.spans.map((s) => run(s))) : null);
+  function filled(s) {
+    if (!fills || !s.text.includes('{{')) return [run(s)];
+    const values = fills();
+    return s.text.split(/(\{\{\w+\}\})/).filter(Boolean).map((part) => {
+      const f = values[part.slice(2, -2)];
+      if (!f) return run({ ...s, text: part });
+      const e = run({ ...s, text: f.value || f.label });
+      e.className = f.value ? 'fill' : 'fill empty';
+      return e;
+    });
+  }
+
+  const inlineOf = (p) => {
+    if (p.spans) return (el) => el.replaceChildren(...p.spans.flatMap(filled));
+    return fills && p.text.includes('{{') ? (el) => el.replaceChildren(...filled({ text: p.text })) : null;
+  };
 
   const ROW = 28;
   const COL = 96;
@@ -465,10 +480,10 @@
   <TopBar bordered>
     {#snippet leading()}
       <span class="name" title={file?.name}>{file?.name ?? app.canvas?.name ?? ''}</span>
-      {#if synced}<Badge>Read only</Badge>{/if}
+      {#if file?.connection}<Badge>Read only</Badge>{/if}
     {/snippet}
     {#snippet trailing()}
-      {#if synced && file.held}<Button size="sm" icon={Copy} onclick={() => copyFile(file.id)}>Copy</Button>{/if}
+      {#if file?.connection && file.held}<Button size="sm" icon={Copy} onclick={() => copyFile(file.id)}>Copy</Button>{/if}
       {#if file}
         {#if !file.connection}<IconButton icon={Pencil} label="Rename" placement="bottom" onclick={() => renameFilePrompt(file)} />{/if}
         {#if file.held}<IconButton icon={Download} label="Download" placement="bottom" onclick={() => downloadFile(file)} />{/if}
@@ -478,11 +493,9 @@
     {/snippet}
   </TopBar>
 
-  {#if panel}
-    <div class="body"><article class="page">{@render panel()}</article></div>
-  {:else if !file && app.canvas.error}
+  {#if !doc && !file && app.canvas.error}
     <div class="body center"><EmptyState icon={FileQuestion} title={app.canvas.error} /></div>
-  {:else if !file}
+  {:else if !doc && !file}
     <div class="pad"><Skeleton lines={4} /></div>
   {:else if model?.type === 'xlsx' && sheet}
     {#if refused}<p class="error sheet" role="alert">{refused.text}</p>{/if}
@@ -618,6 +631,7 @@
   {:else if shown === 'video'}
     <div class="body center">{#if src}<!-- svelte-ignore a11y_media_has_caption --><video {src} controls></video>{/if}</div>
   {/if}
+  {#if footer}<div class="fixed">{@render footer()}</div>{/if}
 </aside>
 
 <style>
@@ -872,6 +886,23 @@
 
   :global([data-theme='dark']) .painted {
     background: color-mix(in oklab, var(--fill) 25%, var(--color-surface));
+  }
+
+  .fixed {
+    flex: none;
+    padding: var(--space-3) var(--edge);
+    box-shadow: inset 0 var(--border-width) 0 var(--color-border-subtle);
+  }
+
+  .page :global(.fill) {
+    padding-inline: var(--space-1);
+    border-radius: var(--radius-xs);
+    background: var(--color-accent-subtle, var(--color-fill));
+  }
+
+  .page :global(.fill.empty) {
+    color: var(--color-text-tertiary);
+    background: var(--color-fill);
   }
 
   .page :global(.inked),
