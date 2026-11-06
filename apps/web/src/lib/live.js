@@ -190,7 +190,10 @@ export function step(call) {
     detail: failed ? call.error : (call.logs ?? []).slice(-1)[0] ?? '',
     status: call.state === 'done' ? (failed ? 'failed' : 'done') : 'running',
     time: '',
-    code: call.code
+    code: call.code,
+    logs: call.logs ?? [],
+    result: call.result,
+    files: call.files ?? []
   };
 }
 
@@ -198,7 +201,7 @@ function outcome(b) {
   const raw = typeof b.content === 'string' ? b.content : (b.content ?? []).map((c) => c.text ?? '').join('');
   try {
     const o = JSON.parse(raw);
-    return { logs: o.logs ?? [], error: o.error ?? '', files: o.files, state: 'done' };
+    return { logs: o.logs ?? [], result: o.result, error: o.error ?? '', files: o.files, state: 'done' };
   } catch {
     return { logs: [], error: b.is_error ? raw : '', state: 'done' };
   }

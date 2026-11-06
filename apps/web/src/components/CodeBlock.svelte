@@ -2,7 +2,7 @@
   import { Copy, Check } from '@lucide/svelte';
   import Icon from './Icon.svelte';
 
-  let { code = '', lang = 'text', full = false, size = 'code' } = $props();
+  let { code = '', lang = 'text', label = lang, full = false, size = 'code' } = $props();
   let copied = $state(false);
   let syntax = $state(null);
   import('../lib/syntax.js').then((m) => (syntax = m));
@@ -20,7 +20,7 @@
 
 <figure class="code">
   <figcaption>
-    <span>{lang}</span>
+    <span>{label}</span>
     <button type="button" class="copy" onclick={copy} aria-label="Copy code">
       <Icon icon={copied ? Check : Copy} size="sm" />
       <span>{copied ? 'Copied' : 'Copy'}</span>
@@ -52,7 +52,7 @@
   }
 
   figcaption > span {
-    padding: var(--space-1-5);
+    padding: var(--space-1-5) var(--space-2-5);
   }
 
   .copy {

@@ -1,13 +1,13 @@
 <script>
   import { getContext } from 'svelte';
-  import { Bell, BellOff, Moon, Settings, Plug, LifeBuoy, LogOut } from '@lucide/svelte';
+  import { Bell, BellOff, Code, Moon, Settings, Plug, LifeBuoy, LogOut } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import IconButton from './IconButton.svelte';
   import Menu from './Menu.svelte';
   import MenuItem from './MenuItem.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
   import { theme, toggleTheme } from '../lib/theme.svelte.js';
-  import { app, openSettings, signOut } from '../lib/app.svelte.js';
+  import { app, openSettings, signOut, toggleDeveloper } from '../lib/app.svelte.js';
 
   let { user } = $props();
   const sidebar = getContext('sidebar');
@@ -43,6 +43,7 @@
   <MenuItem icon={Plug} onselect={() => settings('connectors')}>Connectors</MenuItem>
   <MenuItem icon={LifeBuoy} onselect={help}>Help</MenuItem>
   <MenuItem icon={Moon} toggle={theme.resolved === 'dark'} keepOpen onselect={toggleTheme}>Dark mode</MenuItem>
+  <MenuItem icon={Code} toggle={app.developer} keepOpen onselect={toggleDeveloper}>Developer mode</MenuItem>
   <MenuSeparator />
   <MenuItem icon={LogOut} onselect={signOut}>Log out</MenuItem>
 </Menu>
