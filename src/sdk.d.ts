@@ -21,10 +21,6 @@
  * - Tables, after this SDK, lists the tables and views. Views are read only. Archive sets id, created_at, updated_at.
  *   Set name on every create: it is the title every screen and link shows, and without it a row is Untitled. Fields
  *   without ? are required on create; empty fields read back null.
- * - Rows from query, list, get, create, update and a table workflow's input are strict: reading a column that is not there
- *   throws, naming the columns it has, where plain JavaScript would give undefined. An empty column still reads null. Test for
- *   a column with "note" in row. Spreading, JSON.stringify, Object.keys and passing a row to the SDK work as usual, and you can
- *   set your own properties on a row; a copy made with spread or JSON is a plain object again.
  * - Writes clean messy input, so pass what you have: "(415) 555-0123", "$1,234.50", "4/3/1990".
  * - JSON: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z"; uuids and references as id strings; enums as strings.
  *   Secret types read back as stored and cannot be filtered: Card and UsSsn as their number, National "US 123456789", Passport "US X1234567".
@@ -49,7 +45,7 @@
  *   showed them, and talking with an agent it throws forbidden until a later turn. A workflow that passes rows on whole, by
  *   returning them or handing them to a helper, counts as reading every column; read the columns by name to depend on fewer.
  * - unfollowed in the report counts places in saved workflows the check could not follow, such as rows handed to a helper.
- *   Those reads are only checked when they run, by strict rows.
+ *   Those reads are not checked: a column that is gone reads undefined.
  * - Keep data with ALTER TABLE ... RENAME and ALTER COLUMN ... TYPE ... USING. An enum value added is usable only from
  *   the next run. To undo a migration, migrate the reverse. Past ones:
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
@@ -155,7 +151,7 @@
  *   of yours there with its connector's upload: archive.action("gdrive.upload", { file, folder, replace }), by source_id.
  */
 declare const archive: {
-    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its strict rows, or [] when it has none. Writes and DDL throw forbidden. In a saved workflow, sql must be constant (see Workflows). */
+    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. In a saved workflow, sql must be constant (see Workflows). */
     query(sql: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first, or newest first with desc; where matches exact (cleaned) values, null matching empty; page with after = the last id. */
     list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; desc?: boolean }): Promise<Tables[T][]>;

@@ -345,11 +345,6 @@ func (r *runner) run(ctx context.Context) error {
 			return errRunFailed
 		}
 		in = v
-		if o, ok := v.(*goja.Object); ok && r.stamp && o.Get("trigger") != nil && o.Get("trigger").String() == "table" {
-			for _, k := range []string{"created", "updated", "rows"} {
-				o.Set(k, r.strict(o.Get(k), o.Get("table").String()))
-			}
-		}
 	}
 	r.vm.Set("input", in)
 	stop := context.AfterFunc(ctx, func() { r.vm.Interrupt(ctx.Err()) })
@@ -755,54 +750,15 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 			*r.wrote = true
 		}
 		v, err := r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) })
-		table := ""
-		if s, ok := call.Argument(0).Export().(string); ok && runRows[name] && path.Ext(s) == "" {
-			table = s
-		}
-		return r.settle(v, err, table)
+		return r.promise(v, err)
 	})
 }
 
-func (r *runner) promise(v any, err error) goja.Value { return r.settle(v, err, "") }
-
-func (r *runner) strict(v goja.Value, table string) goja.Value {
-	o, ok := v.(*goja.Object)
-	if !ok {
-		return v
-	}
-	trap := &goja.ProxyTrapConfig{Get: func(t *goja.Object, k string, _ goja.Value) goja.Value {
-		if v := t.Get(k); v != nil {
-			return v
-		}
-		if k == "then" || k == "toJSON" {
-			return goja.Undefined()
-		}
-		has := strings.Join(t.Keys(), ", ")
-		if table == runQueryRows {
-			panic(r.jsErr(fmt.Errorf("this query returned no column %s; it has %s", k, has)))
-		}
-		panic(r.jsErr(fmt.Errorf("%s.%s is not a column; it has %s", table, k, has)))
-	}}
-	if o.ClassName() != "Array" {
-		return r.vm.ToValue(r.vm.NewProxy(o, trap))
-	}
-	for i := range int(o.Get("length").ToInteger()) {
-		k := strconv.Itoa(i)
-		if e, ok := o.Get(k).(*goja.Object); ok {
-			o.Set(k, r.vm.NewProxy(e, trap))
-		}
-	}
-	return o
-}
-
-func (r *runner) settle(v any, err error, table string) goja.Value {
+func (r *runner) promise(v any, err error) goja.Value {
 	p, resolve, reject := r.vm.NewPromise()
 	var jv goja.Value
 	if err == nil {
 		jv, err = r.toJS(v)
-	}
-	if err == nil && table != "" {
-		jv = r.strict(jv, table)
 	}
 	if err != nil {
 		reject(r.jsErr(err))
@@ -811,10 +767,6 @@ func (r *runner) settle(v any, err error, table string) goja.Value {
 	}
 	return r.vm.ToValue(p)
 }
-
-const runQueryRows = "archive.query"
-
-var runRows = map[string]bool{"list": true, "get": true, "create": true, "update": true}
 
 var runReads = map[string]bool{"email": true, "action": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
@@ -867,7 +819,7 @@ func (r *runner) sdk() {
 			params = append(params, runParam(p))
 		}
 		rows, err := a.runQuery(r.ctx, q, params)
-		return r.settle(rows, storeErr(err), runQueryRows)
+		return r.promise(rows, storeErr(err))
 	})
 	r.def(o, "list", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "list", "table")
