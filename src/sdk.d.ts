@@ -4,6 +4,19 @@
  * Only archive, console, fetch, input and standard JavaScript exist: no require, import, timers, files or process.
  * Limits: {timeout} a run, 256 KB of result, 64 KB of logs. Return what you need, not whole tables.
  *
+ * Types
+ * - Every script is type-checked before it runs, with strict, noUncheckedIndexedAccess, exactOptionalPropertyTypes,
+ *   noImplicitReturns and noFallthroughCasesInSwitch, against the types in these docs. Errors have line and column, and nothing runs.
+ * - any does not exist: the any keyword, @ts-ignore, @ts-expect-error, @ts-nocheck, as unknown as T and any expression
+ *   whose type is any are refused. What cannot be known is unknown, like JSON columns and JSON.parse: narrow it with typeof, in or
+ *   Array.isArray, or assert it once with as T, which the checker takes on your word.
+ * - archive.query with constant SQL, a string, template without ${} or const, returns exact rows: Postgres describes the query
+ *   and each column has its type, so a typo in a column is an error. A column is non-null only when it is a plain column of a
+ *   table that has NOT NULL, in a query without the word LEFT, RIGHT, FULL, OUTER, GROUPING, ROLLUP or CUBE; expressions,
+ *   aggregates, view columns and every column of such a query are T | null. SQL built at run time returns Row: narrow each value.
+ * - A script that calls archive.migrate may use what it creates, so its tables are not typed: each row is a Row and any table name passes.
+ * - A check that takes over 5 seconds or too much memory is refused: flatten deep nesting and simplify recursive types.
+ *
  * Transaction and access
  * - A run is one transaction, as you. If it throws, times out or returns too much, everything rolls back. A failed
  *   SDK call you catch undoes only that call. What fetch, browse and actions did outside Archive stays done.
@@ -19,8 +32,8 @@
  *
  * Data
  * - Tables, after this SDK, lists the tables and views. Views are read only. Archive sets id, created_at, updated_at.
- *   Set name on every create: it is the title every screen and link shows, and without it a row is Untitled. Fields
- *   without ? are required on create; empty fields read back null.
+ *   Set name on every create: it is the title every screen and link shows, and without it a row is Untitled. A row has every
+ *   column; empty ones read back null, which T | null says. Creates lists what a create must set.
  * - Writes clean messy input, so pass what you have: "(415) 555-0123", "$1,234.50", "4/3/1990".
  * - JSON: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z"; uuids and references as id strings; enums as strings.
  *   Secret types read back as stored and cannot be filtered: Card and UsSsn as their number, National "US 123456789", Passport "US X1234567".
@@ -36,18 +49,15 @@
  *   later turn, use that confirm. The error has it too.
  * - A migration runs with your own access, so a function it reaches (a CHECK, a column DEFAULT, an ALTER COLUMN ... USING,
  *   a domain check, a trigger) cannot write a row or read one your role may not: that throws forbidden with the rule it broke.
- * - A schema change keeps every saved workflow valid or is refused. The report's breaks names what it would break, with line and
- *   column, by re-checking each workflow and comparing what its reads return: a column gone, or one that reads as another kind of
- *   value, like a number becoming a string, so r.amount + 1 would concatenate. The check is when the run ends, so one run can
+ * - A schema change keeps every saved workflow valid or is refused. The report's breaks names what fails, with line and column:
+ *   every saved workflow is type-checked against the schema as it would be, so a column gone or one that reads as another kind of
+ *   value is an error like any other, and so is one that failed before this migration. The check is also when the run ends, so one run can
  *   migrate and fix them with archive.update("workflow", id, { source }); if breaks remain, the whole run fails and nothing is saved.
  *   breaks has id only for your own workflows. Someone else's private workflow shows only its name and location: you cannot fix
  *   it, so stop it instead: archive.migrate(sql, { confirm, breaks: true }) commits and sets broken on each one until its owner
  *   saves a changed source that passes the checks; saving the same source again is refused. breaks: true follows the same rule as
  *   drops: confirm it only when the people you work for agreed after you showed them, with the confirm from the dry run that showed
- *   them, and talking with an agent it needs a confirm from an earlier turn in the same way. A saved workflow cannot drop data or use breaks. A workflow that passes rows on whole, by
- *   returning them or handing them to a helper, counts as reading every column; read the columns by name to depend on fewer.
- * - unfollowed in the report counts places in saved workflows the check could not follow, such as rows handed to a helper.
- *   Those reads are not checked: a column that is gone reads undefined.
+ *   them, and talking with an agent it needs a confirm from an earlier turn in the same way. A saved workflow cannot drop data or use breaks.
  * - Keep data with ALTER TABLE ... RENAME and ALTER COLUMN ... TYPE ... USING. An enum value added is usable only from
  *   the next run. To undo a migration, migrate the reverse. Past ones:
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
@@ -88,15 +98,14 @@
  * - on: { cron: "0 9 * * 1-5", tz?: "America/New_York" } (UTC by default; also @every 15m, @hourly, @daily, @weekly, @monthly);
  *   { table: "invoice", events: ["created", "updated"] } (never deletes, nor rows it wrote itself); { webhook: true } (POST
  *   to the row's url, which anyone with it can call); null (only when run).
- * - input: cron { trigger, at }; table { trigger, table, created, updated, rows }, 100 rows at most with the next run
- *   following at once; webhook { trigger, method, query, headers, body }; or what you pass archive.run.
- * - A bad save throws invalid and saves nothing, with line and column in errors for each problem in source: a compile error,
- *   a table or column that is not there, a required column a create leaves out, an enum value that is not one, or SQL Postgres
- *   refuses. Each query is parsed and described against the live schema, never executed. So a workflow uses constant table names and
- *   constant SQL, a string, template or const with values as $1, $2 params, and calls archive.query and the rest directly: built-up SQL,
- *   a table name from a variable and a stored archive are refused at save. A plain run has none of these limits. The check knows no
- *   TypeScript types, data, row-level security or what a SQL function's body does. Escape a backtick
- *   or ${ inside a template string. archive.run(name, input) runs it for real inside this run; { error } says if it
+ * - input has the type of the workflow's on: CronInput; TableInput with its table's rows, 100 at most with the next run
+ *   following at once; WebhookInput; or unknown for on null, which you narrow. archive.run passes what you give it, or undefined, whatever
+ *   the workflow's on is, so to run one with a trigger, pass an input of that shape.
+ * - A bad save throws invalid and saves nothing, with line and column in errors for each problem in source: a type error or SQL
+ *   Postgres refuses. Each query is parsed and described against the live schema, never executed. So a workflow uses constant
+ *   SQL, one string, template without ${} or const with values as $1, $2 params, and calls archive.query and the rest directly: SQL joined with + or built up
+ *   and a stored archive are refused at save. A plain run may build SQL, which returns Row. The check knows no data,
+ *   row-level security or what a SQL function's body does. archive.run(name, input) runs it for real inside this run; { error } says if it
  *   failed, undoing only what it wrote. To try one without keeping what it writes, throw afterwards. So: save, run,
  *   read the result, archive.update, run again.
  * - workflow_run keeps the last 100 runs of each, joined on workflow_run.workflow = workflow.id. After a failure a cron
@@ -152,19 +161,21 @@
  * - A synced file is read only here: read it with archive.file and archive.read, archive.copy it to change it, or send one
  *   of yours there with its connector's upload: archive.action("gdrive.upload", { file, folder, replace }), by source_id.
  */
-declare const archive: {
-    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. In a saved workflow, sql must be constant (see Workflows). */
+declare const archive: ArchiveSDK;
+
+interface ArchiveSDK {
+    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. Constant SQL returns exact rows (see Types); in a saved workflow, sql must be constant (see Workflows). */
     query(sql: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first, or newest first with desc; where matches exact (cleaned) values, null matching empty; page with after = the last id. */
-    list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; desc?: boolean }): Promise<Tables[T][]>;
+    list<T extends keyof Tables>(table: T, opts?: { where?: Write<Tables[T]>; limit?: number; after?: string; desc?: boolean }): Promise<Tables[T][]>;
     /** One row by id; throws not_found if it does not exist or you cannot see it. */
     get<T extends keyof Tables>(table: T, id: string): Promise<Tables[T]>;
-    /** Insert a row, cleaned and validated per field, and return it; data.access says which group sees it, null for everyone. */
-    create<T extends keyof Tables>(table: T, data: Partial<Tables[T]>): Promise<Tables[T]>;
     /** Create an empty document named name, its type taken from the extension; fill it with archive.edit (see Documents). */
     create(name: `${string}.${"docx" | "xlsx" | "pptx"}`, opts?: { access?: string }): Promise<StoredFile>;
+    /** Insert a row, cleaned and validated per field, and return it; data.access says which group sees it, null for everyone. */
+    create<T extends keyof Tables>(table: T, data: New<T>): Promise<Tables[T]>;
     /** Change the given fields, null clears one, and return the row. */
-    update<T extends keyof Tables>(table: T, id: string, patch: Partial<Tables[T]>): Promise<Tables[T]>;
+    update<T extends keyof Tables>(table: T, id: string, patch: Write<Tables[T]>): Promise<Tables[T]>;
     /** Delete a row, or with "file" a file or empty folder of yours; what a connection synced goes when it goes there. */
     delete(table: keyof Tables, id: string): Promise<void>;
     /** Full-text search over every table and file you can see, best first; words match by prefix, ignoring case and accents. */
@@ -199,15 +210,18 @@ declare const archive: {
     email(mail: { to: string; subject: string; text: string; from?: string; confirm?: string }): Promise<EmailSent>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
     action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
-};
+}
 
-/** What started this run (see Workflows in the header): undefined for a plain run, and what was passed for archive.run. */
-declare const input: CronInput | TableInput | WebhookInput | undefined;
+/** What started this run (see Workflows in the header). A plain run has it undefined; a saved workflow has the type of its on. */
+declare const input: unknown;
+
+/** Adds to the run's logs. */
+declare const console: { log(...args: unknown[]): void; info(...args: unknown[]): void; debug(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void };
 
 /** When a workflow runs: exactly one of cron, table or webhook; null on the row for one that only runs when run. */
 type WorkflowOn =
     | { cron: string; /** IANA time zone; UTC when left out. */ tz?: string }
-    | { table: keyof Tables; events: ("created" | "updated")[] }
+    | { table: keyof Tables; /** Both when left out. */ events?: ("created" | "updated")[] }
     | { webhook: true };
 
 interface CronInput {
@@ -216,15 +230,15 @@ interface CronInput {
     at: string;
 }
 
-interface TableInput {
+interface TableInput<R = Row> {
     trigger: "table";
     table: string;
     /** Rows added since the last run, oldest first. */
-    created: Row[];
+    created: R[];
     /** Rows changed since the last run, oldest first; up to 100 rows with created. */
-    updated: Row[];
+    updated: R[];
     /** created and updated together, oldest change first. */
-    rows: Row[];
+    rows: R[];
 }
 
 interface WebhookInput {
@@ -234,7 +248,7 @@ interface WebhookInput {
     /** Header names in lower case. */
     headers: Record<string, string>;
     /** Parsed JSON, the raw text when it is not JSON, or null when empty. */
-    body: any;
+    body: unknown;
 }
 
 /** Call a web address; body is a string, or an object sent as JSON. Throws when it cannot be reached. */
@@ -249,11 +263,11 @@ interface FetchResponse {
     headers: Record<string, string> & { get(name: string): string | null };
     text(): Promise<string>;
     /** Throws when the body is not JSON. */
-    json(): Promise<any>;
+    json(): Promise<unknown>;
 }
 
 interface RunResult {
-    result: any;
+    result: unknown;
     logs: string[];
     /** "" when the run worked. */
     error: string;
@@ -283,7 +297,7 @@ interface ModelResult {
     /** The answer as text; with a schema, the JSON as a string. */
     text: string;
     /** The answer parsed, when a schema was given. */
-    json?: any;
+    json?: unknown;
     tokens_in: number;
     tokens_out: number;
 }
@@ -305,7 +319,65 @@ interface DoResult {
     tokens_out: number;
 }
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
+
+/** What a write or a where takes of a row: any of its columns; null clears one, and a built-in type also takes messy input as a string or number. */
+type Write<R> = { [K in keyof R]?: R[K] | Messy<NonNullable<R[K]>> };
+
+type Messy<V> = V extends readonly unknown[] ? never : V extends object ? string | number : never;
+
+/** What a create of table T takes: a Write with the columns of Creates set. */
+type New<T extends keyof Tables> = Write<Tables[T]> & Required<Pick<Write<Tables[T]>, Creates[T] & keyof Tables[T]>>;
+
+/** A result of Promise.allSettled. */
+type Settled<V> = { status: "fulfilled"; value: V } | { status: "rejected"; reason: unknown };
+
+interface JSON {
+    parse(text: string, reviver?: (this: unknown, key: string, value: unknown) => unknown): unknown;
+}
+
+interface ArrayConstructor {
+    isArray(arg: unknown): arg is unknown[];
+    new <T = unknown>(arrayLength?: number): T[];
+    <T = unknown>(arrayLength?: number): T[];
+}
+
+interface ObjectConstructor {
+    values<T>(o: { [s: string]: T } | ArrayLike<T>): T[];
+    values(o: {}): unknown[];
+    entries<T>(o: { [s: string]: T } | ArrayLike<T>): [string, T][];
+    entries(o: {}): [string, unknown][];
+    fromEntries<T>(entries: Iterable<readonly [PropertyKey, T]>): { [k: string]: T };
+    fromEntries(entries: Iterable<readonly unknown[]>): Row;
+    assign<T extends {}, U>(target: T, source: U): T & U;
+    assign<T extends {}, U, V>(target: T, source1: U, source2: V): T & U & V;
+    assign<T extends {}, U, V, W>(target: T, source1: U, source2: V, source3: W): T & U & V & W;
+    assign(target: object, ...sources: unknown[]): object;
+    create(o: object | null, properties?: PropertyDescriptorMap): object;
+    getPrototypeOf(o: unknown): object | null;
+}
+
+interface Promise<T> {
+    then<R1 = T, R2 = never>(onfulfilled?: ((value: T) => R1 | PromiseLike<R1>) | null, onrejected?: ((reason: unknown) => R2 | PromiseLike<R2>) | null): Promise<R1 | R2>;
+    catch<R = never>(onrejected?: ((reason: unknown) => R | PromiseLike<R>) | null): Promise<T | R>;
+}
+
+interface PromiseConstructor {
+    allSettled<T extends readonly unknown[] | []>(values: T): Promise<{ -readonly [P in keyof T]: Settled<Awaited<T[P]>> }>;
+    allSettled<T>(values: Iterable<T | PromiseLike<T>>): Promise<Settled<Awaited<T>>[]>;
+}
+
+interface MapConstructor {
+    new <K = unknown, V = unknown>(iterable?: Iterable<readonly [K, V]> | null): Map<K, V>;
+}
+
+interface WeakMapConstructor {
+    new <K extends WeakKey = WeakKey, V = unknown>(entries?: readonly (readonly [K, V])[] | null): WeakMap<K, V>;
+}
+
+interface SetConstructor {
+    new <T = unknown>(iterable?: Iterable<T> | null): Set<T>;
+}
 
 /** Columns every table has; Archive sets them. */
 interface Base {
@@ -340,10 +412,8 @@ interface Migration {
     changes: SchemaChange[];
     /** The changes that delete or rewrite data: dropped tables, columns and type attributes, and columns whose type changed. */
     drops: SchemaChange[];
-    /** The saved workflows this migration breaks, with what breaks and where; at the end of the run any still here refuse it. */
+    /** The saved workflows that fail their check against this migration, with what fails and where; at the end of the run any still here refuse it. */
     breaks: WorkflowBreak[];
-    /** How many places in saved workflows the check could not follow: rows handed to a helper, a key from a variable and the like. */
-    unfollowed: number;
 }
 
 interface WorkflowBreak {

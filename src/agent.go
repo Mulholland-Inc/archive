@@ -865,7 +865,7 @@ func (r *runner) do(call goja.FunctionCall) (any, error) {
 	defer resume()
 	ctx, cancel := context.WithTimeout(r.ctx, r.clock.do)
 	defer cancel()
-	run := func(code string) (*RunOutput, error) { return r.nested(ctx, code, nil) }
+	run := func(code string) (*RunOutput, error) { return r.nested(ctx, code, nil, false) }
 	res, err := agentLoop(ctx, key, cmp.Or(opts.Model, agentModel), system, []agentMessage{first}, maxRuns, func(map[string]any) {}, func(agentMessage) error { return nil }, run)
 	if err != nil {
 		return nil, fmt.Errorf("archive.do: %w", err)

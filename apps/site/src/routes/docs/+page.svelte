@@ -311,7 +311,7 @@ icon: receipt'</span>;
 <li>If the run throws or times out later, the migration is undone with everything else.</li>
 <li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.update</code>, then make it <code>NOT NULL</code>.</li>
 <li>Renames and type changes with <code>USING</code> keep the data, as in any Postgres.</li>
-<li>At the end of the run every saved workflow is checked again. The report's <code>breaks</code> names what would break, by line and column; if any remain, the whole run fails, so one run can migrate and fix the workflows together.</li>
+<li>At the end of the run every saved workflow is type-checked again against the new schema. The report's <code>breaks</code> names what fails, by line and column; if any remain, the whole run fails, so one run can migrate and fix the workflows together.</li>
 </ul>
 <Code tabs={['run.ts', 'result']}>
 <pre><span class="k">const</span> sql = <span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>
@@ -331,7 +331,7 @@ icon: receipt'</span>;
 <p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
 
 <h3 id="schema-breaks">Breaks</h3>
-<p>A schema change keeps every saved workflow valid or is refused: a column it reads is gone, a query no longer parses, a number now reads as a string, or its trigger table is gone. A saved workflow needs constant table names and constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves a changed source that passes the checks. A saved workflow cannot drop data or use <code>breaks</code>.</p>
+<p>A schema change keeps every saved workflow valid or is refused: Archive generates the types of the schema as it would be and type-checks every saved workflow against them, so a column it reads that is gone, a query that no longer parses, a number that now reads as a string or a trigger table that is gone is an error with its line and column. A workflow that already fails its check blocks migrations too. A saved workflow needs constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves a changed source that passes the checks. A saved workflow cannot drop data or use <code>breaks</code>.</p>
 
 <h3 id="schema-history">History</h3>
 <p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
@@ -504,7 +504,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </ul>
 
 <h3 id="code-runtime">How it runs</h3>
-<p>Your code is the body of an async function: use top-level <code>await</code> and <code>return</code> a JSON value. Archive strips the TypeScript types and runs the JavaScript inside the server. Effects that leave the database, such as file processing, happen only after the transaction commits.</p>
+<p>Your code is the body of an async function: use top-level <code>await</code> and <code>return</code> a JSON value. Archive first type-checks it, strictly and without <code>any</code>, against the SDK and your schema, and an error with its line and column stops it before anything runs; then it runs the JavaScript inside the server. Effects that leave the database, such as file processing, happen only after the transaction commits.</p>
 
 <h3 id="code-errors">Errors</h3>
 <p>SDK errors are <code>Error</code> objects with a <code>code</code>: <code>invalid</code>, <code>not_found</code>, <code>forbidden</code>, <code>conflict</code>, or a Postgres SQLSTATE. Invalid input adds <code>errors: [&#123; path, message &#125;]</code>, one per bad field. A failed call you catch undoes only that call.</p>

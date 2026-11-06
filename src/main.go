@@ -78,8 +78,8 @@ func start(ctx context.Context, args []string) error {
 		return enc.Encode(connect.Secrets())
 	case "places":
 		return connect.WritePlaces(ctx, "connect/places.json.gz")
-	case runEsbuildCommand:
-		return runEsbuildChild()
+	case runCheckCommand:
+		return runCheckChild()
 	}
 	return fmt.Errorf("unknown command %q: want serve, migrate, secrets or places", args[0])
 }

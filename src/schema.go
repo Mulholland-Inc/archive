@@ -782,27 +782,25 @@ func specKeys[V any](m map[string]V) []string {
 }
 
 type SchemaMigration struct {
-	Applied    bool           `json:"applied"`
-	Confirm    string         `json:"confirm,omitempty"`
-	Revision   *uuid.UUID     `json:"revision,omitempty"`
-	Name       string         `json:"name,omitempty"`
-	Statements []string       `json:"statements"`
-	Changes    []SchemaChange `json:"changes"`
-	Drops      []SchemaChange `json:"drops"`
-	Skipped    bool           `json:"skipped,omitempty"`
-	Breaks     []flowBreak    `json:"breaks"`
-	Unfollowed int            `json:"unfollowed"`
+	Applied    bool            `json:"applied"`
+	Confirm    string          `json:"confirm,omitempty"`
+	Revision   *uuid.UUID      `json:"revision,omitempty"`
+	Name       string          `json:"name,omitempty"`
+	Statements []string        `json:"statements"`
+	Changes    []SchemaChange  `json:"changes"`
+	Drops      []SchemaChange  `json:"drops"`
+	Skipped    bool            `json:"skipped,omitempty"`
+	Breaks     []workflowBreak `json:"breaks"`
 }
 
 type schemaTurnKey struct{}
 
-type schemaFlowKey struct{}
+type schemaSavedKey struct{}
 
 type schemaTx struct {
-	n      int
-	cats   map[string]*Catalog
-	before map[uuid.UUID]flowSnap
-	stop   bool
+	n    int
+	cats map[string]*Catalog
+	stop bool
 }
 
 func (s *pgStore) ddlKey(ctx context.Context, tx pgx.Tx) (string, func(), error) {
@@ -819,7 +817,7 @@ func (s *pgStore) ddlKey(ctx context.Context, tx pgx.Tx) (string, func(), error)
 	return key, func() { generated.New(s.sys).DeleteDDLKey(context.WithoutCancel(ctx), key) }, nil
 }
 
-func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string, breaks bool) (*SchemaMigration, error) {
+func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string, breaks bool, breaksOf func(context.Context, pgx.Tx, string, *Catalog, []generated.WorkflowSeenRow) ([]workflowBreak, error)) (*SchemaMigration, error) {
 	stmts := storeSplit(src)
 	if err := schemaCheckSQL(stmts); err != nil {
 		return nil, err
@@ -901,17 +899,6 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err != nil {
 		return nil, err
 	}
-	if t.sch.n == 0 {
-		if err := q.SetLocal(ctx, "search_path", "archive, public"); err != nil {
-			return nil, err
-		}
-		if t.sch.before, err = flowSnapshot(ctx, sp, key, cat); err != nil {
-			return nil, err
-		}
-		if err := q.SetLocal(ctx, "search_path", "public"); err != nil {
-			return nil, err
-		}
-	}
 	derived, err := schemaDerived(ctx, sp, cat)
 	if err != nil {
 		return nil, err
@@ -970,7 +957,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if err := q.SetLocal(ctx, "search_path", "archive, public"); err != nil {
 		return nil, err
 	}
-	if out.Breaks, out.Unfollowed, err = flowBreaks(ctx, sp, key, cat, t.sch.before, seen); err != nil {
+	if out.Breaks, err = breaksOf(ctx, sp, key, cat, seen); err != nil {
 		return nil, err
 	}
 	sb, err := json.Marshal(out.Breaks)
@@ -982,7 +969,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	if confirm == "" {
 		return out, nil
 	}
-	if flow, _ := ctx.Value(schemaFlowKey{}).(bool); flow && (len(out.Drops) > 0 || breaks && len(out.Breaks) > 0) {
+	if saved, _ := ctx.Value(schemaSavedKey{}).(bool); saved && (len(out.Drops) > 0 || breaks && len(out.Breaks) > 0) {
 		return nil, fmt.Errorf("a saved workflow runs with nobody to agree, so it cannot delete data or stop workflows: migrate this from a plain run or a conversation: %w", ErrForbidden)
 	}
 	if len(out.Drops) > 0 && turn != "" && from == turn {
