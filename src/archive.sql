@@ -1727,7 +1727,7 @@ CREATE TABLE archive.chat_message (
 ) INHERITS (archive.object);
 CREATE INDEX chat_message_sender_idx ON archive.chat_message (sender);
 CREATE INDEX chat_message_sent_at_idx ON archive.chat_message (sent_at);
-COMMENT ON TABLE archive.chat_message IS 'A message of a chat or channel you connected, like Microsoft Teams. Read only; Archive syncs them
+COMMENT ON TABLE archive.chat_message IS 'A message of a chat or channel you connected, like Microsoft Teams, or a comment on a design file, like Figma''s, its channel the file. Read only; Archive syncs them
 icon: message-square';
 COMMENT ON COLUMN archive.chat_message.channel IS 'The chat or channel it is in, by name, like Finance / General';
 COMMENT ON COLUMN archive.chat_message.kind IS 'chat, between people, or channel, of a team';
