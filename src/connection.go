@@ -1161,6 +1161,11 @@ func (a *Archive) syncShown(ctx context.Context, cat *Catalog) map[string]bool {
 type syncTable struct {
 	parent, of string
 	links      map[string]string
+	cols       []*Column
+}
+
+func (t syncTable) has(col string) bool {
+	return slices.ContainsFunc(t.cols, func(c *Column) bool { return c.Name == col })
 }
 
 type syncRec struct {
@@ -1310,10 +1315,10 @@ func syncCheckSQL(ctx context.Context, db generated.DBTX) error {
 		return err
 	}
 	has := func(table string, sets ...map[string]connect.SQL) error {
-		t := cat.Tables[table]
+		t := cat.sync[table]
 		for _, set := range sets {
 			for c := range set {
-				if t.col(c) == nil && !slices.Contains(t.internal, c) {
+				if !t.has(c) {
 					return fmt.Errorf("%s has no column %s", table, c)
 				}
 			}
