@@ -741,28 +741,55 @@ func storePool(ctx context.Context, base *pgx.ConnConfig, conns int32, moved fun
 }
 
 func (s *pgStore) bootstrap(ctx context.Context, password string, migrate bool) error {
-	tx, err := s.sys.Begin(ctx)
+	rev, err := generated.New(s.sys).Revision(ctx)
+	if err != nil && !storeUndefined(err) && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if rev != "" && !migrate {
+		return nil
+	}
+	err = pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, s.expand(storeRoles)); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'")
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
-		return err
+	if !strings.HasSuffix(rev, ":"+s.hash()) {
+		if err := s.migrate(ctx); err != nil {
+			return err
+		}
 	}
-	if _, err := tx.Exec(ctx, s.expand(storeRoles)); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(s.prefix+"_authenticator")+" PASSWORD '"+password+"'"); err != nil {
-		return err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return err
-	}
-	rev, _ := generated.New(s.sys).Revision(ctx)
-	if rev != "" && !migrate || strings.HasSuffix(rev, ":"+s.hash()) {
+	return s.logins(ctx, true)
+}
+
+func (s *pgStore) logins(ctx context.Context, every bool) error {
+	return pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
+		q := generated.New(tx)
+		if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+			return err
+		}
+		roles, err := q.LoginlessRoles(ctx, s.prefix, every)
+		if err != nil {
+			return err
+		}
+		for _, role := range roles {
+			if _, err := tx.Exec(ctx, s.login(role)); err != nil {
+				return fmt.Errorf("logging in as %s: %w", role, err)
+			}
+		}
 		return nil
-	}
-	return s.migrate(ctx)
+	})
+}
+
+func (s *pgStore) login(role string) string {
+	return "ALTER ROLE " + pgIdent(role) + " LOGIN PASSWORD '" + s.rolePassword(role) + "'"
 }
 
 func (s *pgStore) expand(sql string) string { return strings.ReplaceAll(sql, "{p}", s.prefix) }
@@ -907,18 +934,7 @@ func (s *pgStore) rolePool(ctx context.Context, role string) (*pgxpool.Pool, err
 	if !strings.HasPrefix(role, s.prefix+"_") {
 		return nil, fmt.Errorf("role %s is not this workspace's: %w", role, ErrForbidden)
 	}
-	password := s.rolePassword(role)
-	err := pgx.BeginFunc(ctx, s.sys, func(tx pgx.Tx) error {
-		if err := generated.New(tx).AdvisoryXactLock(ctx, storeLock); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, "ALTER ROLE "+pgIdent(role)+" LOGIN PASSWORD '"+password+"'")
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("logging in as %s: %w", role, err)
-	}
-	p, err := storePool(ctx, s.base, storeRoleConns, s.moved, func(c *pgx.ConnConfig) { c.User, c.Password = role, password })
+	p, err := storePool(ctx, s.base, storeRoleConns, s.moved, func(c *pgx.ConnConfig) { c.User, c.Password = role, s.rolePassword(role) })
 	if err != nil {
 		return nil, err
 	}

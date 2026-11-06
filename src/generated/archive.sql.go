@@ -255,7 +255,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone')
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -1213,17 +1213,6 @@ func (q *Queries) GroupByName(ctx context.Context, name string) (uuid.UUID, erro
 	return id, err
 }
 
-const hasPendingFiles = `-- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL)
-`
-
-func (q *Queries) HasPendingFiles(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingFiles)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
-}
-
 const hasRole = `-- name: HasRole :one
 SELECT pg_has_role($1::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = $2::name
 `
@@ -1705,6 +1694,30 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 	return i, err
 }
 
+const loginlessRoles = `-- name: LoginlessRoles :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE (starts_with(rolname, $1::text || '_u') OR starts_with(rolname, $1::text || '_t')) AND (NOT rolcanlogin OR $2::bool)
+`
+
+func (q *Queries) LoginlessRoles(ctx context.Context, prefix string, every bool) ([]string, error) {
+	rows, err := q.db.Query(ctx, loginlessRoles, prefix, every)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var rolname string
+		if err := rows.Scan(&rolname); err != nil {
+			return nil, err
+		}
+		items = append(items, rolname)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const memberConnections = `-- name: MemberConnections :many
 SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
@@ -1934,17 +1947,6 @@ func (q *Queries) NameMembers(ctx context.Context, emails []string, names []stri
 	return err
 }
 
-const nextBlob = `-- name: NextBlob :one
-SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1
-`
-
-func (q *Queries) NextBlob(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextBlob)
-	var at time.Time
-	err := row.Scan(&at)
-	return at, err
-}
-
 const nextBlobGone = `-- name: NextBlobGone :one
 SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED
 `
@@ -2016,41 +2018,6 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const nextPull = `-- name: NextPull :one
-SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
-WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1
-`
-
-func (q *Queries) NextPull(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextPull)
-	var column_1 time.Time
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const nextSyncAt = `-- name: NextSyncAt :one
-SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), $1::timestamptz))::timestamptz FROM archive.connection
-WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
-`
-
-func (q *Queries) NextSyncAt(ctx context.Context, soon time.Time) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextSyncAt, soon)
-	var column_1 time.Time
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const nextWorkflowAt = `-- name: NextWorkflowAt :one
-SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1
-`
-
-func (q *Queries) NextWorkflowAt(ctx context.Context) (*time.Time, error) {
-	row := q.db.QueryRow(ctx, nextWorkflowAt)
-	var next_at *time.Time
-	err := row.Scan(&next_at)
-	return next_at, err
 }
 
 const noMembers = `-- name: NoMembers :one
@@ -2176,15 +2143,6 @@ func (q *Queries) ReplaceFile(ctx context.Context, iD uuid.UUID, hash string, si
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const resetProcessing = `-- name: ResetProcessing :exec
-UPDATE archive.file SET status = 'pending' WHERE status = 'processing'
-`
-
-func (q *Queries) ResetProcessing(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, resetProcessing)
-	return err
 }
 
 const retryBlobGone = `-- name: RetryBlobGone :exec
@@ -2704,6 +2662,46 @@ UPDATE archive.connection SET cursor = $1, sync_at = $2 WHERE id = $3
 func (q *Queries) WantSync(ctx context.Context, cursor json.RawMessage, syncAt *time.Time, iD uuid.UUID) error {
 	_, err := q.db.Exec(ctx, wantSync, cursor, syncAt, iD)
 	return err
+}
+
+const work = `-- name: Work :many
+SELECT kind::text AS kind, at::timestamptz AS at FROM archive.work WHERE at IS NOT NULL
+`
+
+type WorkRow struct {
+	Kind string
+	At   time.Time
+}
+
+func (q *Queries) Work(ctx context.Context) ([]WorkRow, error) {
+	rows, err := q.db.Query(ctx, work)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkRow
+	for rows.Next() {
+		var i WorkRow
+		if err := rows.Scan(&i.Kind, &i.At); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workAt = `-- name: WorkAt :one
+SELECT at::timestamptz FROM archive.work WHERE kind = $1 AND at IS NOT NULL
+`
+
+func (q *Queries) WorkAt(ctx context.Context, kind string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, workAt, kind)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one

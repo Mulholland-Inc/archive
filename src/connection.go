@@ -615,17 +615,16 @@ func (a *Archive) connectionToken(ctx context.Context, id uuid.UUID) (*oauth2.To
 }
 
 const (
-	syncPageTime   = 2 * time.Minute
-	syncLease      = syncPageTime + time.Minute
-	syncLeaseCheck = 15 * time.Second
-	syncBudget     = 2 * time.Minute
-	syncRetry      = time.Minute
-	syncTries      = 5
-	syncBusyWait   = 15 * time.Minute
-	syncMaxPages   = 100_000
-	syncPoll       = time.Hour
-	syncBackstop   = 24 * time.Hour
-	syncRename     = 24 * time.Hour
+	syncPageTime = 2 * time.Minute
+	syncLease    = syncPageTime + time.Minute
+	syncBudget   = 2 * time.Minute
+	syncRetry    = time.Minute
+	syncTries    = 5
+	syncBusyWait = 15 * time.Minute
+	syncMaxPages = 100_000
+	syncPoll     = time.Hour
+	syncBackstop = 24 * time.Hour
+	syncRename   = 24 * time.Hour
 )
 
 var errRevoked = errors.New("revoked")

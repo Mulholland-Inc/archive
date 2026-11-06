@@ -4433,6 +4433,18 @@ BEGIN
     EXECUTE format('CREATE POLICY seen ON archive.known_org FOR SELECT USING (%s)', archive.known_uses('archive.known_org'));
 END $$;
 
+CREATE VIEW archive.work AS
+SELECT 'sync'::text AS kind, (SELECT min(greatest(c.sync_at, least(coalesce(c.lease_at, c.sync_at), now() + interval '15 seconds'))) FROM archive.connection c WHERE c.sync_at IS NOT NULL)::timestamptz AS at
+UNION ALL
+SELECT 'pull', (SELECT coalesce(f.retry_at, now()) FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1)
+UNION ALL
+SELECT 'blob', (SELECT min(b.at) FROM archive.blob_gone b)
+UNION ALL
+SELECT 'workflow', (SELECT min(w.next_at) FROM archive.workflow w)
+UNION ALL
+SELECT 'file', CASE WHEN EXISTS (SELECT FROM archive.file f WHERE f.status = 'pending' AND f.connection IS NULL) THEN now() + interval '10 seconds' END;
+
 CREATE VIEW archive.agent_list WITH (security_invoker = true) AS
 SELECT a.id, a.name, a.description, a.instructions, a.avatar, a.tint, a.slug, a.access, a.created_at, a.updated_at,
     (SELECT t.updated_at FROM archive.turn t WHERE t.agent = a.id ORDER BY t.n DESC LIMIT 1) AS at
@@ -4449,6 +4461,9 @@ COMMENT ON VIEW archive.workflow_list IS 'Each workflow you can see, with its la
 COMMENT ON COLUMN archive.workflow_list.last IS 'Its last run: id, workflow, at, trigger, ms and error; null before its first';
 
 GRANT SELECT ON archive.agent_list, archive.workflow_list TO "{p}_viewer";
+
+-- name: LoginlessRoles :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE (starts_with(rolname, sqlc.arg(prefix)::text || '_u') OR starts_with(rolname, sqlc.arg(prefix)::text || '_t')) AND (NOT rolcanlogin OR sqlc.arg(every)::bool);
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -4556,10 +4571,6 @@ WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = 
     ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
 RETURNING id, name, hash, connection, stream, version, copied, source, tries;
 
--- name: NextPull :one
-SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
-WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1;
-
 -- name: SetPulled :execrows
 UPDATE archive.file SET hash = sqlc.arg(hash), size = sqlc.arg(size), mime = CASE WHEN mime = 'application/octet-stream' THEN sqlc.arg(sniffed)::text ELSE mime END, copied = version
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
@@ -4591,9 +4602,6 @@ DELETE FROM archive.blob_gone WHERE hash = $1;
 -- name: RetryBlobGone :exec
 UPDATE archive.blob_gone SET at = sqlc.arg(at)::timestamptz WHERE hash = sqlc.arg(hash);
 
--- name: NextBlob :one
-SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1;
-
 -- name: CopyFile :one
 INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
 SELECT s.hash, sqlc.arg(name), s.mime, s.size, s.metadata, s.text, 'done', sqlc.narg(access)::uuid FROM archive.file s WHERE s.id = sqlc.arg(id)
@@ -4604,9 +4612,6 @@ SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WH
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
-
--- name: ResetProcessing :exec
-UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
 
 -- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
@@ -4700,7 +4705,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone')
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -4786,11 +4791,11 @@ RETURNING id;
 -- name: WakeTableWorkflows :execrows
 UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL;
 
--- name: NextWorkflowAt :one
-SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1;
+-- name: Work :many
+SELECT kind::text AS kind, at::timestamptz AS at FROM archive.work WHERE at IS NOT NULL;
 
--- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL);
+-- name: WorkAt :one
+SELECT at::timestamptz FROM archive.work WHERE kind = $1 AND at IS NOT NULL;
 
 -- name: UncountedConnections :many
 SELECT id, provider FROM archive.connection WHERE items = 0;
@@ -4855,10 +4860,6 @@ UPDATE archive.connection SET lease_at = sqlc.arg(lease)::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
-
--- name: NextSyncAt :one
-SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), sqlc.arg(soon)::timestamptz))::timestamptz FROM archive.connection
-WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
 
 -- name: SaveSync :exec
 UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at), synced_at = coalesce(sqlc.narg(synced_at), synced_at),

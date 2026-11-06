@@ -247,6 +247,9 @@ func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User,
 		_, err = a.coreCreate(ctx, tb, data)
 		return err
 	})
+	if err == nil && first {
+		err = a.st.logins(ctx, false)
+	}
 	if err == nil && !first {
 		_, err = a.Create(ctx, "member", data)
 	}
@@ -280,6 +283,9 @@ func (a *Archive) joined(ctx context.Context, email, name string, first bool) (*
 
 func (a *Archive) syncMembers(ctx context.Context, removals bool) error {
 	ctx = context.WithValue(context.WithoutCancel(ctx), storeTxKey{}, nil)
+	if err := a.st.logins(ctx, false); err != nil {
+		return err
+	}
 	hq := a.hub.q()
 	var ms []generated.MembersRow
 	if err := a.st.System(ctx, func(ctx context.Context) (err error) {
@@ -423,7 +429,7 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 		}
 		if viewer {
 			r := a.roleID("t", t.ID)
-			if err := a.exec(ctx, authCreate(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r)); err != nil {
+			if err := a.exec(ctx, authCreate(r), a.st.login(r), authGrant(a.prefix+"_viewer", r), authGrant(a.roleID("m", ac.member), r)); err != nil {
 				return err
 			}
 			role = &r
