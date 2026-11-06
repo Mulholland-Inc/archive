@@ -1177,6 +1177,35 @@ func (q *Queries) UserWorkspaces(ctx context.Context, id uuid.UUID) ([]ArchiveWo
 	return items, nil
 }
 
+const usersWorkspaces = `-- name: UsersWorkspaces :many
+SELECT id, workspaces FROM archive."user" WHERE id = ANY($1::uuid[])
+`
+
+type UsersWorkspacesRow struct {
+	ID         uuid.UUID
+	Workspaces []uuid.UUID
+}
+
+func (q *Queries) UsersWorkspaces(ctx context.Context, ids []uuid.UUID) ([]UsersWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, usersWorkspaces, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UsersWorkspacesRow
+	for rows.Next() {
+		var i UsersWorkspacesRow
+		if err := rows.Scan(&i.ID, &i.Workspaces); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const watchSecret = `-- name: WatchSecret :one
 SELECT secret FROM archive.watch WHERE provider = $1 AND key = $2 AND secret IS NOT NULL LIMIT 1
 `

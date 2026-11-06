@@ -1,7 +1,7 @@
 
 export class Unauthorized extends Error {}
 
-export const API = location.hostname.startsWith('app.') ? location.origin.replace('//app.', '//api.') : '';
+export const API = window.API;
 
 function stored(key, fallback = '') {
   try {
@@ -61,7 +61,10 @@ export async function send(path, { method = 'GET', body, raw, signal, headers = 
     init.body = JSON.stringify(body);
     init.headers['Content-Type'] = 'application/json';
   }
-  const r = await fetch(API + path, init);
+  return answer(await fetch(API + path, init));
+}
+
+async function answer(r) {
   if (r.status === 401) throw new Unauthorized('Signed out');
   if (!r.ok && r.status !== 204) {
     const out = await r.json().catch(() => ({}));
@@ -70,6 +73,8 @@ export async function send(path, { method = 'GET', body, raw, signal, headers = 
   }
   return r;
 }
+
+export const firstBoot = window.boot?.then(answer).then((r) => r.json());
 
 export async function api(path, opts) {
   const r = await send(path, opts);

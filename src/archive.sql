@@ -51,23 +51,37 @@ CREATE FUNCTION archive.can(g uuid) RETURNS bool LANGUAGE sql STABLE AS $$
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g) AND pg_has_role(current_user, r.oid, 'USAGE'))
 $$;
 
-CREATE FUNCTION archive.group_uses(g uuid) RETURNS TABLE ("table" text, "rows" bigint) LANGUAGE plpgsql STABLE AS $$
+CREATE FUNCTION archive.uses(target regclass, id uuid) RETURNS TABLE ("schema" text, "table" text, "column" text, total bigint, "rows" jsonb, restricts bool) LANGUAGE plpgsql STABLE AS $$
 DECLARE
     r record;
-    n bigint;
+    has text;
 BEGIN
-    FOR r IN SELECT c.oid::regclass AS rel, c.relname::text AS name, a.attname::text AS col
-        FROM pg_catalog.pg_constraint k JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
-        JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
-        WHERE k.contype = 'f' AND k.confdeltype <> 'n' AND k.confrelid = 'archive."group"'::regclass AND cardinality(k.conkey) = 1 AND c.oid <> 'archive."group"'::regclass
-          AND has_table_privilege(c.oid, 'SELECT')
-        ORDER BY 2, 3 LOOP
-        EXECUTE format('SELECT count(*) FROM %s WHERE %I = $1', r.rel, r.col) INTO n USING g;
-        IF n > 0 THEN
-            "table" := r.name;
-            "rows" := n;
-            RETURN NEXT;
-        END IF;
+    FOR r IN WITH link AS (
+            SELECT k.conrelid AS rel, k.conkey[1] AS num, k.confdeltype <> 'n' AS restricting
+            FROM pg_catalog.pg_constraint k WHERE k.contype = 'f' AND k.confrelid = target AND cardinality(k.conkey) = 1
+            UNION ALL
+            SELECT d.objoid, d.objsubid::smallint, false
+            FROM pg_catalog.pg_description d JOIN pg_catalog.pg_class t ON t.oid = target
+            WHERE d.classoid = 'pg_catalog.pg_class'::regclass AND d.objsubid > 0 AND t.relnamespace = 'public'::regnamespace
+              AND d.description ~* ('^references\s+' || t.relname || '\M')
+              AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint k WHERE k.contype = 'f' AND k.conrelid = d.objoid AND k.conkey[1] = d.objsubid))
+        SELECT c.oid::regclass AS rel, c.relnamespace::regnamespace::text AS sch, c.relname::text AS name, a.attname::text AS col, l.restricting, a.atttypid = 'uuid[]'::regtype AS list,
+            EXISTS (SELECT FROM pg_catalog.pg_attribute x WHERE x.attrelid = c.oid AND x.attname = 'id' AND NOT x.attisdropped) AS keyed,
+            EXISTS (SELECT FROM pg_catalog.pg_attribute x WHERE x.attrelid = c.oid AND x.attname = 'name' AND NOT x.attisdropped) AS named
+        FROM link l JOIN pg_catalog.pg_class c ON c.oid = l.rel
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = l.rel AND a.attnum = l.num
+        WHERE c.relkind IN ('r', 'p') AND a.atttypid IN ('uuid'::regtype, 'uuid[]'::regtype) AND has_table_privilege(c.oid, 'SELECT')
+        ORDER BY 3, 4 LOOP
+        has := CASE WHEN r.list THEN format('$1 = ANY(%I)', r.col) ELSE format('%I = $1', r.col) END;
+        EXECUTE format('SELECT count(*) FROM %s WHERE %s', r.rel, has) INTO total USING id;
+        CONTINUE WHEN total = 0;
+        EXECUTE format('SELECT jsonb_agg(jsonb_build_object(''id'', x.id, ''name'', x.name)) FROM (SELECT %s AS id, %s AS name FROM %s WHERE %s ORDER BY 1 LIMIT 20) x',
+            CASE WHEN r.keyed THEN 'id' ELSE 'NULL::uuid' END, CASE WHEN r.named THEN 'name' ELSE 'NULL::text' END, r.rel, has) INTO "rows" USING id;
+        "schema" := r.sch;
+        "table" := r.name;
+        "column" := r.col;
+        restricts := r.restricting;
+        RETURN NEXT;
     END LOOP;
 END $$;
 
@@ -77,7 +91,7 @@ DECLARE
     total bigint;
 BEGIN
     IF TG_OP = 'DELETE' THEN
-        SELECT string_agg(u."rows" || ' in ' || u."table", ', '), sum(u."rows") INTO used, total FROM archive.group_uses(OLD.id) u;
+        SELECT string_agg(u.total || ' in ' || u."table", ', '), sum(u.total) INTO used, total FROM archive.uses('archive."group"', OLD.id) u WHERE u.restricts AND u."table" <> 'group';
         IF total > 0 THEN
             RAISE EXCEPTION '% is the access of % %: %; give them other access first', OLD.name, total, CASE WHEN total = 1 THEN 'row' ELSE 'rows' END, used
                 USING ERRCODE = '23503', TABLE = 'group';
@@ -4420,7 +4434,7 @@ $$;
 
 CREATE FUNCTION archive.workflow_saved() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    IF current_setting('role') <> 'none' THEN
+    IF starts_with(current_user::text, '{p}_') THEN
         NEW.role := current_user;
     END IF;
     RETURN NEW;
@@ -4662,10 +4676,10 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_line FOR EA
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.turn FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.inbox FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, source, "on", trigger, hook, member, access ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF hash, name, mime, size, metadata, text, status, error, access, kind, parent, connection, stream, source_id, source, url, drive, owner, owner_name, editor, editor_name, made_at, edited_at ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.revision FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -5113,6 +5127,7 @@ CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM
     OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
     OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
     OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id)
+    OR EXISTS (SELECT FROM archive.spend_user x WHERE x.person = known_person.id)
     OR EXISTS (SELECT FROM archive.contact x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
 CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
@@ -5227,9 +5242,6 @@ SELECT NOT EXISTS (SELECT FROM archive.member);
 
 -- name: MemberEntry :one
 SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
-
--- name: MemberByEmail :one
-SELECT id, role::text AS role, "group" FROM archive.member WHERE email = sqlc.arg(email)::text;
 
 -- name: Members :many
 SELECT id, email::text AS email, role::text AS role, "group", name FROM archive.member ORDER BY email;
@@ -5686,6 +5698,7 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.spend_user x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)

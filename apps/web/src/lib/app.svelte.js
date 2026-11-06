@@ -1,5 +1,5 @@
 
-import { API, api, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
+import { API, api, firstBoot, forgetBlobs, upload, setWorkspace, workspace, local, setLocal, saveDraft, signOut as apiSignOut, Unauthorized, passkeys, passkeyAsked } from './api.js';
 import { resource, listen, onChange, onRefused } from './stream.svelte.js';
 import { toFile, toMember, toWorkflow, toRun, relative, show } from './live.js';
 import { toTables, countsQuery } from './schema.js';
@@ -12,6 +12,10 @@ let counter = 0;
 const nid = (prefix) => `${prefix}${Date.now().toString(36)}${(counter++).toString(36)}`;
 
 export const pinned = $state({ title: null });
+
+function noSignup() {
+  return { terms: {}, models: {}, agreement: [], business: [], billing: [] };
+}
 
 export const app = $state({
   status: 'loading',
@@ -32,7 +36,7 @@ export const app = $state({
   apiKey: null,
   archiveKeys: {},
   apps: [],
-  signup: { terms: {}, agreement: [], business: [], billing: [] },
+  signup: noSignup(),
   ownConnections: []
 });
 
@@ -84,7 +88,7 @@ async function complain(error, title = 'That didn’t work') {
   await notify({ title, body: error?.message ?? String(error) });
 }
 
-export async function boot() {
+export async function boot(booting = firstBoot) {
   const query = new URLSearchParams(location.search);
   const named = query.get('workspace');
   if (query.get('error')) notify({ title: 'That didn’t connect', body: query.get('error') });
@@ -92,26 +96,26 @@ export async function boot() {
     setWorkspace(named);
     history.replaceState(null, '', location.pathname);
   }
-  let me;
+  let data;
   try {
-    me = await api('/auth/me');
+    data = await booting;
   } catch (e) {
     if (!(e instanceof Unauthorized) && workspace() && e.status >= 403) {
       setWorkspace('');
-      return boot();
+      return boot(api('/api/boot'));
     }
     if (!(e instanceof Unauthorized)) throw e;
     app.status = 'signedOut';
     return;
   }
+  const { me } = data;
   setMe(me);
   setWorkspace(me.workspace);
   app.archives = me.workspaces.map(shell);
   app.archive = me.workspace;
-  loadSignup();
   app.askPasskey = passkeys && !passkeyAsked(me.actor.user_id);
   app.status = 'ready';
-  prepare(ws());
+  prepare(ws(), Promise.resolve(data));
   listen(app.archive);
   account.seen();
   loadArchive(ws());
@@ -352,6 +356,10 @@ export const workflows = resource({
     const v = ws();
     const list = (await booted(v, 'workflows', () => api('/api/workflow_list?limit=1000', { workspace: v.id }))) ?? [];
     v.flows = list;
+    if (v.catalog) {
+      v.catalog.flows = list;
+      tables(v);
+    }
     const had = new Map(v.workflows.map((w) => [w.id, w]));
     v.workflows = list.map((w) => {
       const fresh = toWorkflow(w);
@@ -375,7 +383,7 @@ export const runs = resource({
 });
 
 export const schema = resource({
-  tables: ['archive.revision', 'archive.workflow'],
+  tables: ['archive.revision'],
   load: async () => {
     const v = ws();
     const [catalog] = await Promise.all([booted(v, 'types', () => api('/api/types', { workspace: v.id })), workflows.refresh()]);
@@ -568,17 +576,14 @@ export async function rowRelations(id, row) {
   const t = tableOf(id, v);
   if (!t || !row?.id) return { from: [] };
   const base = baseOf(t);
-  const types = [...v.schema, ...v.archiveTables];
-  const from = await Promise.all(
-    types
-      .filter((x) => x.kind !== 'view')
-      .flatMap((x) => x.columns.filter((c) => c.to === base).map((c) => ({ x, c })))
-      .map(async ({ x, c }) => {
-        const rows = (await call(`/api/${encodeURIComponent(x.id)}?${encodeURIComponent(c.name)}=${row.id}&limit=20`).catch(() => [])) ?? [];
-        return { table: x.id, column: c.name, rows: rows.map((r) => ({ id: r.id, title: titleOf(r) })) };
-      })
-  );
-  return { from: from.filter((l) => l.rows.length) };
+  const all = v.catalog.catalog.tables;
+  const target = `"${all[base].schema}"."${base}"`;
+  const uses = (await runCode(`return await archive.query("select * from archive.uses($1::regclass, $2)", ${JSON.stringify(target)}, ${JSON.stringify(row.id)});`)) ?? [];
+  return {
+    from: uses
+      .filter((u) => all[u.table]?.schema === u.schema)
+      .map((u) => ({ table: u.table, column: u.column, rows: u.rows.map((r) => ({ id: r.id, title: titleOf(r) })) }))
+  };
 }
 
 export function clearUnread(v) {
@@ -586,9 +591,9 @@ export function clearUnread(v) {
   api('/auth/unread', { method: 'DELETE', workspace: v.id }).catch(() => {});
 }
 
-function prepare(v) {
-  v.boot = api('/api/boot', { workspace: v.id });
-  v.boot.catch(() => {});
+function prepare(v, booting = api('/api/boot', { workspace: v.id })) {
+  v.boot = booting;
+  v.boot.then((data) => v.id === app.archive && Object.assign(app.signup, data.signup)).catch(() => {});
 }
 
 async function loadArchive(v = ws()) {
@@ -624,7 +629,7 @@ export const onboardingSteps = [
 
 export async function loadSignup() {
   try {
-    app.signup = await call('/api/action/onboarding', { method: 'POST' });
+    Object.assign(app.signup, await call('/api/action/onboarding', { method: 'POST' }));
   } catch (e) {
     await complain(e);
   }
@@ -790,8 +795,9 @@ export async function deleteGroup(group) {
 }
 
 export async function groupUses(id) {
-  const rows = (await runCode(`return await archive.query("select * from archive.group_uses($1)", ${JSON.stringify(id)});`)) ?? [];
-  return rows.map((r) => ({ table: r.table, rows: Number(r.rows) }));
+  const sql = `select "table", total from archive.uses('archive."group"', $1) where restricts and "table" <> 'group'`;
+  const rows = (await runCode(`return await archive.query(${JSON.stringify(sql)}, ${JSON.stringify(id)});`)) ?? [];
+  return rows.map((r) => ({ table: r.table, rows: Number(r.total) }));
 }
 
 export async function setAccess(table, row, access) {
@@ -918,7 +924,7 @@ export async function switchArchive(id) {
   if (id === app.archive || !app.archives.some((v) => v.id === id)) return;
   setWorkspace(id);
   app.archive = id;
-  loadSignup();
+  app.signup = noSignup();
   const head = route.parts[0];
   if (['agent', 'workflows', 'database'].includes(head) && route.parts[1]) go(`/${head === 'agent' ? '' : head}`);
   prepare(ws());
@@ -1148,11 +1154,6 @@ export function runWorkflow(id) {
       if (index() >= 0) wf.runs[index()] = { ...placeholder, status: 'failed', steps: [{ ...placeholder.steps[0], status: 'failed', detail: e.message }] };
     });
   return placeholder.id;
-}
-
-export function createWorkflow({ name, trigger, steps }) {
-  const text = `Write and save a workflow called “${name}”.\nTrigger: ${trigger.label}.\nSteps:\n${steps.map((s) => `- ${s}`).join('\n')}`;
-  return askAgent(text);
 }
 
 export async function renameView(id, name) {

@@ -546,17 +546,13 @@ func (a *Archive) workflowNext(ctx context.Context) (bool, error) {
 	case on.kind() == "table":
 		return true, a.workflowTable(ctx, w, on)
 	}
-	return true, errors.Join(err, a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
-		return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, next)
-	}))
+	return true, errors.Join(err, a.workflowAt(context.WithoutCancel(ctx), w, next))
 }
 
 func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow, on *workflowOn) error {
 	ctx = context.WithoutCancel(ctx)
 	tb := on.table
-	wait := func() error {
-		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, nil) })
-	}
+	wait := func() error { return a.workflowAt(ctx, w, nil) }
 	fail := func(err error) error {
 		_, rerr := a.workflowRecord(ctx, w.ID, "table", time.Now(), &RunOutput{Result: json.RawMessage("null"), Logs: []string{}, Error: err.Error()}, 0)
 		return errors.Join(rerr, wait())
@@ -622,7 +618,7 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 			return err
 		}
 		now := time.Now()
-		return a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, &now) })
+		return a.workflowAt(ctx, w, &now)
 	}
 	created, updated, all := []map[string]any{}, []map[string]any{}, []map[string]any{}
 	for _, f := range rows {
@@ -642,7 +638,15 @@ func (a *Archive) workflowTable(ctx context.Context, w generated.ArchiveWorkflow
 	}
 	last, t := rows[len(rows)-1], time.Now()
 	return a.sys(ctx, func(ctx context.Context) error {
+		a.moved(ctx, "archive.workflow", w.ID.String())
 		return a.st.db(ctx).AdvanceWorkflow(ctx, generated.AdvanceWorkflowParams{ID: w.ID, Trigger: w.Trigger, NextAt: &t, CursorAt: &last.at, CursorID: &last.id})
+	})
+}
+
+func (a *Archive) workflowAt(ctx context.Context, w generated.ArchiveWorkflow, next *time.Time) error {
+	return a.sys(ctx, func(ctx context.Context) error {
+		a.moved(ctx, "archive.workflow", w.ID.String())
+		return a.st.db(ctx).SetWorkflowNext(ctx, w.ID, w.Trigger, next)
 	})
 }
 

@@ -2352,10 +2352,10 @@ func importAmazon(x *importRun, m *importMember, r io.Reader, _ int64) error {
 		return nil
 	}
 	type order struct {
-		data                     map[string]any
-		lines                    []map[string]any
-		total, ship, off, refund int64
-		statuses, tracking       []string
+		data               map[string]any
+		lines              []map[string]any
+		total, ship, off   int64
+		statuses, tracking []string
 	}
 	orders := map[string]*order{}
 	var keys []string

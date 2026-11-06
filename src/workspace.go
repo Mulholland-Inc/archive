@@ -1461,8 +1461,33 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
 }
 
+func (a *Archive) signup(ctx context.Context, signed func(r map[string]any) error) (map[string]any, error) {
+	out := map[string]any{"agreement": []map[string]any{}, "business": []map[string]any{}, "billing": []map[string]any{}}
+	if a.ws.Type != generated.ArchiveWorkspaceTypeBusiness {
+		return out, nil
+	}
+	return out, a.as(ctx, func(ctx context.Context) error {
+		for typ := range out {
+			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)
+			if err != nil {
+				return err
+			}
+			if typ == "agreement" {
+				for _, r := range rows {
+					if err := signed(r); err != nil {
+						return err
+					}
+					delete(r, "doc")
+				}
+			}
+			out[typ] = rows
+		}
+		return nil
+	})
+}
+
 func (a *Archive) onboarding(ctx context.Context) (any, error) {
-	terms := map[string]*OfficeModel{}
+	models, terms := map[string]*OfficeModel{}, map[string]*OfficeModel{}
 	if a.ws.Type == generated.ArchiveWorkspaceTypeBusiness {
 		rows, err := a.hub.q().Terms(ctx)
 		if err != nil {
@@ -1474,31 +1499,21 @@ func (a *Archive) onboarding(ctx context.Context) (any, error) {
 			}
 		}
 	}
-	out := map[string]any{"terms": terms}
-	err := a.as(ctx, func(ctx context.Context) error {
-		for _, typ := range []string{"agreement", "business", "billing"} {
-			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)
-			if err != nil {
-				return err
-			}
-			if typ == "agreement" {
-				for _, r := range rows {
-					s, _ := r["doc"].(string)
-					doc, err := hex.DecodeString(strings.TrimPrefix(s, `\x`))
-					if err != nil {
-						return err
-					}
-					if r["model"], err = OfficeView(doc, "agreement.docx"); err != nil {
-						return err
-					}
-					delete(r, "doc")
-				}
-			}
-			out[typ] = rows
+	out, err := a.signup(ctx, func(r map[string]any) error {
+		s, _ := r["doc"].(string)
+		doc, err := hex.DecodeString(strings.TrimPrefix(s, `\x`))
+		if err != nil {
+			return err
 		}
-		return nil
+		kind, _ := r["kind"].(string)
+		models[kind], err = OfficeView(doc, "agreement.docx")
+		return err
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	out["terms"], out["models"] = terms, models
+	return out, nil
 }
 
 type stripeAPI struct{ base, secret, publishable string }

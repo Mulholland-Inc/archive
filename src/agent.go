@@ -71,9 +71,14 @@ func (a *Archive) boot(ctx context.Context) (map[string]any, error) {
 			}
 			out[key] = rows
 		}
-		return nil
+		var err error
+		out["signup"], err = a.signup(ctx, func(r map[string]any) error { return nil })
+		return err
 	})
 	if err != nil {
+		return nil, err
+	}
+	if out["me"], err = a.me(ctx); err != nil {
 		return nil, err
 	}
 	out["types"], err = a.types(ctx)

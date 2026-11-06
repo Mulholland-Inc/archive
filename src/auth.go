@@ -184,16 +184,44 @@ func authUser(ctx context.Context) (*Actor, error) {
 	return ac, nil
 }
 
-func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberByEmailRow, error) {
+func (a *Archive) memberOf(ctx context.Context, email string) (generated.MemberEntryRow, error) {
 	q := generated.New(a.st.sys)
 	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok && t.role == "" {
 		q = generated.New(t.tx)
 	}
-	m, err := q.MemberByEmail(ctx, email)
+	m, err := q.MemberEntry(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return m, fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
 	}
 	return m, storeErr(err)
+}
+
+func (a *Archive) me(ctx context.Context) (map[string]any, error) {
+	ac := ActorFrom(ctx)
+	m, err := a.memberOf(ctx, ac.Email)
+	if err != nil {
+		return nil, err
+	}
+	if ac.Role != ac.UserRole {
+		m.Role = "viewer"
+	}
+	rows, err := a.hub.q().UserWorkspaces(ctx, ac.UserID)
+	if err != nil {
+		return nil, err
+	}
+	u, err := a.hub.q().UserByID(ctx, ac.UserID)
+	if err != nil {
+		return nil, err
+	}
+	all := []Workspace{}
+	for _, x := range rows {
+		if !ac.scoped || x.ID == a.ws.ID {
+			w := workspaceOut(x)
+			w.Unread = slices.Contains(u.Unread, x.ID)
+			all = append(all, w)
+		}
+	}
+	return map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {
@@ -688,32 +716,7 @@ func (s *signin) handler() http.Handler {
 		return ok(map[string]*User{"user": u}, err)
 	})
 	authed("GET /auth/me", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		a, ac := archiveFrom(r.Context()), ActorFrom(r.Context())
-		m, err := a.memberOf(r.Context(), ac.Email)
-		if err != nil {
-			return 0, nil, err
-		}
-		if ac.Role != ac.UserRole {
-			m.Role = "viewer"
-		}
-		rows, err := h.q().UserWorkspaces(r.Context(), ac.UserID)
-		if err != nil {
-			return 0, nil, err
-		}
-		u, err := h.q().UserByID(r.Context(), ac.UserID)
-		if err != nil {
-			return 0, nil, err
-		}
-		all := []Workspace{}
-		for _, x := range rows {
-			if !ac.scoped || x.ID == a.ws.ID {
-				w := workspaceOut(x)
-				w.Unread = slices.Contains(u.Unread, x.ID)
-				all = append(all, w)
-			}
-		}
-		admin := u.Admin && ac.Role == ac.UserRole
-		return ok(map[string]any{"actor": ac, "role": m.Role, "group": m.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": admin}, err)
+		return ok(archiveFrom(r.Context()).me(r.Context()))
 	})
 	authed("DELETE /auth/unread", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.q().ClearUnread(r.Context(), archiveFrom(r.Context()).ws.ID, ActorFrom(r.Context()).UserID)

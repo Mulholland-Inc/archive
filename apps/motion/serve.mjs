@@ -187,7 +187,7 @@ function render(res, v, want) {
 function join_(shots, path) {
   const list = `${path}.txt`;
   writeFileSync(list, shots.map(s => `file '${CACHE}/${s.key}.mp4'`).join('\n') + '\n');
-  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-c', 'copy', '-movflags', '+faststart', path], { encoding: 'utf8' });
+  const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', list, '-an', '-c:v', 'libx264', '-preset', 'medium', '-crf', '30', '-pix_fmt', 'yuv420p', '-r', '30', '-movflags', '+faststart', path], { encoding: 'utf8' });
   if (r.status !== 0) throw new Error(`join failed: ${r.stderr}`);
 }
 

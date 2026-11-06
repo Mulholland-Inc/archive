@@ -42,6 +42,8 @@
  *   COMMENT ON TABLE house IS 'A house you own'; object gives id, name, access, created_at and updated_at, and Archive
  *   adds the primary key, a search column, and row-level security. Comments become these docs. Use the built-in archive.* types to
  *   get their cleaning. A list of references is uuid[] with a column comment starting 'references other'.
+ * - What points at a row: archive.query("SELECT * FROM archive.uses($1::regclass, $2)", "house", id) gives each column you can
+ *   read that references it: schema, table, column, total, the first 20 rows as { id, name }, and restricts, whether it blocks deleting the row.
  * - Keep the title in name. To build it from columns: CREATE TRIGGER name_follows BEFORE INSERT OR UPDATE ON person FOR
  *   EACH ROW EXECUTE FUNCTION archive.name_follows('first_name', 'last_name'), or name_follows('full_name.full').
  * - A table only hr sees: access uuid NOT NULL DEFAULT '<hr's id>' CHECK (access = '<hr's id>').

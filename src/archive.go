@@ -67,6 +67,9 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 		if wrote, ok := ctx.Value(runWroteKey{}).(*bool); ok && !*wrote {
 			return nil
 		}
+		if ctx.Value(storeReadKey{}) != nil {
+			return nil
+		}
 		tx, err := a.st.db(ctx).TxWrote(ctx)
 		if tx.Members {
 			storeAfter(ctx, func() {
@@ -274,15 +277,6 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	return rs[0], nil
 }
 
-func coreAccess(v any) *uuid.UUID {
-	if s, ok := v.(string); ok {
-		if id, err := uuid.Parse(s); err == nil {
-			return &id
-		}
-	}
-	return nil
-}
-
 func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[string]any) (map[string]any, error) {
 	tb, err := a.catalog(ctx).writable(typ)
 	if err != nil {
@@ -340,6 +334,12 @@ func (a *Archive) prepare(ctx context.Context, tb *Table, data map[string]any, f
 
 func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) error {
 	verr := &ValidationError{Type: tb.Name}
+	type ref struct {
+		target, path string
+		id           uuid.UUID
+	}
+	var refs []ref
+	wanted := map[string][]uuid.UUID{}
 	for _, k := range specKeys(out) {
 		col := tb.col(k)
 		target := col.target()
@@ -351,20 +351,30 @@ func (a *Archive) refCheck(ctx context.Context, tb *Table, out map[string]any) e
 			vals, _ = specList(out[k])
 			path = func(i int) string { return fmt.Sprintf("%s[%d]", k, i) }
 		}
-		schema, name, _ := strings.Cut(target, ".")
 		for i, v := range vals {
 			s, _ := v.(string)
-			id, err := uuid.Parse(s)
-			if err != nil {
-				continue
+			if id, err := uuid.Parse(s); err == nil {
+				refs = append(refs, ref{target, path(i), id})
+				wanted[target] = append(wanted[target], id)
 			}
-			var ok bool
-			if err := a.st.Q(ctx).QueryRow(ctx, `SELECT EXISTS (SELECT FROM `+pgIdent(schema, name)+` WHERE id = $1)`, id).Scan(&ok); err != nil {
-				return err
-			}
-			if !ok {
-				verr.Errors = append(verr.Errors, FieldError{Path: path(i), Message: "no " + name + " " + s})
-			}
+		}
+	}
+	found := map[uuid.UUID]bool{}
+	for _, target := range specKeys(wanted) {
+		schema, name, _ := strings.Cut(target, ".")
+		rows, _ := a.st.Q(ctx).Query(ctx, `SELECT id FROM `+pgIdent(schema, name)+` WHERE id = ANY($1)`, wanted[target])
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[uuid.UUID])
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			found[id] = true
+		}
+	}
+	for _, r := range refs {
+		if !found[r.id] {
+			_, name, _ := strings.Cut(r.target, ".")
+			verr.Errors = append(verr.Errors, FieldError{Path: r.path, Message: "no " + name + " " + r.id.String()})
 		}
 	}
 	return verr.err()
@@ -429,7 +439,7 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
-	ddl, err := a.st.Schema(ctx)
+	ddl, err := a.st.Schema(ctx, a.Catalog().stamp)
 	if err != nil {
 		return nil, err
 	}
@@ -472,8 +482,6 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	})
 	return m, err
 }
-
-func coreRowID(row map[string]any) uuid.UUID { return coreUUID(row, "id") }
 
 func coreUUID(row map[string]any, key string) uuid.UUID {
 	s, _ := row[key].(string)
@@ -648,6 +656,8 @@ type storeQ interface {
 
 type storeTxKey struct{}
 
+type storeReadKey struct{}
+
 type storeTx struct {
 	tx    pgx.Tx
 	role  string
@@ -681,6 +691,8 @@ type pgStore struct {
 	moved    func(table, id string)
 	mu       sync.Mutex
 	roles    map[string]*pgxpool.Pool
+	ddlStamp string
+	ddl      map[string]string
 }
 
 func OpenStore(ctx context.Context, pg *pgx.ConnConfig, prefix, password string, migrate bool, moved func(table, id string)) (*pgStore, error) {
@@ -875,11 +887,12 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	if err != nil {
 		return err
 	}
+	opts := pgx.TxOptions{}
+	if ctx.Value(storeReadKey{}) != nil {
+		opts.AccessMode = pgx.ReadOnly
+	}
 	after := &[]func(){}
-	return storeCommitted(after, storeErr(pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		if err := generated.New(tx).SetLocal(ctx, "role", role); err != nil {
-			return err
-		}
+	return storeCommitted(after, storeErr(pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after, &schemaTx{}}))
 	})))
 }

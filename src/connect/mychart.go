@@ -17,7 +17,6 @@ import (
 	"unicode"
 
 	"golang.org/x/oauth2"
-	"golang.org/x/sync/errgroup"
 )
 
 // MyChart and Oracle Health's patient portal sign a patient in with SMART on FHIR at their own health system, which names their record (patient) as it grants the token.
@@ -380,37 +379,32 @@ func fhirDirectory(ctx context.Context, from string, brand func(fhirOrg) bool) (
 
 // smartOf reads where each server signs patients in from its SMART configuration, or, when it doesn't answer, Epic's usual place beside the FHIR address.
 func smartOf(ctx context.Context, servers []fhirServer) error {
-	var g errgroup.Group
-	g.SetLimit(32)
-	for i := range servers {
+	return Parallel(ctx, 32, len(servers), func(ctx context.Context, i int) error {
 		s := &servers[i]
-		g.Go(func() error {
-			var smart struct {
-				Authorize string `json:"authorization_endpoint"`
-				Token     string `json:"token_endpoint"`
+		var smart struct {
+			Authorize string `json:"authorization_endpoint"`
+			Token     string `json:"token_endpoint"`
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.FHIR+"/.well-known/smart-configuration", nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Accept", "application/json")
+		if r, err := client.Do(req); err == nil {
+			if r.StatusCode == http.StatusOK {
+				json.NewDecoder(r.Body).Decode(&smart)
 			}
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.FHIR+"/.well-known/smart-configuration", nil)
-			if err != nil {
-				return err
+			r.Body.Close()
+		}
+		if smart.Authorize == "" || smart.Token == "" {
+			base, ok := strings.CutSuffix(s.FHIR, "/api/FHIR/R4")
+			if !ok {
+				return fmt.Errorf("%s has no SMART configuration", s.FHIR)
 			}
-			req.Header.Set("Accept", "application/json")
-			if r, err := client.Do(req); err == nil {
-				if r.StatusCode == http.StatusOK {
-					json.NewDecoder(r.Body).Decode(&smart)
-				}
-				r.Body.Close()
-			}
-			if smart.Authorize == "" || smart.Token == "" {
-				base, ok := strings.CutSuffix(s.FHIR, "/api/FHIR/R4")
-				if !ok {
-					return fmt.Errorf("%s has no SMART configuration", s.FHIR)
-				}
-				smart.Authorize, smart.Token = base+"/oauth2/authorize", base+"/oauth2/token"
-				fmt.Fprintf(os.Stderr, "places: %s has no SMART configuration, so it signs in beside its FHIR address\n", s.FHIR)
-			}
-			s.Authorize, s.Token = smart.Authorize, smart.Token
-			return nil
-		})
-	}
-	return g.Wait()
+			smart.Authorize, smart.Token = base+"/oauth2/authorize", base+"/oauth2/token"
+			fmt.Fprintf(os.Stderr, "places: %s has no SMART configuration, so it signs in beside its FHIR address\n", s.FHIR)
+		}
+		s.Authorize, s.Token = smart.Authorize, smart.Token
+		return nil
+	})
 }

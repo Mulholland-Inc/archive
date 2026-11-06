@@ -234,13 +234,13 @@ func (h *Hub) liveUser(ctx context.Context, ids ...uuid.UUID) {
 	if !h.live.on() {
 		return
 	}
-	for _, id := range ids {
-		u, err := h.q().UserByID(context.WithoutCancel(ctx), id)
-		if err != nil {
-			continue
-		}
+	rows, err := h.q().UsersWorkspaces(context.WithoutCancel(ctx), ids)
+	if err != nil {
+		return
+	}
+	for _, u := range rows {
 		for _, ws := range u.Workspaces {
-			h.live.moved(ws.String(), liveChange{Table: "archive.user", ID: id.String()})
+			h.live.moved(ws.String(), liveChange{Table: "archive.user", ID: u.ID.String()})
 		}
 	}
 }
