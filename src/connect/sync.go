@@ -290,7 +290,7 @@ func (s *Sync) bytesOf(c *Client, source map[string]any) (*Bytes, error) {
 		if n, _ := strconv.ParseInt(text(pick(source, k.Size)), 10, 64); n > MaxCopy {
 			return nil, unsupported("it is over the %d GB Archive copies", MaxCopy>>30)
 		}
-		resp, err := c.opened(c.ctx, k.Req, map[string]any{"source": source}, nil, 0, false)
+		resp, err := c.opened(c.ctx, k.Req, map[string]any{"source": source}, nil, 0, k.Bare)
 		if err != nil {
 			return nil, err
 		}

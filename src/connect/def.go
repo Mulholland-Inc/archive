@@ -407,6 +407,7 @@ type Content struct {
 	Req  Req
 	Size Path   `json:",omitempty"`
 	Too  []Deny `json:",omitempty"`
+	Bare bool   `json:",omitempty"`
 }
 
 type Send struct {
@@ -2477,6 +2478,9 @@ func (c *Client) toolReq(r Req, sc map[string]any) (any, error) {
 		return readAll(b, c.p.Name)
 	}
 	ans, err := readAll([]byte(Text(res)), c.p.Name)
+	if err != nil && r.Text {
+		return Text(res), nil
+	}
 	if err != nil {
 		return nil, unsupported("%s's tool %s answers in prose, not JSON, which Archive cannot sync from", c.p.Name, r.Tool)
 	}
