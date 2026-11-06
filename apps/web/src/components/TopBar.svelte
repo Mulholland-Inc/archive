@@ -1,5 +1,5 @@
 <script>
-  import { pinned } from '../lib/pagetitle.svelte.js';
+  import { pinned } from '../lib/app.svelte.js';
 
   let { leading, trailing, children, bordered = false, mobile = false } = $props();
 

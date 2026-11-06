@@ -3,65 +3,54 @@ package main
 import (
 	"context"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
 type memberModel struct {
-	ID     types.String `tfsdk:"id"`
-	Email  types.String `tfsdk:"email"`
-	Role   types.String `tfsdk:"role"`
-	Groups types.Set    `tfsdk:"groups"`
+	ID    types.String `tfsdk:"id"`
+	Email types.String `tfsdk:"email"`
+	Role  types.String `tfsdk:"role"`
+	Group types.String `tfsdk:"group"`
 }
 
 type apiMember struct {
-	ID     string   `json:"id"`
-	Email  string   `json:"email"`
-	Role   string   `json:"role"`
-	Groups []string `json:"groups"`
+	ID    string  `json:"id"`
+	Email string  `json:"email"`
+	Role  string  `json:"role"`
+	Group *string `json:"group"`
 }
 
-func (m *memberModel) body(ctx context.Context) (map[string]any, diag.Diagnostics) {
-	groups := []string{}
-	diags := m.Groups.ElementsAs(ctx, &groups, false)
-	return map[string]any{"email": m.Email.ValueString(), "role": m.Role.ValueString(), "groups": groups}, diags
+func (m *memberModel) body() map[string]any {
+	return map[string]any{"email": m.Email.ValueString(), "role": m.Role.ValueString(), "group": m.Group.ValueStringPointer()}
 }
 
-// fill keeps a in m, with its groups by their names: the API names a member's groups by id, and takes either.
 func (r *memberResource) fill(ctx context.Context, m *memberModel, a apiMember) diag.Diagnostics {
 	var diags diag.Diagnostics
-	names := map[string]string{}
-	if len(a.Groups) > 0 {
-		var groups []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		}
-		if err := r.c.do(ctx, "GET", "/api/group?limit=1000", nil, &groups); err != nil {
-			diags.AddError("Reading the groups failed", err.Error())
-			return diags
-		}
-		for _, g := range groups {
-			names[g.ID] = g.Name
+	m.ID, m.Email, m.Role, m.Group = types.StringValue(a.ID), types.StringValue(a.Email), types.StringValue(a.Role), types.StringPointerValue(a.Group)
+	if a.Group == nil {
+		return diags
+	}
+	var groups []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := r.c.do(ctx, "GET", "/api/group?limit=1000", nil, &groups); err != nil {
+		diags.AddError("Reading the groups failed", err.Error())
+		return diags
+	}
+	for _, g := range groups {
+		if g.ID == *a.Group {
+			m.Group = types.StringValue(g.Name)
 		}
 	}
-	vals := []attr.Value{}
-	for _, g := range a.Groups {
-		if n, ok := names[g]; ok {
-			g = n
-		}
-		vals = append(vals, types.StringValue(g))
-	}
-	set, d := types.SetValue(types.StringType, vals)
-	m.ID, m.Email, m.Role, m.Groups = types.StringValue(a.ID), types.StringValue(a.Email), types.StringValue(a.Role), set
-	return append(diags, d...)
+	return diags
 }
 
 type memberResource struct{ configured }
@@ -72,13 +61,13 @@ func (r *memberResource) Metadata(_ context.Context, req resource.MetadataReques
 
 func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A person in the workspace: a row of the member table. Adding one invites them; removing it takes them out with their tokens. Needs an owner's token.",
+		Description: "A person in the workspace: a row of the member table. Adding one invites them; removing it takes them out with their tokens. Needs a manager's, engineer's or the owner's token.",
 		Attributes: map[string]schema.Attribute{
 			"id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"email": schema.StringAttribute{Required: true, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}, Description: "The address they sign in with, in lowercase. It cannot change."},
-			"role":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("viewer"), Description: "viewer, editor or owner."},
-			"groups": schema.SetAttribute{Optional: true, Computed: true, ElementType: types.StringType, Default: setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})),
-				Description: "The names of the groups they are in, like hr; one no group has yet is made. A row whose access is the hr group is seen only by its members and the owners."},
+			"role":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("viewer"), Description: "viewer, editor, manager, engineer or owner. There is one owner; setting it transfers the workspace and needs the owner's token."},
+			"group": schema.StringAttribute{Optional: true,
+				Description: "The name of the one group they are in, like hr; one no group has yet is made. A row whose access is the hr group is seen only by its members and by managers, engineers and the owner."},
 		},
 	}
 }
@@ -86,13 +75,11 @@ func (r *memberResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 func (r *memberResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var m memberModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
-	body, diags := m.body(ctx)
-	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	var a apiMember
-	if err := r.c.do(ctx, "POST", "/api/member", body, &a); err != nil {
+	if err := r.c.do(ctx, "POST", "/api/member", m.body(), &a); err != nil {
 		resp.Diagnostics.AddError("Adding the member failed", err.Error())
 		return
 	}
@@ -123,11 +110,10 @@ func (r *memberResource) Read(ctx context.Context, req resource.ReadRequest, res
 func (r *memberResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var m memberModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &m)...)
-	body, diags := m.body(ctx)
-	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	body := m.body()
 	delete(body, "email")
 	var a apiMember
 	if err := r.c.do(ctx, "PATCH", "/api/member/"+esc(m.ID.ValueString()), body, &a); err != nil {

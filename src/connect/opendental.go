@@ -2,20 +2,6 @@ package connect
 
 import "time"
 
-// Open Dental, the practice management system of dental offices, through its API, read only. It is a key
-// connector with a key of the server's own: ARCHIVE_OPENDENTAL is https://<developer key>@api.opendental.com,
-// the developer key Open Dental's Vendor Relations issues Mulholland, and a practice's owner pastes in the
-// customer key the practice makes for it in Open Dental (Setup, Advanced Setup, API). Both go in one header,
-// ODFHIR <developer key>/<customer key>. Another host in the variable, like a practice's own API Service,
-// stands in for Open Dental's.
-//
-// What it syncs is health information under the practice's agreement with Mulholland: its providers, patients,
-// appointments, procedures and payments, into the dental tables. An owner should narrow the connection to the
-// group that may see them. Open Dental lists 100 a page, by offset, and lists what changed since a time it
-// keeps in the practice's own clock, DateTStamp; a stream asks from the newest stamp it has seen, never from
-// Archive's clock, so no time zone hides a change. Each is listed whole the first time and a week after, which
-// deletes what is gone, like a deleted appointment; providers, which are few, each sync. Open Dental throttles
-// each practice's key, so requests go at most four a second, and a 429 rests them all.
 func init() {
 	Register(&Connector{
 		ID: "opendental", Name: "Open Dental", Integration: true, Env: "ARCHIVE_OPENDENTAL", Host: "https://api.opendental.com",
@@ -50,7 +36,6 @@ func init() {
 						"balance": "coalesce(archive.sync_num(data->>'BalTotal'), archive.sync_num(data->>'EstBalance'))", "edited_at": "archive.sync_clock(data->>'DateTStamp')"},
 					People: map[string]SQL{"person": "data->>'Email'"},
 					Refs:   map[string]SQL{"provider": "nullif(data->>'PriProv', '0')"}}},
-			// An appointment's length is its pattern's, five minutes a character.
 			{Name: "appointments", Gap: time.Second, Req: Req{URL: "/appointments", Query: odAt}, ID: "AptNum", Page: odPage, Deny: odDeny,
 				Change: SinceTime{Req: Req{URL: "/appointments", Query: Q{"DateTStamp": "{since}", "Offset": "{page}"}}, Stamp: "DateTStamp"},
 				Doc:    "Every appointment, with its patient, providers, time, length, status, confirmation, procedures and note, by its AptNum: listed whole the first time and a week after, 100 a page, which deletes those gone, and in between those whose DateTStamp is on or after the newest read before.",

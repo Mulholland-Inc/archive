@@ -1,10 +1,6 @@
 <script>
   import { day, short } from './format.js';
 
-  // A year: a square for each day, a column for each week from Monday to Sunday, darker the more rows fall
-  // on the view's by date that day, for habits, workouts, journal entries and deals closed. It is the last
-  // twelve months up to today, or the year of the latest row when every row is older than that. Hovering a
-  // day says how many fall on it; clicking one opens its first row. Under it is how many there are in all.
   let { view, rows, pick } = $props();
 
   const LEVELS = 4;
@@ -41,13 +37,10 @@
     return out;
   });
   const weeks = $derived((days.at(-1)?.week ?? 0) + 1);
-  // A day's shade is its share of the busiest day's count, or of four when none has more, so one row is the
-  // lightest step when days have few.
   const most = $derived(Math.max(LEVELS, ...days.map((d) => d.rows.length)));
   const level = (n) => Math.ceil((n / most) * LEVELS);
   const total = $derived(days.reduce((n, d) => n + d.rows.length, 0));
 
-  // A month is named over the week its first day falls in; the first month only when it has room.
   const months = $derived.by(() => {
     const out = days.filter((d, i) => i === 0 || d.date.getDate() === 1).map((d) => ({ key: d.key, week: d.week, name: d.date.toLocaleDateString(undefined, { month: 'short' }) }));
     return out.length > 1 && out[1].week - out[0].week < 3 ? out.slice(1) : out;
@@ -92,12 +85,10 @@
     gap: var(--space-4);
   }
 
-  /* On a page too narrow for a year of weeks, the grid scrolls sideways rather than shrink its days. */
   .scroll {
     overflow-x: auto;
   }
 
-  /* The weekdays' names on the left, then a column for each week; the months' names run along the top. */
   .grid {
     display: grid;
     min-width: var(--view-year-width);
@@ -118,7 +109,6 @@
     grid-column: var(--col);
   }
 
-  /* A weekday's name is centred on its row without making it taller than its days. */
   .weekday {
     display: flex;
     height: 0;
@@ -161,7 +151,6 @@
     background: var(--color-chart-step-4);
   }
 
-  /* How many rows fall on the day under the cursor, over it, or under it near the top. */
   .tip {
     position: absolute;
     bottom: calc(100% + var(--space-1-5));

@@ -3,12 +3,6 @@
   import { fill } from './fill.js';
   import { number } from './format.js';
 
-  // A stacking plan: a building floor by floor, as brokers draw one. Each value of the view's by column, a
-  // number, is a floor, the highest on top, and each row a box on its floor, in view order, as wide as its
-  // share of the floor's first number column other than by, its square feet, or all alike without one. A box
-  // shows the row's name and its first text column where they fit, and is shaded by its first column of few
-  // values that repeat, like a status, with those values in a legend under the floors. Past three such values
-  // the rest share one grey, as Other.
   let { view, rows, shown, text, pick } = $props();
 
   const SHADES = ['chart', 'chart-2', 'chart-3'];
@@ -16,8 +10,6 @@
   const size = $derived(shown.find((c) => c.type === 'number' && c.name !== view.by));
   const amount = (r) => (size ? Math.max(0, Number(r[size.name]) || 0) : 1);
 
-  // The shade column is chosen, and its values given their shades, from all the view's rows, the most common
-  // first, so a box keeps its shade when the filter hides others.
   const all = $derived(ws().viewRows?.[view.id] ?? rows);
   const shade = $derived(
     shown.find((c) => {
@@ -54,7 +46,6 @@
     });
   });
 
-  // The legend names the shades the boxes drawn wear, in the order they were given.
   const legend = $derived.by(() => {
     if (!shade) return [];
     const drawn = new Set(floors.flatMap((f) => f.units.map((u) => shadeOf(u.r))));
@@ -62,8 +53,6 @@
     return drawn.has('other') ? [...named, { name: 'Other', shade: 'other' }] : named;
   });
 
-  // fits hides each line of a box that its box is too narrow for, rather than cut it short: as the box's width
-  // changes, and once the app's font has loaded and set the lines' own.
   function fits(node) {
     const check = () => {
       for (const line of node.querySelectorAll('.line')) {
@@ -100,14 +89,11 @@
 </div>
 
 <style>
-  /* On a page too narrow for the floors, the plan scrolls sideways rather than squeeze the boxes; a building
-     taller than the window scrolls down. */
   .stack {
     height: var(--view-fill);
     overflow: auto;
   }
 
-  /* The floors' numbers on the left, as wide as the widest, then the floors, all one width so they line up. */
   .plan {
     display: grid;
     min-width: var(--view-stack-width);
@@ -124,7 +110,6 @@
     text-align: end;
   }
 
-  /* Boxes share their floor by their share of it, a hairline of the page between each. */
   .band {
     display: flex;
     min-width: 0;
@@ -145,7 +130,6 @@
     transition: opacity var(--duration-fast) var(--ease-out);
   }
 
-  /* The box under the cursor stands out from the rest. */
   .plan:has(.unit:hover) .unit:not(:hover) {
     opacity: var(--opacity-soft);
   }

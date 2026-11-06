@@ -31,7 +31,6 @@ body,
   height: var(--viewport-height, 100%);
 }
 
-/* The window itself never bounces; any scroller in it hands a scroll on to the one around it when it ends. */
 html,
 body {
   overscroll-behavior: none;
@@ -146,7 +145,6 @@ dialog::backdrop {
   white-space: nowrap;
 }
 
-/* The one spin every spinner, running badge and running step turns with. */
 @keyframes spin {
   to {
     transform: rotate(var(--turn-full));
@@ -249,7 +247,58 @@ dialog:not([open]) {
   }
 }
 
-/* Phones zoom the page in on any field under 16px when it gets focus. */
+.morph-origin {
+  display: contents;
+}
+
+.morph-origin[data-open] > * {
+  opacity: 0;
+}
+
+.floating[data-morph] {
+  inset: auto;
+  width: max-content;
+  height: auto;
+  margin: 0;
+  opacity: 1;
+  transform: none;
+  clip-path: var(--clip);
+  transition:
+    clip-path var(--duration-fast) var(--ease-out),
+    overlay var(--duration-fast) var(--ease-out) allow-discrete,
+    display var(--duration-fast) var(--ease-out) allow-discrete;
+}
+
+.floating[data-morph][popover] {
+  padding: 0;
+  overflow: hidden;
+}
+
+.floating[data-morph][data-up] {
+  flex-direction: column-reverse;
+}
+
+.floating[data-morph]:popover-open {
+  clip-path: inset(-1px round var(--radius-lg));
+}
+
+.morph-head {
+  --ring: none;
+  flex: none;
+  width: var(--w);
+  margin-inline-start: var(--head);
+}
+
+.morph-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-px);
+  flex: 0 1 auto;
+  min-height: 0;
+  padding: var(--space-1-5);
+  overflow-y: auto;
+}
+
 @media (hover: none) and (pointer: coarse) {
   input,
   textarea,

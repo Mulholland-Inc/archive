@@ -22,7 +22,7 @@
       <aside class="aside">
         <div class="search"><SearchField bind:value={query} size="sm" label="Search settings" /></div>
         <div class="scroll">
-          <SettingsNav {items} {query} active={current} onselect={(id) => { if (!items.find((i) => i.id === id)?.href) section = id; onselect?.(id); }} />
+          <SettingsNav {items} {query} active={current} onselect={(id) => { section = id; onselect?.(id); }} />
         </div>
       </aside>
       {@render pane()}

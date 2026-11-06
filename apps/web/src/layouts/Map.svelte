@@ -7,11 +7,8 @@
   import { titleOf } from '../lib/app.svelte.js';
   import { theme } from '../lib/theme.svelte.js';
 
-  // A map: each row a pin at the view's by place (an archive.geo), beside a table of them that scrolls. A pin reads the row's
-  // first money, or failing that its first number; the list each row's name and its other columns.
   let { view, rows, shown, text, pick } = $props();
 
-  // A tile's side, as --view-map-tile.
   const TILE = 256;
   const at = (r) => {
     const g = r[view.by];
@@ -21,7 +18,6 @@
   const label = $derived(shown.find((c) => c.type === 'money') ?? shown.find((c) => c.type === 'number'));
   const details = $derived(shown.filter((c) => c.name !== view.by && c !== label).slice(0, 3));
 
-  // A place in pixels of the whole world at zoom z (web mercator, as the tiles are drawn).
   const world = (z) => TILE * 2 ** z;
   const project = ({ lat, lon }, z) => {
     const s = Math.sin((Math.max(-85, Math.min(85, lat)) * Math.PI) / 180);
@@ -31,11 +27,9 @@
   let width = $state(0);
   let height = $state(0);
   let zoom = $state(12);
-  // The map's middle, in world pixels at zoom.
   let center = $state([0, 0]);
   let fitted = false;
 
-  // At first, and when the places change, the map fits them all.
   function fit() {
     if (!width || !height || !placed.length) return;
     let z = 17;
@@ -60,8 +54,6 @@
 
   const left = $derived(center[0] - width / 2);
   const top = $derived(center[1] - height / 2);
-  // The tiles that cover the map at zoom z, each drawn at the map's zoom. Under the map's own tiles are those of
-  // the zoom before, already loaded, so a zoom shows them blurred until its own arrive rather than nothing.
   function cover(z) {
     const n = 2 ** z;
     const size = TILE * 2 ** (zoom - z);
@@ -77,7 +69,6 @@
   const tiles = $derived([...cover(zoom - 1), ...cover(zoom)]);
   const style = $derived(theme.resolved === 'dark' ? 'World_Dark_Gray_Base' : 'World_Light_Gray_Base');
 
-  // Zooming keeps the point under the cursor, or the middle, where it is.
   function zoomBy(d, px = width / 2, py = height / 2) {
     const z = Math.max(2, Math.min(18, zoom + d));
     if (z === zoom) return;
@@ -130,13 +121,10 @@
       .sort((a, b) => a.y - b.y)
   );
   const name = (c) => c.name.replaceAll('_', ' ').replace(/^./, (x) => x.toUpperCase());
-  // Beside the map, its rows as a table, each column the same as in a table view's; money and numbers line up on
-  // the right. The row of the pin that is open is selected.
   const money = (v) => new Intl.NumberFormat('en-US', { style: 'currency', currency: v.currency || 'USD', maximumFractionDigits: 0 }).format(v.amount);
   const cols = $derived([...(label ? [label] : []), ...shown.filter((c) => c.name !== view.by && c !== label)]);
   const columns = $derived([{ key: 'name', label: 'Name' }, ...cols.map((c) => ({ key: c.name, label: name(c), align: c.type === 'money' || c.type === 'number' ? 'end' : undefined }))]);
   const cells = $derived(rows.map((r, i) => ({ id: r.id ?? i, row: r, name: titleOf(r, view), ...Object.fromEntries(cols.map((c) => [c.name, c.type === 'money' && r[c.name]?.amount != null ? money(r[c.name]) : c.type === 'number' && typeof r[c.name] === 'number' ? r[c.name].toLocaleString('en-US') : text(c, r)])) })));
-  // The open pin's row scrolls into the table's view.
   function follow(node) {
     $effect(() => {
       if (selected) node.querySelector('tr.selected')?.scrollIntoView({ block: 'nearest' });
@@ -145,7 +133,6 @@
   const focus = (r) => r === hovered || r === selected;
 </script>
 
-<!-- The map and its table fill the window, so the page does not scroll and the wheel over the map zooms it. -->
 <div class="map-view" {@attach fill()}>
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="map" bind:clientWidth={width} bind:clientHeight={height} onpointerdown={down} onpointermove={move} onpointerup={up} onwheel={wheel} class:dragging={drag}>
@@ -209,7 +196,6 @@
     user-select: none;
   }
 
-  /* The table scrolls in its own box, its header row staying at the top. */
   .side {
     min-height: 0;
   }
@@ -230,7 +216,6 @@
     cursor: grabbing;
   }
 
-  /* Tiles, pins and the popup are placed by the --x and --y the map works out for each. */
   img {
     position: absolute;
     top: 0;
@@ -261,7 +246,6 @@
     transition: background-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
   }
 
-  /* The pin points at its place. */
   .pin::after {
     content: '';
     position: absolute;
@@ -346,7 +330,6 @@
     font-size: var(--text-2xs);
   }
 
-  /* On a narrow page the table goes under the map, each half the height. */
   @container (max-width: 48rem) {
     .map-view {
       grid-template-columns: minmax(0, 1fr);

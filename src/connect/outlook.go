@@ -6,22 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Outlook: the mail of a Microsoft 365 work or school account, or a personal Outlook.com one, read only through
-// Microsoft Graph. It reads ARCHIVE_OUTLOOK, an app registration in Microsoft Entra for accounts in any
-// directory and personal accounts, whose web redirect URIs list <API>/connect/outlook/callback, with the
-// delegated Graph permissions User.Read, Mail.Read and Calendars.Read. offline_access asks for the refresh token, which
-// Microsoft replaces on every refresh. There is no endpoint that revokes one grant: a person removes Archive
-// at myapps.microsoft.com, or account.live.com/consent for a personal account.
-//
-// It syncs the mailbox into mail, as Gmail does, folder by folder with Graph's delta of each, which Graph keeps per
-// folder, and the calendar into calendar_event. An account connected before it asked for Calendars.Read syncs its mail
-// alone until it connects again.
-//
-// It pushes through a Graph subscription to every message of the mailbox, me/messages, and one to every event of
-// the calendar, me/events, each with a clientState of Archive's own, for 10,020 minutes, under the 10,080 Outlook
-// allows; the first sync a day after renews them with a PATCH, or makes another when Graph no longer has one. An
-// account that did not allow Archive its calendar has the mail's alone. Graph checks the URL first by posting a
-// validationToken, which Archive answers as it came, in plain text.
 func init() {
 	Register(&Connector{
 		ID: "outlook", Name: "Outlook", Env: "ARCHIVE_OUTLOOK",
@@ -67,7 +51,6 @@ func init() {
 			Over:  &Parts{Fixed: []Obj{{"id": "me/messages"}, {"id": "me/events"}}},
 			Watch: Req{Method: POST, URL: "/subscriptions", Body: Obj{"changeType": "created,updated,deleted", "notificationUrl": "{hook}", "resource": "{part}", "expirationDateTime": "{until}", "clientState": "{secret}"}},
 			Key:   "{answer/id}", Resource: "{part}", Expires: "expirationDateTime",
-			// A watch from before it named its resource is the mail's.
 			OfPart:  &Reads{Of: "{resource|me/messages}"},
 			Extend:  &Req{Method: PATCH, URL: "/subscriptions/{key}", Body: Obj{"expirationDateTime": "{until}"}},
 			Unwatch: &Req{Method: DELETE, URL: "/subscriptions/{key}"},
@@ -75,8 +58,6 @@ func init() {
 			Kept:    &Kept{Each: "value", ID: "subscriptionId", Token: "clientState"},
 		},
 		Sync: []*Sync{
-			// A message's text comes as text, not HTML, and 50 a page; a moved message is a new id in its new folder and gone
-			// from its old one, so neither folder needs the other.
 			{Name: "messages", Gap: time.Second, Parts: outlookFolders,
 				Req:   Req{URL: "/me/mailFolders/{part}/messages/delta?$select=" + outlookSync, Header: map[string][]string{"Prefer": {"odata.maxpagesize=50", `outlook.body-content-type="text"`}}},
 				Items: "value", Updated: "lastModifiedDateTime", Page: outlookPage, Change: outlookDelta, Gone: []Test{{At: "@removed"}}, Pass: []int{403, 404},
@@ -85,10 +66,10 @@ func init() {
 					Decode{Codec: Words, At: "body/content", As: "words", If: Test{At: "body/contentType", Is: "html"}},
 					Fetch{If: Test{At: "hasAttachments", Is: "true"}, Req: Req{URL: "/me/messages/{id}/attachments?$select=id,name,contentType,size,isInline"}, As: "attachments", Par: 4, Gone: true},
 					Download{Each: "attachments/value", If: Test{At: "@odata.type", Is: "#microsoft.graph.fileAttachment"}, Req: Req{URL: "/me/messages/{up/id}/attachments/{id}/$value"},
-						Name: "{name}", Mime: "{contentType}", Size: "size", As: "text", Par: 4},
+						Name: "{name}", Mime: "{contentType}", Size: "size", As: "text", Par: 4, Keep: true},
 				},
-				Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, and the " +
-					"words of each PDF, Word, Excel, PowerPoint or text attachment up to 25 MB: " +
+				Doc: "Every message of every folder but Junk Email and Deleted Items, with its text, cut at 64 KB, its attachments' names, " +
+					"each of them up to 25 MB kept as a file, and the words of each PDF, Word, Excel, PowerPoint or text one: " +
 					"listed whole the first time, 50 a page and a folder at a time, and then each folder's delta since, messages added, changed, " +
 					"moved or deleted. A folder made since is listed whole; one gone, or a delta Graph no longer keeps, lists the mailbox whole again.",
 				To: Map{Table: "mail_message",
@@ -104,17 +85,14 @@ func init() {
 						{Table: "mail_party", From: "archive.sync_list(data->'bccRecipients') p WHERE " + outlookHas, Cols: map[string]SQL{"role": "'bcc'", "name": outlookName}, People: outlookPerson},
 						{Table: "mail_party", From: "archive.sync_list(data->'replyTo') p WHERE " + outlookHas, Cols: map[string]SQL{"role": "'reply_to'", "name": outlookName}, People: outlookPerson},
 						{Table: "mail_attachment", From: "archive.sync_list(data#>'{attachments,value}') f",
-							Cols: map[string]SQL{"filename": "f->>'name'", "mime": "f->>'contentType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'"}},
+							Cols: map[string]SQL{"filename": "f->>'name'", "mime": "f->>'contentType'", "size": "archive.sync_num(f->>'size')", "text": "f->>'text'", "file": "f->>'file'"}},
 					}}},
-			// The calendar's view from a year back to a year ahead is one part named by the month it starts in, so a new month
-			// is a part gone, and lists the view whole again over the moved window. Times come in UTC.
 			{Name: "events", Gap: time.Second,
 				Parts: &Parts{Req: Req{URL: "/me/calendar?$select=id"},
 					Under: &Parts{Span: &Span{Month: true, Last: Shift{1, 1, 0}, First: Shift{-2, -1, 0}, Step: Shift{2, 1, 1}}, ID: "calendar {start}", Vals: Obj{"start": "{start}", "end": "{end}"}}},
 				Req: Req{URL: "/me/calendarView/delta", Query: Q{"startDateTime": "{in/start}T00:00:00Z", "endDateTime": "{in/end}T00:00:00Z"},
 					Header: map[string][]string{"Prefer": {"odata.maxpagesize=50", `outlook.timezone="UTC"`, `outlook.body-content-type="text"`}}},
 				Items: "value", Updated: "lastModifiedDateTime", Page: outlookPage, Change: outlookDelta, Gone: []Test{{At: "@removed"}}, Pass: []int{403, 404},
-				// An account that did not allow Archive its calendar has none to walk until it connects again.
 				Deny: []Deny{{Status: []int{401, 403}, Why: "Outlook did not allow Archive the calendar; connect Outlook again to sync it"}},
 				Doc: "Every event of your calendar from a year back to a year ahead, each occurrence of a series on its own, with its attendees " +
 					"and their answers and its text, cut at 64 KB: listed whole, 50 a page, and then Graph's delta since; the window moves a " +
@@ -138,7 +116,6 @@ func init() {
 
 const (
 	outlookList = "id,conversationId,subject,from,toRecipients,receivedDateTime,bodyPreview,hasAttachments,isRead,webLink"
-	// outlookSync is what the messages stream reads of a message.
 	outlookSync = "id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime," +
 		"bodyPreview,body,hasAttachments,categories,isDraft,lastModifiedDateTime"
 	outlookTree     = "?$top=100&$select=id,displayName,childFolderCount"
@@ -150,10 +127,7 @@ var (
 	outlookPage    = NextURL{At: "@odata.nextLink"}
 	outlookPerson  = map[string]SQL{"person": "p#>>'{emailAddress,address}'"}
 	outlookFinding = Q{"$top": "{limit}", "$select": outlookList, "$search": "{words}", "$orderby": "{order}"}
-	// outlookDelta is Graph's delta of a part, kept per part. Graph answers 410 Gone, or 400 for a sync state it no longer keeps.
-	outlookDelta = Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}}
-	// outlookFolders are every mail folder of the mailbox, the folders in folders too, but Junk Email and Deleted Items
-	// and what is in them, as Gmail leaves out spam and trash.
+	outlookDelta   = Resume{At: "@odata.deltaLink", Expired: []int{410}, Stale: []Deny{{Status: []int{400}, Says: []string{"SyncState", "resyncRequired", "sync state"}}}}
 	outlookFolders = &Parts{Req: Req{URL: "/me/mailFolders" + outlookTree}, Items: "value", Page: outlookPage, Vals: Obj{"name": "{displayName}"},
 		Not:    []Req{{URL: "/me/mailFolders/junkemail?$select=id"}, {URL: "/me/mailFolders/deleteditems?$select=id"}},
 		Deep:   &Req{URL: "/me/mailFolders/{id}/childFolders" + outlookTree},

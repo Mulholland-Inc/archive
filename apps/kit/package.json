@@ -3,11 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "brands": "node brands.mjs"
-  },
-  "devDependencies": {
-    "@iconify-json/logos": "1.2.18",
-    "@iconify-json/simple-icons": "1.2.101",
-    "@iconify-json/vscode-icons": "1.2.95"
+    "brands": "npm i --no-save @iconify-json/logos@1.2.18 @iconify-json/simple-icons@1.2.101 @iconify-json/vscode-icons@1.2.95 && node brands.mjs"
   }
 }

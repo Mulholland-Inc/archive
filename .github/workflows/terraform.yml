@@ -45,8 +45,6 @@ jobs:
           export CLOUDFLARE_API_TOKEN=$(gcloud secrets versions access latest --secret archive-cloudflare-api-token --project "$TF_VAR_project")
           terraform init -input=false -backend-config=bucket="$TF_VAR_project-tfstate"
           terraform apply -input=false -auto-approve -target=google_secret_manager_secret.this
-          # Cloud Run won't start a revision that reads a secret with no version, so a new one is a space, which
-          # Archive reads as unset, until its value is seeded with gcloud.
           for s in $(gcloud secrets list --project "$TF_VAR_project" --filter="name~/secrets/archive-" --format="value(name.basename())"); do
             [ -n "$(gcloud secrets versions list "$s" --project "$TF_VAR_project" --limit 1 --format "value(name)")" ] ||
               printf ' ' | gcloud secrets versions add "$s" --data-file=- --project "$TF_VAR_project"
