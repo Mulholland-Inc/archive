@@ -478,19 +478,13 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string, breaks
 	}
 	var m *SchemaMigration
 	err = a.as(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.Migrate(ctx, sql, name, author, confirm, breaks)
+		m, err = a.st.Migrate(ctx, sql, name, author, confirm, breaks, a.workflowBreaks)
 		if err == nil && m.Applied {
 			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
 		}
 		return err
 	})
 	return m, err
-}
-
-func coreUUID(row map[string]any, key string) uuid.UUID {
-	s, _ := row[key].(string)
-	id, _ := uuid.Parse(s)
-	return id
 }
 
 func coreNewID() uuid.UUID { return uuid.Must(uuid.NewV7()) }

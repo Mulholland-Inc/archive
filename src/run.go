@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	_ "embed"
 	"encoding/json"
@@ -26,8 +27,18 @@ import (
 
 	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
+	"github.com/buke/typescript-go-internal/v7/pkg/ast"
+	"github.com/buke/typescript-go-internal/v7/pkg/astnav"
+	"github.com/buke/typescript-go-internal/v7/pkg/bundled"
+	tschecker "github.com/buke/typescript-go-internal/v7/pkg/checker"
+	"github.com/buke/typescript-go-internal/v7/pkg/compiler"
+	"github.com/buke/typescript-go-internal/v7/pkg/core"
+	"github.com/buke/typescript-go-internal/v7/pkg/scanner"
+	"github.com/buke/typescript-go-internal/v7/pkg/sourcemap"
+	"github.com/buke/typescript-go-internal/v7/pkg/tsoptions"
+	"github.com/buke/typescript-go-internal/v7/pkg/tspath"
+	"github.com/buke/typescript-go-internal/v7/pkg/vfs/vfstest"
 	"github.com/dop251/goja"
-	"github.com/evanw/esbuild/pkg/api"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -41,13 +52,15 @@ const (
 	runMaxLogs   = 64 << 10
 	runMaxFetch  = 5 << 20
 
-	runEsbuildCommand = "esbuild"
-	runCompileHere    = 2 << 10
-	runCompileTime    = 5 * time.Second
-	runCompileStack   = 256 << 20
-	runCompileMemory  = 512 << 20
-	runTimeout        = 30 * time.Second
-	runWrap           = "WITH q AS (\n"
+	runCheckCommand = "check"
+	runCheckAtOnce  = 2
+	runCheckErrs    = 30
+	runCheckTime    = 5 * time.Second
+	runCheckAllTime = 20 * time.Second
+	runCheckStack   = 256 << 20
+	runCheckMemory  = 512 << 20
+	runTimeout      = 30 * time.Second
+	runWrap         = "WITH q AS (\n"
 )
 
 type RunOutput struct {
@@ -144,7 +157,9 @@ type runner struct {
 	a         *Archive
 	vm        *goja.Runtime
 	ctx       context.Context
+	src       string
 	js        string
+	lines     []int32
 	out       *RunOutput
 	input     json.RawMessage
 	at        time.Time
@@ -169,118 +184,770 @@ func (a *Archive) refresh(ctx context.Context) {
 	}
 }
 
-type runCompileErr struct {
-	line, col int
-	msg, src  string
+type checkFile struct {
+	Source string
+	Input  string
 }
 
-func (e runCompileErr) text() string {
-	if e.line == 0 {
-		return e.msg
+type checkIn struct {
+	Files     []checkFile
+	Types     string
+	Check     bool
+	Emit      bool
+	Saved     bool
+	Generated bool
+}
+
+type checkErr struct {
+	File int
+	Line int
+	Col  int
+	Msg  string
+}
+
+func (e checkErr) text() string {
+	if e.Line == 0 {
+		return e.Msg
 	}
-	return fmt.Sprintf("line %d:%d: %s", e.line, e.col, e.msg)
+	return fmt.Sprintf("line %d:%d: %s", e.Line, e.Col, e.Msg)
 }
 
-var runCompiles = make(chan struct{}, 2)
-
-func runTransform(code string) (string, []runCompileErr) {
-	res, errs := runBuild(code, api.SourceMapNone)
-	return string(res.Code), errs
+type checkQuery struct {
+	File int
+	Line int
+	Col  int
+	SQL  string
 }
 
-func runEsbuild(code string, sm api.SourceMap) api.TransformResult {
-	return api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts", Sourcemap: sm})
+type checkScan struct {
+	Errs     []checkErr
+	Queries  []checkQuery
+	Actions  []string
+	Migrates bool
 }
 
-type runEsbuildIn struct {
-	Code string
-	Map  api.SourceMap
+type checkPlan struct {
+	Types string
+	More  string
 }
 
-func runEsbuildChild() error {
-	debug.SetMaxStack(runCompileStack)
+type checkOut struct {
+	Errs  []checkErr
+	Types []string
+	JS    string
+	Lines []int32
+}
+
+var (
+	errCheckLimit = errors.New("check limit")
+	checkSlots    = make(chan struct{}, runCheckAtOnce)
+	checkPragmaRe = regexp.MustCompile(`@ts-(ignore|expect-error|nocheck)\b`)
+	checkAtRe     = regexp.MustCompile(`script\.js:(?: Line )?(\d+):(\d+)`)
+	checkHints    = map[int32]string{
+		7006:  "give it a type",
+		7030:  "end every path with a return",
+		7031:  "give it a type",
+		7034:  "give it a type",
+		7053:  "assert the object first, like (o as Row)[key], or use a Map",
+		18046: "narrow it with typeof, in or Array.isArray, or assert it once with as",
+		18047: "check for null first, or use ?. or ??",
+		18048: "check for undefined first, or use ?. or ??",
+		18049: "check first, or use ?. or ??",
+		2531:  "check for null first, or use ?. or ??",
+		2532:  "check for undefined first, or use ?. or ??",
+		2533:  "check first, or use ?. or ??",
+		2375:  "leave the property out rather than setting it to undefined",
+		2379:  "leave the property out rather than setting it to undefined",
+	}
+)
+
+func checkWrap(f checkFile) string {
+	head := ""
+	if f.Input != "" {
+		head = "declare const input: " + f.Input + "; "
+	}
+	return head + "(async () => {\n" + f.Source + "\n})()"
+}
+
+func checkName(i int) string { return fmt.Sprintf("/s%d.ts", i) }
+
+type checkHost struct {
+	compiler.CompilerHost
+	parsed map[string]*ast.SourceFile
+}
+
+func (h *checkHost) GetSourceFile(o ast.SourceFileParseOptions) *ast.SourceFile {
+	if f := h.parsed[o.FileName]; f != nil {
+		return f
+	}
+	f := h.CompilerHost.GetSourceFile(o)
+	h.parsed[o.FileName] = f
+	return f
+}
+
+type checkRun struct {
+	in     checkIn
+	ctx    context.Context
+	parsed map[string]*ast.SourceFile
+	p      *compiler.Program
+	errs   []checkErr
+	lines  []int
+}
+
+func (c *checkRun) program(types, more string) {
+	vf := map[string]string{"/sdk.d.ts": types, "/more.d.ts": more}
+	roots := []string{"/sdk.d.ts", "/more.d.ts"}
+	for i, f := range c.in.Files {
+		vf[checkName(i)] = checkWrap(f)
+		roots = append(roots, checkName(i))
+	}
+	opts := &core.CompilerOptions{Strict: core.TSTrue, NoEmit: core.TSTrue, Target: core.ScriptTargetESNext, Lib: []string{"lib.esnext.d.ts"}, Types: []string{}, ModuleDetection: core.ModuleDetectionKindForce,
+		NoUncheckedIndexedAccess: core.TSTrue, ExactOptionalPropertyTypes: core.TSTrue, NoImplicitReturns: core.TSTrue, NoFallthroughCasesInSwitch: core.TSTrue, SingleThreaded: core.TSTrue}
+	cfg := tsoptions.NewParsedCommandLine(opts, roots, tspath.ComparePathsOptions{UseCaseSensitiveFileNames: true, CurrentDirectory: "/"})
+	host := &checkHost{compiler.NewCompilerHost("/", bundled.WrapFS(vfstest.FromMap(vf, true)), bundled.LibPath(), nil, nil), c.parsed}
+	c.p = compiler.NewProgram(compiler.ProgramOptions{Host: host, Config: cfg})
+}
+
+func (c *checkRun) add(i int, f *ast.SourceFile, pos int, msg string) {
+	l, ch := scanner.GetECMALineAndUTF16CharacterOfPosition(f, pos)
+	c.errs = append(c.errs, checkErr{File: i, Line: min(max(l, 1), c.lines[i]), Col: int(ch) + 1, Msg: msg})
+}
+
+func (c *checkRun) node(i int, f *ast.SourceFile, n *ast.Node, msg string) {
+	c.add(i, f, scanner.GetTokenPosOfNode(n, f, false), msg)
+}
+
+func checkText(d *ast.Diagnostic) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "TS%d: %s", d.Code(), d.String())
+	var chain func(list []*ast.Diagnostic, in string)
+	chain = func(list []*ast.Diagnostic, in string) {
+		for _, m := range list {
+			b.WriteString("\n" + in + m.String())
+			chain(m.MessageChain(), in+"  ")
+		}
+	}
+	chain(d.MessageChain(), "    ")
+	s := b.String()
+	if len(s) > 800 {
+		s = s[:800] + "..."
+	}
+	if h := checkHints[d.Code()]; h != "" {
+		s = strings.TrimSuffix(s, ".") + "; " + h
+	}
+	return s
+}
+
+func (c *checkRun) scan() checkScan {
+	var out checkScan
+	c.program(c.in.Types, "")
+	for i := range c.in.Files {
+		f := c.p.GetSourceFile(checkName(i))
+		for _, d := range c.p.GetSyntacticDiagnostics(c.ctx, f) {
+			c.add(i, f, d.Pos(), checkText(d))
+		}
+	}
+	if len(c.errs) > 0 {
+		out.Errs = c.errs
+		return out
+	}
+	ch, done := c.p.GetTypeChecker(c.ctx)
+	defer done()
+	literal := func(n *ast.Node) (string, bool) {
+		t := ch.GetTypeAtLocation(n)
+		if t.Flags()&tschecker.TypeFlagsStringLiteral == 0 {
+			return "", false
+		}
+		s, ok := t.AsLiteralType().Value().(string)
+		return s, ok
+	}
+	global := func(n *ast.Node) bool {
+		if !ast.IsIdentifier(n) || n.Text() != "archive" {
+			return false
+		}
+		s := ch.GetSymbolAtLocation(n)
+		return s != nil && s.ValueDeclaration != nil && ast.GetSourceFileOfNode(s.ValueDeclaration).FileName() == "/sdk.d.ts"
+	}
+	for i := range c.in.Files {
+		f := c.p.GetSourceFile(checkName(i))
+		var visit func(n *ast.Node) bool
+		visit = func(n *ast.Node) bool {
+			if ast.IsPropertyAccessExpression(n) && global(n.Expression()) {
+				name := n.Name().Text()
+				if name == "migrate" {
+					out.Migrates = true
+				}
+				if ast.IsCallExpression(n.Parent) && n.Parent.Expression() == n {
+					if a := n.Parent.Arguments(); len(a) > 0 {
+						s, ok := literal(a[0])
+						switch {
+						case name == "action" && ok:
+							out.Actions = append(out.Actions, s)
+						case name == "query" && ok:
+							pos := scanner.GetTokenPosOfNode(a[0], f, false)
+							l, col := scanner.GetECMALineAndUTF16CharacterOfPosition(f, pos)
+							out.Queries = append(out.Queries, checkQuery{i, max(l, 1), int(col) + 1, s})
+						case name == "query" && c.in.Saved:
+							c.node(i, f, n.Parent, "a saved workflow needs constant SQL, so that it can be checked: write the whole statement as one string, one template without ${} or a const holding one, not joined with +, and pass values as $1, $2 params; to build SQL at run time, use a plain run, not a workflow")
+						}
+					}
+				} else if c.in.Saved {
+					c.node(i, f, n, "a saved workflow calls the SDK directly, like await archive.query(...), so that it can be checked; do not store its methods or pass them around")
+				}
+				return false
+			}
+			if c.in.Saved && global(n) {
+				c.node(i, f, n, "a saved workflow calls the SDK directly, like await archive.query(...), so that it can be checked; do not store archive or pass it around")
+			}
+			n.ForEachChild(visit)
+			return false
+		}
+		f.AsNode().ForEachChild(visit)
+	}
+	return out
+}
+
+func (c *checkRun) rules(ch *tschecker.Checker, i int, f *ast.SourceFile) {
+	text := f.Text()
+	for _, m := range checkPragmaRe.FindAllStringIndex(text, -1) {
+		tok := astnav.GetTokenAtPosition(f, m[0])
+		if tok == nil || m[0] < scanner.GetTokenPosOfNode(tok, f, false) {
+			c.add(i, f, m[0], text[m[0]:m[1]]+" is not allowed, as it hides what the checker found: fix the error by narrowing the value, giving it a type, or asserting it once with as")
+		}
+	}
+	var keywords func(n *ast.Node) bool
+	keywords = func(n *ast.Node) bool {
+		if n.Kind == ast.KindAnyKeyword {
+			c.node(i, f, n, "any is not allowed: write the real type, or use unknown and narrow it with typeof, in or Array.isArray")
+		}
+		n.ForEachChild(keywords)
+		return false
+	}
+	before := len(c.errs)
+	f.AsNode().ForEachChild(keywords)
+	keyworded := len(c.errs) > before
+	reported := -1
+	var visit func(n *ast.Node) bool
+	visit = func(n *ast.Node) bool {
+		switch {
+		case ast.IsAssertionExpression(n):
+			in := ast.SkipParentheses(n.Expression())
+			if ast.IsAssertionExpression(in) && (in.Type().Kind == ast.KindUnknownKeyword || in.Type().Kind == ast.KindNeverKeyword) {
+				c.node(i, f, n, "a double cast through unknown is not allowed: it claims a type the value may not have, so narrow the value with a check, or fix the type it comes from")
+			}
+		}
+		n.ForEachChild(visit)
+		if keyworded || !ast.IsExpressionNode(n) || n.Kind == ast.KindYieldExpression || reported >= n.Pos() {
+			return false
+		}
+		up := n.Parent
+		for up != nil && ast.IsParenthesizedExpression(up) {
+			up = up.Parent
+		}
+		if up != nil && ast.IsAssertionExpression(up) {
+			return false
+		}
+		if t := ch.GetTypeAtLocation(n); t.Flags()&tschecker.TypeFlagsAny != 0 && t.AsIntrinsicType().IntrinsicName() == "any" {
+			reported = n.Pos()
+			src := strings.Join(strings.Fields(text[scanner.GetTokenPosOfNode(n, f, false):n.End()]), " ")
+			if len(src) > 60 {
+				src = src[:60] + "..."
+			}
+			c.node(i, f, n, fmt.Sprintf("%s has type any, which turns off checking for everything it touches: give it a type, like new Map<string, number>() or (x: unknown) =>, or assert it once with as", src))
+		}
+		return false
+	}
+	f.AsNode().ForEachChild(visit)
+}
+
+func (c *checkRun) check(plan checkPlan) checkOut {
+	types := c.in.Types
+	if plan.Types != "" {
+		types = plan.Types
+		delete(c.parsed, "/sdk.d.ts")
+	}
+	if plan.Types != "" || plan.More != "" {
+		delete(c.parsed, "/more.d.ts")
+		c.program(types, plan.More)
+	}
+	var out checkOut
+	for _, name := range []string{"/sdk.d.ts", "/more.d.ts"} {
+		f := c.p.GetSourceFile(name)
+		ds := c.p.GetSyntacticDiagnostics(c.ctx, f)
+		if c.in.Generated {
+			ds = append(ds, c.p.GetSemanticDiagnostics(c.ctx, f)...)
+		}
+		for _, d := range ds {
+			l, col := scanner.GetECMALineAndUTF16CharacterOfPosition(f, d.Pos())
+			out.Types = append(out.Types, fmt.Sprintf("%s:%d:%d %s", name, l+1, int(col)+1, checkText(d)))
+		}
+	}
+	ch, done := c.p.GetTypeChecker(c.ctx)
+	defer done()
+	for i := range c.in.Files {
+		f := c.p.GetSourceFile(checkName(i))
+		for _, d := range c.p.GetSemanticDiagnostics(c.ctx, f) {
+			c.add(i, f, d.Pos(), checkText(d))
+		}
+		c.rules(ch, i, f)
+	}
+	slices.SortStableFunc(c.errs, checkOrder)
+	seen := map[int]int{}
+	for _, e := range c.errs {
+		if seen[e.File]++; seen[e.File] <= runCheckErrs {
+			out.Errs = append(out.Errs, e)
+		}
+	}
+	for file, n := range seen {
+		if n > runCheckErrs {
+			out.Errs = append(out.Errs, checkErr{File: file, Line: c.lines[file], Col: 1, Msg: fmt.Sprintf("and %d more errors; fix these first", n-runCheckErrs)})
+		}
+	}
+	slices.SortStableFunc(out.Errs, checkOrder)
+	return out
+}
+
+func checkOrder(a, b checkErr) int {
+	return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Col, b.Col))
+}
+
+func checkEmit(source string, out *checkOut) {
+	vf := map[string]string{"/s.ts": checkWrap(checkFile{Source: source})}
+	opts := &core.CompilerOptions{Target: core.ScriptTargetES2020, NoLib: core.TSTrue, NoCheck: core.TSTrue, Types: []string{}, SourceMap: core.TSTrue, RemoveComments: core.TSTrue, ModuleDetection: core.ModuleDetectionKindLegacy, SingleThreaded: core.TSTrue}
+	cfg := tsoptions.NewParsedCommandLine(opts, []string{"/s.ts"}, tspath.ComparePathsOptions{UseCaseSensitiveFileNames: true, CurrentDirectory: "/"})
+	host := compiler.NewCompilerHost("/", bundled.WrapFS(vfstest.FromMap(vf, true)), bundled.LibPath(), nil, nil)
+	p := compiler.NewProgram(compiler.ProgramOptions{Host: host, Config: cfg})
+	nlines := strings.Count(source, "\n") + 1
+	f := p.GetSourceFile("/s.ts")
+	for _, d := range p.GetSyntacticDiagnostics(context.Background(), f) {
+		l, col := scanner.GetECMALineAndUTF16CharacterOfPosition(f, d.Pos())
+		out.Errs = append(out.Errs, checkErr{Line: min(max(l, 1), nlines), Col: int(col) + 1, Msg: checkText(d)})
+	}
+	if len(out.Errs) > 0 {
+		return
+	}
+	var sm string
+	p.Emit(context.Background(), compiler.EmitOptions{WriteFile: func(name, text string, _ *compiler.WriteFileData) error {
+		if strings.HasSuffix(name, ".map") {
+			sm = text
+		} else {
+			out.JS = text
+		}
+		return nil
+	}})
+	var m struct {
+		Mappings string `json:"mappings"`
+	}
+	json.Unmarshal([]byte(sm), &m)
+	out.Lines = make([]int32, strings.Count(out.JS, "\n")+2)
+	seen := -1
+	for x := range sourcemap.DecodeMappings(m.Mappings).Values() {
+		if x.GeneratedLine != seen && x.GeneratedLine < len(out.Lines) {
+			seen = x.GeneratedLine
+			out.Lines[seen] = int32(x.SourceLine)
+		}
+	}
+	for i := 1; i < len(out.Lines); i++ {
+		if out.Lines[i] == 0 {
+			out.Lines[i] = out.Lines[i-1]
+		}
+	}
+	if _, err := goja.Compile("script.js", out.JS, false); err != nil {
+		e := checkErr{Msg: strings.ReplaceAll(err.Error(), "SyntaxError: SyntaxError: ", "")}
+		if a := checkAtRe.FindStringSubmatch(e.Msg); a != nil {
+			n, _ := strconv.Atoi(a[1])
+			if n >= 1 && n <= len(out.Lines) {
+				e.Line, e.Col = min(max(int(out.Lines[n-1]), 1), nlines), 1
+			}
+		}
+		out.Errs, out.JS = append(out.Errs, e), ""
+	}
+}
+
+func runCheckChild() error {
+	debug.SetMaxStack(runCheckStack)
 	go func() {
 		var m runtime.MemStats
 		for {
-			if runtime.ReadMemStats(&m); m.Sys > runCompileMemory {
+			if runtime.ReadMemStats(&m); m.Sys > runCheckMemory {
 				os.Exit(1)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
 	}()
-	var in runEsbuildIn
-	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+	dec, enc := json.NewDecoder(os.Stdin), json.NewEncoder(os.Stdout)
+	var in checkIn
+	if err := dec.Decode(&in); err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(runEsbuild(in.Code, in.Map))
+	if !in.Check {
+		var out checkOut
+		checkEmit(in.Files[0].Source, &out)
+		return enc.Encode(out)
+	}
+	c := &checkRun{in: in, ctx: context.Background(), parsed: map[string]*ast.SourceFile{}}
+	for _, f := range in.Files {
+		c.lines = append(c.lines, strings.Count(f.Source, "\n")+1)
+	}
+	scan := c.scan()
+	if err := enc.Encode(scan); err != nil || len(scan.Errs) > 0 {
+		return err
+	}
+	var plan checkPlan
+	if err := dec.Decode(&plan); err != nil {
+		return err
+	}
+	out := c.check(plan)
+	if in.Emit && len(out.Errs) == 0 && len(out.Types) == 0 {
+		checkEmit(in.Files[0].Source, &out)
+	}
+	return enc.Encode(out)
 }
 
-func runEsbuildApart(code string, sm api.SourceMap) (api.TransformResult, error) {
-	var res api.TransformResult
-	ctx, cancel := context.WithTimeout(context.Background(), runCompileTime)
-	defer cancel()
+func checkApart(ctx context.Context, limit time.Duration, in checkIn, plan func(checkScan) (checkPlan, []checkErr, error)) (checkOut, error) {
+	var out checkOut
+	wait := time.NewTimer(limit)
+	defer wait.Stop()
 	select {
-	case runCompiles <- struct{}{}:
-		defer func() { <-runCompiles }()
+	case checkSlots <- struct{}{}:
+		defer func() { <-checkSlots }()
+	case <-wait.C:
+		return out, fmt.Errorf("too many scripts are being checked; try again: %w", errCheckLimit)
 	case <-ctx.Done():
-		return res, errors.New("too many long scripts are compiling; try again")
-	}
-	in, err := json.Marshal(runEsbuildIn{code, sm})
-	if err != nil {
-		return res, err
+		return out, ctx.Err()
 	}
 	self, err := os.Executable()
 	if err != nil {
-		return res, err
+		return out, err
 	}
-	cmd := exec.CommandContext(ctx, self, runEsbuildCommand)
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, self, runCheckCommand)
 	cmd.Env = []string{}
-	cmd.Stdin = bytes.NewReader(in)
-	out, err := cmd.Output()
-	if e := (*exec.ExitError)(nil); errors.As(err, &e) {
-		return res, errors.New("this script nests too deeply to compile; flatten it")
-	}
+	cmd.WaitDelay = time.Second
+	w, err := cmd.StdinPipe()
 	if err != nil {
-		return res, err
+		return out, err
 	}
-	return res, json.Unmarshal(out, &res)
+	r, err := cmd.StdoutPipe()
+	if err != nil {
+		return out, err
+	}
+	if err := cmd.Start(); err != nil {
+		return out, err
+	}
+	defer func() {
+		cmd.Process.Kill()
+		cmd.Wait()
+	}()
+	gone := func() error {
+		if ctx.Err() != nil {
+			return fmt.Errorf("checking this took over %s, so it did not run: simplify its types and nesting: %w", limit, errCheckLimit)
+		}
+		return fmt.Errorf("checking this ran out of stack or memory, so it did not run: flatten its nesting and simplify its types: %w", errCheckLimit)
+	}
+	send := func(v any) {
+		go func() {
+			b, _ := json.Marshal(v)
+			w.Write(b)
+		}()
+	}
+	dec := json.NewDecoder(r)
+	send(in)
+	if !in.Check {
+		if err := dec.Decode(&out); err != nil {
+			return out, gone()
+		}
+		return out, nil
+	}
+	var scan checkScan
+	if err := dec.Decode(&scan); err != nil {
+		return out, gone()
+	}
+	if len(scan.Errs) > 0 {
+		out.Errs = scan.Errs
+		return out, nil
+	}
+	p, bad, err := plan(scan)
+	if err != nil {
+		return out, err
+	}
+	send(p)
+	if err := dec.Decode(&out); err != nil {
+		return out, gone()
+	}
+	if len(bad) > 0 {
+		files := map[int]bool{}
+		for _, e := range bad {
+			files[e.File] = true
+		}
+		out.Errs = append(slices.DeleteFunc(out.Errs, func(e checkErr) bool { return files[e.File] }), bad...)
+		slices.SortStableFunc(out.Errs, checkOrder)
+	}
+	return out, nil
 }
 
-func runBuild(code string, sm api.SourceMap) (api.TransformResult, []runCompileErr) {
-	var res api.TransformResult
-	if len(code) <= runCompileHere {
-		res = runEsbuild(code, sm)
-	} else {
-		var err error
-		if res, err = runEsbuildApart(code, sm); err != nil {
-			return res, []runCompileErr{{msg: err.Error()}}
-		}
-	}
-	var errs []runCompileErr
-	for _, m := range res.Errors {
-		e := runCompileErr{msg: m.Text}
-		if l := m.Location; l != nil {
-			e.line, e.col, e.src = max(l.Line-1, 1), l.Column+1, strings.TrimSpace(l.LineText)
-		}
-		errs = append(errs, e)
-	}
-	return res, errs
+type runDesc struct {
+	ts  string
+	err error
 }
 
-func runCompile(code string) (string, error) {
-	js, errs := runTransform(code)
-	if len(errs) == 0 {
-		return js, nil
+type runPgType struct {
+	schema, name, typtype string
+	list                  bool
+}
+
+var (
+	runWriteRe     = regexp.MustCompile(`(?i)^\s*(INSERT|UPDATE|DELETE|MERGE|TRUNCATE|CREATE|ALTER|DROP)\b`)
+	runMaybeNullRe = regexp.MustCompile(`(?i)\b(left|right|full|outer|grouping|rollup|cube)\b`)
+)
+
+func (n *runNames) pg(t runPgType) string {
+	s := ""
+	switch {
+	case t.schema == "pg_catalog" && t.name == "oid":
+		s = "number"
+	case t.name == "record" || t.typtype == "p":
+		s = "Row"
+	case t.typtype == "c" && n.names["table."+t.name] != "":
+		s = n.names["table."+t.name]
+	case t.typtype == "c" && n.cat.typ(t.schema, t.name) == nil:
+		s = "Row"
+	default:
+		return n.ts(t.schema, t.name, t.list)
 	}
+	if t.list {
+		s += "[]"
+	}
+	return s
+}
+
+func runDescribe(ctx context.Context, tx pgx.Tx, n *runNames, queries []checkQuery) (map[string]runDesc, error) {
+	out := map[string]runDesc{}
+	types := map[uint32]runPgType{}
+	notNull := map[[2]uint32]bool{}
+	seen := map[uint32]bool{}
+	prepare := func(sql string) (*pgconn.StatementDescription, error, error) {
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		sd, err := tx.Conn().PgConn().Prepare(ctx, "", sql, nil)
+		if err != nil {
+			var pe *pgconn.PgError
+			if !errors.As(err, &pe) {
+				return nil, nil, err
+			}
+			return nil, err, sp.Rollback(ctx)
+		}
+		return sd, nil, sp.Commit(ctx)
+	}
+	for _, query := range queries {
+		q := query.SQL
+		if _, ok := out[q]; ok {
+			continue
+		}
+		if runWriteRe.MatchString(q) {
+			out[q] = runDesc{err: errors.New("archive.query only reads; change rows with archive.create, archive.update and archive.delete, and the schema with archive.migrate")}
+			continue
+		}
+		bare := strings.TrimRight(strings.TrimSpace(q), "; \t\r\n")
+		sd, bad, err := prepare(bare)
+		if err != nil {
+			return nil, err
+		}
+		if bad != nil {
+			out[q] = runDesc{err: &runQueryErr{bad, bare}}
+			continue
+		}
+		_, bad, err = prepare(runWrap + bare + "\n) SELECT to_jsonb(q) FROM q")
+		if err != nil {
+			return nil, err
+		}
+		text := false
+		var pe *pgconn.PgError
+		if errors.As(bad, &pe) {
+			if pe.Code != "42601" && pe.Code != "0A000" {
+				if pe.Position > int32(len(runWrap)) {
+					pe.Position -= int32(len(runWrap))
+				} else {
+					pe.Position = 0
+				}
+				out[q] = runDesc{err: &runQueryErr{bad, bare}}
+				continue
+			}
+			text = true
+		}
+		var want, rels []uint32
+		for _, f := range sd.Fields {
+			if _, ok := types[f.DataTypeOID]; !ok {
+				want = append(want, f.DataTypeOID)
+			}
+			if f.TableOID != 0 && !seen[f.TableOID] {
+				seen[f.TableOID] = true
+				rels = append(rels, f.TableOID)
+			}
+		}
+		if len(want) > 0 {
+			rows, _ := tx.Query(ctx, `SELECT t.oid, en.nspname::text, e.typname::text, e.typtype::text, t.typcategory = 'A' AND t.typelem <> 0
+				FROM pg_catalog.pg_type t JOIN pg_catalog.pg_type e ON e.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0 THEN t.typelem ELSE t.oid END
+				JOIN pg_catalog.pg_namespace en ON en.oid = e.typnamespace WHERE t.oid = ANY($1::oid[])`, want)
+			var oid uint32
+			var t runPgType
+			if _, err := pgx.ForEachRow(rows, []any{&oid, &t.schema, &t.name, &t.typtype, &t.list}, func() error {
+				types[oid] = t
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+		if len(rels) > 0 {
+			rows, _ := tx.Query(ctx, `SELECT attrelid::oid, attnum::int4 FROM pg_catalog.pg_attribute WHERE attrelid = ANY($1::oid[]) AND attnotnull AND attnum > 0`, rels)
+			var rel, att uint32
+			if _, err := pgx.ForEachRow(rows, []any{&rel, &att}, func() error {
+				notNull[[2]uint32{rel, att}] = true
+				return nil
+			}); err != nil {
+				return nil, err
+			}
+		}
+		nullable := text || runMaybeNullRe.MatchString(bare)
+		var b strings.Builder
+		b.WriteString("{ ")
+		done := map[string]bool{}
+		for _, f := range sd.Fields {
+			if done[f.Name] {
+				continue
+			}
+			done[f.Name] = true
+			ts := "string"
+			if !text {
+				ts = n.pg(types[f.DataTypeOID])
+			}
+			if ts != "unknown" && (nullable || !notNull[[2]uint32{f.TableOID, uint32(f.TableAttributeNumber)}]) {
+				ts += " | null"
+			}
+			fmt.Fprintf(&b, "%s: %s; ", runProp(f.Name), ts)
+		}
+		b.WriteString("}")
+		out[q] = runDesc{ts: b.String()}
+	}
+	return out, nil
+}
+
+func runQuote(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func runSQLTypes(queries []checkQuery, desc map[string]runDesc) string {
+	var b strings.Builder
+	done := map[string]bool{}
+	for _, q := range queries {
+		if d := desc[q.SQL]; d.err == nil && !done[q.SQL] {
+			done[q.SQL] = true
+			fmt.Fprintf(&b, "interface ArchiveSDK {\n    query(sql: %s, ...params: unknown[]): Promise<%s[]>;\n}\n", runQuote(q.SQL), d.ts)
+		}
+	}
+	return b.String()
+}
+
+func runSQLErrs(files []checkFile, queries []checkQuery, desc map[string]runDesc) []checkErr {
+	var out []checkErr
+	for _, q := range queries {
+		err := desc[q.SQL].err
+		if err == nil {
+			continue
+		}
+		e := checkErr{File: q.File, Line: q.Line, Col: q.Col, Msg: runMessage(err)}
+		var pe *pgconn.PgError
+		if errors.As(err, &pe) && pe.Position > 0 {
+			lead := len(q.SQL) - len(strings.TrimLeft(q.SQL, " \t\r\n"))
+			runes := []rune(strings.TrimSpace(q.SQL))
+			before := q.SQL[:lead] + string(runes[:min(int(pe.Position)-1, len(runes))])
+			lines := strings.SplitAfter(files[q.File].Source, "\n")
+			if q.Line <= len(lines) && q.Col <= len(lines[q.Line-1]) && strings.HasPrefix(strings.Join(lines[q.Line-1:], "")[q.Col:], before) {
+				if nl := strings.Count(before, "\n"); nl > 0 {
+					e.Line, e.Col = q.Line+nl, len(before)-strings.LastIndex(before, "\n")
+				} else {
+					e.Col += 1 + len(before)
+				}
+			}
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+func (a *Archive) checkOne(ctx context.Context, source, input string, saved bool) (checkOut, error) {
+	cat := a.catalog(ctx)
+	types, n := runTypesFor(cat, nil, false)
+	conns := a.RunConnections(ctx)
+	in := checkIn{Files: []checkFile{{source, input}}, Types: runDocs + "\n" + types + conns, Check: true, Emit: true, Saved: saved}
+	out, err := checkApart(ctx, runCheckTime, in, func(scan checkScan) (checkPlan, []checkErr, error) {
+		if scan.Migrates && !saved {
+			open, _ := runTypesFor(cat, nil, true)
+			return checkPlan{Types: runDocs + "\n" + open + conns}, nil, nil
+		}
+		if len(scan.Queries) == 0 {
+			return checkPlan{}, nil, nil
+		}
+		var desc map[string]runDesc
+		err := a.as(context.WithValue(ctx, storeReadKey{}, true), func(ctx context.Context) (err error) {
+			t, _ := ctx.Value(storeTxKey{}).(storeTx)
+			desc, err = runDescribe(ctx, t.tx, n, scan.Queries)
+			return err
+		})
+		if err != nil {
+			return checkPlan{}, nil, err
+		}
+		var bad []checkErr
+		if saved {
+			bad = runSQLErrs(in.Files, scan.Queries, desc)
+		}
+		return checkPlan{More: runSQLTypes(scan.Queries, desc)}, bad, nil
+	})
+	if err == nil && len(out.Types) > 0 {
+		err = errors.New("the generated types do not check: " + strings.Join(out.Types, "; "))
+	}
+	return out, err
+}
+
+func checkLimit(err error) string {
+	return strings.TrimSuffix(err.Error(), ": "+errCheckLimit.Error())
+}
+
+func runErrText(source string, errs []checkErr) string {
+	lines := strings.Split(source, "\n")
 	var msgs []string
 	for _, e := range errs {
-		if e.line > 0 {
-			msgs = append(msgs, e.text()+"\n  "+e.src)
-		} else {
-			msgs = append(msgs, e.msg)
+		s := e.text()
+		if e.Line > 0 && e.Line <= len(lines) {
+			s += "\n  " + strings.TrimSpace(lines[e.Line-1])
 		}
+		msgs = append(msgs, s)
 	}
-	return "", errors.New("compile error: " + strings.Join(msgs, "\n"))
+	return "compile error: " + strings.Join(msgs, "\n")
+}
+
+func (a *Archive) build(ctx context.Context, source string, saved bool) (string, []int32, string, error) {
+	var out checkOut
+	var err error
+	if saved {
+		out, err = checkApart(ctx, runCheckTime, checkIn{Files: []checkFile{{Source: source}}, Emit: true}, nil)
+	} else {
+		out, err = a.checkOne(ctx, source, "undefined", false)
+	}
+	if errors.Is(err, errCheckLimit) {
+		return "", nil, "compile error: " + checkLimit(err), nil
+	}
+	if err != nil {
+		return "", nil, "", err
+	}
+	if len(out.Errs) > 0 {
+		return "", nil, runErrText(source, out.Errs), nil
+	}
+	return out.JS, out.Lines, "", nil
 }
 
 func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
@@ -288,7 +955,7 @@ func (a *Archive) Run(ctx context.Context, code string) (*RunOutput, error) {
 	return out, err
 }
 
-func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, stamp bool) (*RunOutput, time.Time, error) {
+func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, saved bool) (*RunOutput, time.Time, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, time.Time{}, err
 	}
@@ -301,9 +968,12 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, s
 		a.refresh(ctx)
 	}
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
-	js, err := runCompile(code)
+	js, lines, bad, err := a.build(ctx, code, saved)
 	if err != nil {
-		out.Error = err.Error()
+		return nil, time.Time{}, err
+	}
+	if bad != "" {
+		out.Error = bad
 		return out, time.Now(), nil
 	}
 	limit := runTimeout
@@ -312,7 +982,7 @@ func (a *Archive) run(ctx context.Context, code string, input json.RawMessage, s
 	clock := &runClock{t: time.AfterFunc(limit, func() { cancel(context.DeadlineExceeded) }), end: time.Now().Add(limit), browse: browseTimeout, model: modelTimeout, do: doTimeout}
 	defer clock.t.Stop()
 	wrote := new(bool)
-	r := &runner{a: a, out: out, js: js, input: input, at: time.Now(), stamp: stamp, wrote: wrote, clock: clock}
+	r := &runner{a: a, out: out, src: code, js: js, lines: lines, input: input, at: time.Now(), stamp: saved, wrote: wrote, clock: clock}
 	err = a.as(context.WithValue(ctx, runWroteKey{}, wrote), r.run)
 	switch {
 	case err != nil && errors.Is(context.Cause(ctx), context.DeadlineExceeded):
@@ -355,15 +1025,18 @@ func (c *runClock) pause(budget *time.Duration, limit time.Duration, what string
 	}, nil
 }
 
-func (r *runner) nested(ctx context.Context, code string, input json.RawMessage) (*RunOutput, error) {
+func (r *runner) nested(ctx context.Context, code string, input json.RawMessage, saved bool) (*RunOutput, error) {
 	out := &RunOutput{Result: json.RawMessage("null"), Logs: []string{}}
 	if r.depth >= workflowDepth {
 		out.Error = fmt.Sprintf("workflows can run other workflows only %d deep; this one would be deeper", workflowDepth)
 		return out, nil
 	}
-	js, err := runCompile(code)
+	js, lines, bad, err := r.a.build(ctx, code, saved)
 	if err != nil {
-		out.Error = err.Error()
+		return nil, err
+	}
+	if bad != "" {
+		out.Error = bad
 		return out, nil
 	}
 	t, ok := ctx.Value(storeTxKey{}).(storeTx)
@@ -375,7 +1048,7 @@ func (r *runner) nested(ctx context.Context, code string, input json.RawMessage)
 		return nil, err
 	}
 	after := &[]func(){}
-	n := &runner{a: r.a, out: out, js: js, input: input, at: r.at, wrote: r.wrote, depth: r.depth + 1, clock: r.clock}
+	n := &runner{a: r.a, out: out, src: code, js: js, lines: lines, input: input, at: r.at, wrote: r.wrote, depth: r.depth + 1, clock: r.clock}
 	err = n.run(context.WithValue(ctx, storeTxKey{}, storeTx{sp, t.role, after, t.sch}))
 	switch {
 	case err != nil && ctx.Err() != nil:
@@ -508,8 +1181,8 @@ func (r *runner) errText(v goja.Value) string {
 	if st := o.Get("stack"); st != nil {
 		if m := runStackRe.FindStringSubmatch(st.String()); m != nil {
 			n, _ := strconv.Atoi(m[1])
-			if lines := strings.Split(r.js, "\n"); n >= 1 && n <= len(lines) {
-				msg += "\n  at: " + strings.TrimSpace(lines[n-1])
+			if lines := strings.Split(r.src, "\n"); n >= 1 && n <= len(r.lines) && r.lines[n-1] >= 1 && int(r.lines[n-1]) <= len(lines) {
+				msg += fmt.Sprintf("\n  at: line %d: %s", r.lines[n-1], strings.TrimSpace(lines[r.lines[n-1]-1]))
 			}
 		}
 	}
@@ -1230,14 +1903,17 @@ var runDocs = strings.ReplaceAll(runSDK, "{timeout}", runTimeout.String())
 func (a *Archive) RunTypes(ctx context.Context) string {
 	a.refresh(ctx)
 	cat := a.Catalog()
-	return runTypesFor(cat, a.syncShown(ctx, cat))
+	s, _ := runTypesFor(cat, a.syncShown(ctx, cat), false)
+	return s
 }
 
 func (a *Archive) RunConnections(ctx context.Context) string {
 	return a.actionTypes(ctx) + a.streamTypes(ctx)
 }
 
-var runStatic = append(runSDKTypes(runSDK), "Actions", "Streams", "Tables", "Synced")
+var runStatic = append(append(runSDKTypes(runSDK), "Actions", "Streams", "Tables", "Creates", "Synced"), strings.Fields(runGlobals)...)
+
+const runGlobals = `AggregateError Array ArrayBuffer ArrayBufferConstructor ArrayLike Atomics Awaited BigInt BigInt64Array BigUint64Array Boolean CallableFunction Capitalize ConstructorParameters DataView Date DisposableStack Error EvalError Exclude Extract FinalizationRegistry Float16Array Float32Array Float64Array Function Generator GeneratorFunction Int16Array Int32Array Int8Array Intl Iterable Iterator JSON Lowercase Map Math NewableFunction NoInfer NonNullable Number Object Omit OmitThisParameter Parameters Partial Pick Promise PromiseLike PropertyDescriptor PropertyKey Proxy RangeError Readonly ReadonlyArray ReadonlyMap ReadonlySet Record ReferenceError Reflect RegExp RegExpExecArray RegExpMatchArray Required ReturnType Set SharedArrayBuffer String Symbol SyntaxError TemplateStringsArray ThisParameterType ThisType TypeError URIError Uint16Array Uint32Array Uint8Array Uint8ClampedArray Uncapitalize Uppercase WeakKey WeakMap WeakRef WeakSet`
 
 func runSDKTypes(src string) []string {
 	var out []string
@@ -1247,12 +1923,17 @@ func runSDKTypes(src string) []string {
 	return out
 }
 
+var runNotIdentRe = regexp.MustCompile(`[^A-Za-z0-9_$]+`)
+
 func runPascal(s string) string {
 	var b strings.Builder
-	for _, w := range strings.Split(s, "_") {
+	for _, w := range strings.Split(runNotIdentRe.ReplaceAllString(s, "_"), "_") {
 		if w != "" {
 			b.WriteString(strings.ToUpper(w[:1]) + w[1:])
 		}
+	}
+	if b.Len() == 0 || b.String()[0] >= '0' && b.String()[0] <= '9' {
+		return "T" + b.String()
 	}
 	return b.String()
 }
@@ -1322,8 +2003,8 @@ func runFormat(schema, name string) string {
 
 var runSyncedCols = []string{"access", "connection", "stream", "source_id"}
 
-func runTypesFor(cat *Catalog, shown map[string]bool) string {
-	names := slices.DeleteFunc(cat.names(), func(name string) bool { return !shown[name] })
+func runTypesFor(cat *Catalog, shown map[string]bool, open bool) (string, *runNames) {
+	names := slices.DeleteFunc(cat.names(), func(name string) bool { return shown != nil && !shown[name] })
 	n := &runNames{cat: cat, used: map[string]bool{}, names: map[string]string{}}
 	for _, s := range runStatic {
 		n.used[s] = true
@@ -1356,14 +2037,14 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 			case "e":
 				vals := make([]string, len(t.Enum))
 				for i, v := range t.Enum {
-					vals[i] = strconv.Quote(v)
+					vals[i] = runQuote(v)
 				}
 				fmt.Fprintf(&b, "type %s = %s;\n", n.names[k], strings.Join(vals, " | "))
 			case "c":
 				fmt.Fprintf(&b, "interface %s {\n", n.names[k])
 				for _, at := range t.Attrs {
 					b.WriteString(runDoc("    ", at.Description, runFormat(at.Schema, at.Type)))
-					fmt.Fprintf(&b, "    %s?: %s;\n", runProp(at.Name), n.ts(at.Schema, at.Type, at.List))
+					fmt.Fprintf(&b, "    %s?: %s | null;\n", runProp(at.Name), n.ts(at.Schema, at.Type, at.List))
 				}
 				b.WriteString("}\n")
 			}
@@ -1378,8 +2059,31 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 		tables[name] = n.name("table."+name, name)
 	}
 	b.WriteString("\n/** Table name to row type. */\ninterface Tables {\n")
-	for _, name := range names {
-		fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), tables[name])
+	if open {
+		b.WriteString("    [table: string]: Row;\n")
+	} else {
+		for _, name := range names {
+			fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), tables[name])
+		}
+	}
+	b.WriteString("}\n\n/** Table name to the columns a create must set. */\ninterface Creates {\n")
+	if open {
+		b.WriteString("    [table: string]: never;\n")
+	} else {
+		for _, name := range names {
+			must := []string{}
+			if tb := cat.Tables[name]; tb.Schema == "public" {
+				for _, c := range tb.Columns {
+					if c.writable() && c.required() {
+						must = append(must, runQuote(c.Name))
+					}
+				}
+			}
+			if len(must) == 0 {
+				must = append(must, "never")
+			}
+			fmt.Fprintf(&b, "    %s: %s;\n", runProp(name), strings.Join(must, " | "))
+		}
 	}
 	b.WriteString("}\n")
 	field := func(tb *Table, c *Column) string {
@@ -1403,20 +2107,19 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 				desc += "; set it on every create"
 			}
 		}
-		opt := "?"
-		if c.required() {
-			opt = ""
-		}
 		ts := n.ts(c.Schema, c.Type, c.List)
 		switch {
 		case tb.isWorkflow() && c.Name == "on":
-			ts = "WorkflowOn | null"
+			ts = "WorkflowOn"
 		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "logs":
 			ts = "string[]"
 		case tb.Schema == "archive" && tb.Name == "workflow_run" && c.Name == "result":
-			ts = "any"
+			ts = "unknown"
 		}
-		return runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen) + fmt.Sprintf("    %s%s: %s;\n", runProp(c.Name), opt, ts)
+		if !c.NotNull && ts != "unknown" {
+			ts += " | null"
+		}
+		return runDoc("    ", desc, ref, runFormat(c.Schema, c.Type), gen) + fmt.Sprintf("    %s: %s;\n", runProp(c.Name), ts)
 	}
 	syncedFields := func(tb *Table) string {
 		var out strings.Builder
@@ -1455,9 +2158,12 @@ func runTypesFor(cat *Catalog, shown map[string]bool) string {
 			}
 			b.WriteString(field(tb, c))
 		}
+		if tb.isWorkflow() {
+			b.WriteString("    /** The id of the group that may see it; only you when left out. Not read back. */\n    access?: string | null;\n")
+		}
 		b.WriteString("}\n")
 	}
-	return b.String()
+	return b.String(), n
 }
 
 var runIdentRe = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$]*$`)
@@ -1466,5 +2172,5 @@ func runProp(s string) string {
 	if runIdentRe.MatchString(s) {
 		return s
 	}
-	return strconv.Quote(s)
+	return runQuote(s)
 }

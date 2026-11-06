@@ -2257,7 +2257,35 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 		done[p.ID] = true
 		for _, n := range actionNames(acts) {
 			act := acts[n]
-			actionEntry(&b, p.ID+"."+n, act.Doc, act.Input, act.Output)
+			out := act.Output
+			if p.MCP != "" {
+				out = nil
+			}
+			actionEntry(&b, p.ID+"."+n, act.Doc, act.Input, out)
+		}
+	}
+	b.WriteString("}\n")
+	return b.String()
+}
+
+func actionsNamed(names []string) string {
+	var b strings.Builder
+	b.WriteString("interface Actions {\n")
+	done := map[string]bool{}
+	for _, name := range names {
+		id, tool, ok := strings.Cut(name, ".")
+		if !ok || done[name] {
+			continue
+		}
+		done[name] = true
+		k := connect.Get(id)
+		if k == nil {
+			continue
+		}
+		if k.MCP != "" {
+			actionEntry(&b, name, "", nil, nil)
+		} else if act := k.Actions[tool]; act != nil {
+			actionEntry(&b, name, act.Doc, act.Input, act.Output)
 		}
 	}
 	b.WriteString("}\n")
@@ -2266,7 +2294,7 @@ func (a *Archive) actionTypes(ctx context.Context) string {
 
 func actionEntry(b *strings.Builder, name, doc string, input, output any) {
 	b.WriteString(runDoc("    ", strings.Join(strings.Fields(doc), " ")))
-	out := "any"
+	out := "unknown"
 	if output != nil {
 		out = schemaTS(output, "        ", 0)
 	}
@@ -2276,7 +2304,7 @@ func actionEntry(b *strings.Builder, name, doc string, input, output any) {
 func schemaTS(v any, indent string, depth int) string {
 	var m map[string]any
 	if b, err := json.Marshal(v); err != nil || json.Unmarshal(b, &m) != nil || m == nil || depth > 6 {
-		return "any"
+		return "unknown"
 	}
 	if e, ok := m["enum"].([]any); ok && len(e) > 0 {
 		var parts []string
@@ -2314,7 +2342,7 @@ func schemaTS(v any, indent string, depth int) string {
 		types = []string{"object"}
 	}
 	if len(types) == 0 {
-		return "any"
+		return "unknown"
 	}
 	var parts []string
 	for _, t := range types {
@@ -2332,7 +2360,7 @@ func schemaTS(v any, indent string, depth int) string {
 		case "object":
 			parts = append(parts, schemaObject(m, indent, depth))
 		default:
-			parts = append(parts, "any")
+			parts = append(parts, "unknown")
 		}
 	}
 	return strings.Join(parts, " | ")
@@ -2347,7 +2375,7 @@ func schemaObject(m map[string]any, indent string, depth int) string {
 		if m["additionalProperties"] == false {
 			return "{}"
 		}
-		return "Record<string, any>"
+		return "Record<string, unknown>"
 	}
 	var required []string
 	if rs, ok := m["required"].([]any); ok {
