@@ -1,5 +1,5 @@
 <script>
-  import { Ellipsis, UsersRound, UserPlus, UserMinus, Table2, Plug, Pencil, Trash2 } from '@lucide/svelte';
+  import { UsersRound, UserPlus, UserMinus, Table2, Plug, Pencil, Trash2 } from '@lucide/svelte';
   import TopBar from '../components/TopBar.svelte';
   import Page from '../components/Page.svelte';
   import Breadcrumbs from '../components/Breadcrumbs.svelte';
@@ -15,18 +15,13 @@
   import IconButton from '../components/IconButton.svelte';
   import Menu from '../components/Menu.svelte';
   import MenuItem from '../components/MenuItem.svelte';
-  import MenuItems from '../components/MenuItems.svelte';
   import List from '../components/List.svelte';
   import ListItem from '../components/ListItem.svelte';
   import EmptyState from '../components/EmptyState.svelte';
-  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, toggleGroup, isArchiveOwner, tableOf } from '../lib/app.svelte.js';
+  import { ws, seedOf, members, groups, usage, connections, groupById, updateGroup, setGroup, atLeast, tableOf } from '../lib/app.svelte.js';
   import { renameGroupPrompt, deleteGroupConfirm, usesText } from '../lib/menus.js';
-  import { SEPARATOR } from '../lib/contextmenu.svelte.js';
   import { go } from '../lib/router.svelte.js';
 
-  // A group's page: its name and description, which an owner changes, who is in it, and where it is used, the
-  // tables whose rows have it as their access and the integrations narrowed to it. While it is used it cannot
-  // be deleted, and the page says why.
   let { id } = $props();
 
   members.use();
@@ -35,9 +30,9 @@
   usage.use(() => id);
 
   const group = $derived(groupById(id));
-  const owner = $derived(isArchiveOwner());
-  const people = $derived(ws().members.filter((m) => m.groups.includes(id)));
-  const others = $derived(ws().members.filter((m) => !m.groups.includes(id)));
+  const manages = $derived(atLeast('manager'));
+  const people = $derived(ws().members.filter((m) => m.group === id));
+  const others = $derived(ws().members.filter((m) => m.group !== id));
   const uses = $derived(ws().usage[id]);
   const integrations = $derived((ws().integrations ?? []).filter((i) => i.connected && i.access === id));
   const tables = $derived((uses ?? []).filter((u) => u.table !== 'connection'));
@@ -47,7 +42,7 @@
   const memberColumns = $derived([
     { key: 'name', label: 'Name' },
     { key: 'email', label: 'Email', muted: true, width: 'lg' },
-    ...(owner ? [{ key: 'menu', label: '', width: 'xs', align: 'end' }] : [])
+    ...(manages ? [{ key: 'menu', label: '', width: 'xs', align: 'end' }] : [])
   ]);
   const placeOf = (table) => (table === 'file' ? '/library' : tableOf(table) ? `/database/${table}` : null);
 
@@ -67,18 +62,16 @@
 
 {#if group}
   <Page>
-    <PageHeader title={group.name} renameLabel="Rename group" onrename={owner ? (name) => updateGroup(group, { name }) : undefined}>
+    <PageHeader title={group.name} renameLabel="Rename group" onrename={manages ? (name) => updateGroup(group, { name }) : undefined}>
       {#snippet actions()}
-        {#if owner}
-          <Menu placement="bottom-end" width="sm" label="Group actions">
-            {#snippet trigger(props)}<IconButton icon={Ellipsis} label="Group actions" {...props} />{/snippet}
-            <MenuItems items={[{ label: 'Rename', icon: Pencil, onselect: () => renameGroupPrompt(group) }, SEPARATOR, { label: 'Delete', icon: Trash2, danger: true, onselect: remove }]} />
-          </Menu>
+        {#if manages}
+          <IconButton icon={Pencil} label="Rename" onclick={() => renameGroupPrompt(group)} />
+          <IconButton icon={Trash2} label="Delete" onclick={remove} />
         {/if}
       {/snippet}
       {#if describing}
         <InlineEdit value={group.description} label="Description" onsave={(description) => { describing = false; updateGroup(group, { description }); }} oncancel={() => (describing = false)} />
-      {:else if owner}
+      {:else if manages}
         <button type="button" class="describe" onclick={() => (describing = true)}>
           <Text tone={group.description ? 'secondary' : 'tertiary'}>{group.description || 'Add a description'}</Text>
         </button>
@@ -90,11 +83,11 @@
     <Stack gap="8">
       <Section title={people.length === 1 ? '1 member' : `${people.length} members`}>
         {#snippet actions()}
-          {#if owner && others.length}
-            <Menu placement="bottom-end" width="md" label="Add a member">
+          {#if manages && others.length}
+            <Menu end width="md" label="Add a member">
               {#snippet trigger(props)}<Button size="sm" icon={UserPlus} {...props}>Add member</Button>{/snippet}
               {#each others as m (m.id)}
-                <MenuItem onselect={() => toggleGroup(m, id)}>
+                <MenuItem onselect={() => setGroup(m, id)}>
                   {#snippet leading()}<Avatar name={m.name} seed={seedOf(m)} size="xs" />{/snippet}
                   {m.name}
                 </MenuItem>
@@ -110,7 +103,7 @@
               {:else if col.key === 'email'}
                 {row.email}
               {:else if col.key === 'menu'}
-                <IconButton icon={UserMinus} label={`Remove ${row.name} from ${group.name}`} size="sm" onclick={() => toggleGroup(row, id)} />
+                <IconButton icon={UserMinus} label={`Remove ${row.name} from ${group.name}`} size="sm" onclick={() => setGroup(row, null)} />
               {/if}
             {/snippet}
           </Table>
@@ -131,7 +124,7 @@
               </ListItem>
             {/each}
             {#each integrations as i (i.id)}
-              <ListItem href={`/archive/integrations/${i.id}`} icon={Plug}>
+              <ListItem href={`/settings/integrations/${i.id}`} icon={Plug}>
                 <Text>{i.name}</Text>
                 <Text tone="tertiary">Narrowed to {group.name}</Text>
               </ListItem>
@@ -140,7 +133,7 @@
         {:else}
           <Text tone="tertiary">No row is limited to {group.name}.</Text>
         {/if}
-        {#if owner}
+        {#if manages}
           <Stack direction="row" gap="3" align="center" wrap>
             <Button variant="danger" disabled={!uses || inUse} onclick={remove}>Delete group</Button>
             {#if inUse}

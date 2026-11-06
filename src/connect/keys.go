@@ -9,33 +9,85 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 )
 
-// Key connectors are the services that let an app in with what a person pastes, not with a sign-in: an API key
-// and the token of an app made in their account, like Karbon's, or an app's token and the address of the store
-// it is for, like Shopify's. Its Keys say what to ask for; connecting checks them by asking the service whose
-// account they are (Account), and keeps them as an OAuth connector keeps its refresh token, sealed with the
-// workspace key, so they are never shown again. A key that is not Secret, like a store's address, is kept as the
-// connection's Meta too. A key never refreshes and is never revoked by Archive: the person ends it where they
-// made it, and connects again with a new one. Keys that sign in, like a token the service trades for a session, do
-// so in the connector's Let, and keys that are a client certificate, its Cert, go with every request as mutual TLS.
+const mintLasts = 50 * time.Minute
 
-// Key is something a key connector asks for.
 type Key struct {
-	// Name is its name in the connector's code and in the API, Label what the form says, and Help where to find
-	// it, for the form.
-	Name  string `json:"name"`
-	Label string `json:"label"`
-	Help  string `json:"help,omitempty"`
-	// Secret says it is a secret: the form hides it, and it is kept only sealed.
-	Secret bool `json:"secret,omitempty"`
+	Name   string `json:"name"`
+	Label  string `json:"label"`
+	Help   string `json:"help,omitempty"`
+	Link   string `json:"link,omitempty"`
+	Secret bool   `json:"secret,omitempty"`
+	File   bool   `json:"file,omitempty"`
+	Find   string `json:"-"`
+	As     string `json:"-"`
+	Places string `json:"places,omitempty"`
 }
 
-// keyProvider is the key connector c, available unless it names an Env this server does not set.
+type Link struct {
+	Start Req
+	Token Path
+	Swap  Req
+	Keep  map[string]Path
+	Meta  []string
+}
+
+func (l *Link) check() error {
+	if err := l.Start.check("start", "client", "option", "user", "hook", "back"); err != nil {
+		return err
+	}
+	if l.Token == "" || len(l.Keep) == 0 {
+		return errors.New("link: needs Token and Keep")
+	}
+	return l.Swap.check("swap", "client", "option", "key")
+}
+
+func (p *Provider) LinkToken(ctx context.Context, user, hook, back string) (string, error) {
+	if p.Link == nil {
+		return "", fmt.Errorf("%s has no widget to connect with", p.Name)
+	}
+	c := p.openKeys(ctx, nil, nil)
+	defer c.Close()
+	sc := c.scope()
+	sc["user"], sc["hook"], sc["back"] = user, hook, back
+	ans, err := c.req(p.Link.Start, sc)
+	if err != nil {
+		return "", err
+	}
+	tok := text(pick(ans, p.Link.Token))
+	if tok == "" {
+		return "", fmt.Errorf("%s answered without %s", p.Name, p.Link.Token)
+	}
+	return tok, nil
+}
+
+func (p *Provider) swap(ctx context.Context, keys map[string]string) (kept, meta map[string]string, err error) {
+	c := p.openKeys(ctx, keys, nil)
+	defer c.Close()
+	ans, err := c.req(p.Link.Swap, c.scope())
+	if err != nil {
+		return nil, nil, err
+	}
+	kept, meta = map[string]string{}, map[string]string{}
+	for name, at := range p.Link.Keep {
+		if kept[name] = text(pick(ans, at)); kept[name] == "" {
+			return nil, nil, fmt.Errorf("%s answered without %s", p.Name, at)
+		}
+		if slices.Contains(p.Link.Meta, name) {
+			meta[name] = kept[name]
+		}
+	}
+	return kept, meta, nil
+}
+
 func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 	p := &Provider{Connector: c}
 	if c.Env == "" {
@@ -55,10 +107,8 @@ func keyProvider(c *Connector, getenv func(string) string) (*Provider, bool) {
 	return p, true
 }
 
-// KeyGrant is the account the keys are for, to keep, once the service says whose they are. Every key is
-// needed, cut of the space around it.
 func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant, error) {
-	if len(p.Keys) == 0 {
+	if !p.Keyed() {
 		return nil, fmt.Errorf("%s connects by signing in, not with keys", p.Name)
 	}
 	kept, meta := map[string]string{}, map[string]string{}
@@ -72,7 +122,23 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 			meta[k.Name] = v
 		}
 	}
-	c := p.openKeys(ctx, kept, meta)
+	if p.Link != nil {
+		var err error
+		if kept, meta, err = p.swap(ctx, kept); err != nil {
+			return nil, fmt.Errorf("%s could not be connected: %w", p.Name, err)
+		}
+	}
+	open, err := kept, error(nil)
+	if p.Trade != nil || p.Mint != nil {
+		if open, _, err = p.trade(ctx, kept); err != nil {
+			var r *Refusal
+			if errors.As(err, &r) && r.Status/100 == 4 {
+				return nil, fmt.Errorf("%s did not take those keys: %s", p.Name, r.Message)
+			}
+			return nil, fmt.Errorf("%s could not be connected with those keys: %w", p.Name, err)
+		}
+	}
+	c := p.openKeys(ctx, open, meta)
 	defer c.Close()
 	account := p.Name
 	if p.Account != nil {
@@ -87,17 +153,48 @@ func (p *Provider) KeyGrant(ctx context.Context, keys map[string]string) (*Grant
 		account = a
 	}
 	b, _ := json.Marshal(kept)
-	return &Grant{Account: account, Refresh: string(b), Meta: meta}, nil
+	return &Grant{Account: account, Refresh: string(b), Scopes: []string{}, Meta: meta}, nil
 }
 
-// keysFrom are the keys a grant kept, as KeyGrant wrote them.
+func (p *Provider) trade(ctx context.Context, keys map[string]string) (map[string]string, time.Time, error) {
+	c := &Client{ctx: ctx, p: p, http: client, keys: keys}
+	sc := c.scope()
+	if p.Mint != nil {
+		if _, err := runSteps(c, p.Mint, sc); err != nil {
+			return nil, time.Time{}, err
+		}
+		out := maps.Clone(keys)
+		for k, v := range sc["key"].(map[string]any) {
+			out[k] = text(v)
+		}
+		return out, time.Now().Add(mintLasts), nil
+	}
+	if id, secret := keys["client_id"], keys["client_secret"]; id != "" {
+		sc["basic"] = basic(id, secret)
+	} else {
+		sc["basic"] = basic(p.clientID, p.secret)
+	}
+	ans, err := c.req(*p.Trade, sc)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	out := maps.Clone(keys)
+	if out["access"] = text(pick(ans, "access_token")); out["access"] == "" {
+		return nil, time.Time{}, fmt.Errorf("%s gave no access token for those keys", p.Name)
+	}
+	var end time.Time
+	if s := atoi(text(pick(ans, "expires_in"))); s > 0 {
+		end = time.Now().Add(time.Duration(s) * time.Second)
+	}
+	return out, end, nil
+}
+
 func keysFrom(s string) map[string]string {
 	keys := map[string]string{}
 	json.Unmarshal([]byte(s), &keys)
 	return keys
 }
 
-// openKeys is a Client of the account keys are for, whose requests Authorize signs.
 func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *Client {
 	c := &Client{ctx: ctx, p: p, keys: keys, Meta: meta}
 	kt := &keyTransport{c: c, base: http.DefaultTransport}
@@ -119,10 +216,8 @@ func (p *Provider) openKeys(ctx context.Context, keys, meta map[string]string) *
 	return c
 }
 
-// pemRe is a PEM block, whatever spaces a form left in it or took out of it.
 var pemRe = regexp.MustCompile(`-----BEGIN ([A-Z0-9 ]+)-----([A-Za-z0-9+/=\s]*)-----END ([A-Z0-9 ]+)-----`)
 
-// pemOf is the PEM blocks pasted in s, each written again as PEM has it: a form's field may have joined its lines.
 func pemOf(s string) []byte {
 	var b bytes.Buffer
 	for _, m := range pemRe.FindAllStringSubmatch(s, -1) {
@@ -135,11 +230,8 @@ func pemOf(s string) []byte {
 	return b.Bytes()
 }
 
-// Key is the key name of a key connector's account, like its store's address.
 func (c *Client) Key(name string) string { return c.keys[name] }
 
-// keyTransport signs each request with its connector's Authorize, over base, which presents its certificate when it
-// has one; err is a certificate that cannot be.
 type keyTransport struct {
 	c    *Client
 	base http.RoundTripper

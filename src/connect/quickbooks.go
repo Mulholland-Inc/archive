@@ -6,25 +6,6 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// QuickBooks Online, through Intuit's accounting API. It reads ARCHIVE_QUICKBOOKS, an app's production keys
-// from developer.intuit.com, whose redirect URIs list <API>/connect/quickbooks/callback; ?sandbox=1 on the
-// variable, with the app's development keys, reads sandbox companies instead. Intuit has no read-only scope,
-// so com.intuit.quickbooks.accounting is all of it, and the actions only read. The callback names the
-// company, realmId, which every call needs; a person connects one company at a time, and connects again for
-// another. Intuit replaces the refresh token about once a day.
-//
-// It syncs the books into the ledger tables: the chart of accounts, customers, vendors, employees, items, and
-// every kind of transaction with its lines, a stream each. Each is listed whole the first time, 1000 a page,
-// the inactive too; after that Intuit's change data capture (CDC) says what changed since the last sync began,
-// deleted too, as long as that was within 30 days, and a stream whose last sync is older, or which changed
-// more than CDC answers at once, is listed whole again. Pages overlap by 50, so a record deleted while a listing
-// runs, which moves the ones after it a place back, skips none of them; those read twice are written once.
-//
-// Its pushes are the Intuit app's webhooks, set up once for each of its environments: its endpoint
-// <API>/push/quickbooks, the entities QuickBooks streams, and its verifier token the hook option of
-// ARCHIVE_QUICKBOOKS. intuit-signature is the base64 HMAC-SHA256 of the body with the verifier token. A push is
-// an array of CloudEvents, each with intuitaccountid, the realmId of the company it is for; one of the format
-// before, { eventNotifications: [{ realmId }] }, is read too.
 func init() {
 	Register(&Connector{
 		ID: "quickbooks", Name: "QuickBooks", Integration: true, Options: "?sandbox=1 for development keys, &hook=<webhooks verifier token> for its pushes",
@@ -34,7 +15,6 @@ func init() {
 			{As: "host", In: "quickbooks"},
 			{If: "option/sandbox", As: "host", In: "sandbox-quickbooks"},
 		},
-		// Intuit tags every answer with this, which its support asks for.
 		Trace: "intuit_tid",
 		Endpoint: oauth2.Endpoint{AuthURL: "https://appcenter.intuit.com/connect/oauth2", TokenURL: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
 			AuthStyle: oauth2.AuthStyleInHeader},
@@ -136,32 +116,24 @@ func init() {
 const (
 	qboDoc = ", as a query answers, the inactive too: listed whole the first time, 1000 a page, and then what " +
 		"CDC says changed since the sync before, deleted too, or listed whole again when that was over 29 days before."
-	qboItems  Path = "QueryResponse/{entity}"
-	qboEdited Path = "MetaData/LastUpdatedTime"
-	// A query lists only the active of these unless asked for the inactive too.
-	qboActive = " WHERE Active IN (true, false)"
-	// A company with one currency names none: US dollars.
-	qboCurrency     = "coalesce(nullif(data#>>'{CurrencyRef,value}', ''), 'USD')"
-	qboEditedAt SQL = "archive.sync_at(data#>>'{MetaData,LastUpdatedTime}')"
+	qboItems    Path = "QueryResponse/{entity}"
+	qboEdited   Path = "MetaData/LastUpdatedTime"
+	qboActive        = " WHERE Active IN (true, false)"
+	qboCurrency      = "coalesce(nullif(data#>>'{CurrencyRef,value}', ''), 'USD')"
+	qboEditedAt SQL  = "archive.sync_at(data#>>'{MetaData,LastUpdatedTime}')"
 )
 
 var (
-	qboV = Q{"minorversion": "75"}
-	// Pages are in the order of ids, so a record made while the listing runs comes last; a company that does not sort an
-	// entity by id lists it in its own order.
+	qboV    = Q{"minorversion": "75"}
 	qboList = Req{URL: "/query", Query: Q{"minorversion": "75", "query": "SELECT * FROM {entity}{active|} ORDERBY Id STARTPOSITION {page} MAXRESULTS 1000"},
 		Or: &Req{URL: "/query", Query: Q{"minorversion": "75", "query": "SELECT * FROM {entity}{active|} STARTPOSITION {page} MAXRESULTS 1000"}}}
 	qboPage   = Offset{From: 1, Size: 1000, Step: 950}
 	qboChange = SinceTime{Req: Req{URL: "/cdc", Query: Q{"entities": "{entity}", "changedSince": "{since}", "minorversion": "75"}},
 		Items: "CDCResponse/*/QueryResponse/*/{entity}/*", Cap: 1000, Lasts: true, Within: 29 * 24 * time.Hour}
-	qboKind = Obj{"kind": "{entity}"}
-	qboGone = []Test{{At: "status", Is: "Deleted"}}
-	// A 400 is an entity the company's plan does not have, like purchase orders without QuickBooks Plus.
-	qboDeny = []Deny{{Status: []int{400}, Why: "QuickBooks does not list {entity} for this company: {message}"}}
-	// A customer's, vendor's or employee's id is only theirs, kept with the entity's name before it, as they share a table.
-	qboKeyed = []Reads{{Of: "{entity}:{Id}"}}
-	// A customer, vendor or employee as a contact, who is the person of its email, with its billing address, or an
-	// employee's own, on one line.
+	qboKind    = Obj{"kind": "{entity}"}
+	qboGone    = []Test{{At: "status", Is: "Deleted"}}
+	qboDeny    = []Deny{{Status: []int{400}, Why: "QuickBooks does not list {entity} for this company: {message}"}}
+	qboKeyed   = []Reads{{Of: "{entity}:{Id}"}}
 	qboContact = Map{Table: "ledger_contact",
 		Cols: map[string]SQL{"kind": "lower(data->>'kind')", "title": "data->>'DisplayName'", "company": "data->>'CompanyName'", "email": "archive.sync_email(data#>>'{PrimaryEmailAddr,Address}')",
 			"phone": "data#>>'{PrimaryPhone,FreeFormNumber}'",
@@ -170,9 +142,6 @@ var (
 				FROM (SELECT coalesce(nullif(data->'BillAddr', '{}'::jsonb), data->'PrimaryAddr') a) x)`,
 			"balance": "archive.sync_money(data->>'Balance', " + qboCurrency + ")", "active": "archive.sync_bool(data->'Active')", "edited_at": qboEditedAt},
 		People: map[string]SQL{"person": "data#>>'{PrimaryEmailAddr,Address}'"}}
-	// A transaction as an entry of the books, with its lines but the subtotals, which add up others. Who it is with is
-	// its customer, its vendor, or the entity it names, which says which; the account it pays from or into is the first
-	// it names of those that say so.
 	qboEntry = Map{Table: "ledger_entry",
 		Cols: map[string]SQL{"kind": "data->>'kind'", "number": "data->>'DocNumber'", "txn_on": "archive.sync_day(data->>'TxnDate')", "due_on": "archive.sync_day(data->>'DueDate')",
 			"contact_name": `CASE WHEN nullif(data#>>'{CustomerRef,value}', '') IS NOT NULL THEN data#>>'{CustomerRef,name}' WHEN nullif(data#>>'{VendorRef,value}', '') IS NOT NULL THEN data#>>'{VendorRef,name}' ELSE data#>>'{EntityRef,name}' END`,

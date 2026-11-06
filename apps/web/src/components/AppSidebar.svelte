@@ -1,6 +1,6 @@
 <script>
-  import { Plus, Search, Library, Database, Workflow, Lock, Settings } from '@lucide/svelte';
-  import { layoutOf } from '../layouts/index.js';
+  import { Plus, Library, Database, Workflow, Blocks, Lock, Settings } from '@lucide/svelte';
+  import { viewIcon } from '../layouts/icons.svelte.js';
   import Sidebar from './Sidebar.svelte';
   import SidebarItem from './SidebarItem.svelte';
   import SidebarSection from './SidebarSection.svelte';
@@ -10,25 +10,23 @@
   import MenuItem from './MenuItem.svelte';
   import MenuSeparator from './MenuSeparator.svelte';
   import ArchiveRail from './ArchiveRail.svelte';
-  import AccountMenu from './AccountMenu.svelte';
-  import ChatActions from './ChatActions.svelte';
-  import PinButton from './PinButton.svelte';
-  import { app, ws, openArchiveSettings, closeDrawer, pinnedFirst, switchArchive, createArchive, renameChat, renameView, isArchiveOwner, chats, workflows, members, schema } from '../lib/app.svelte.js';
-
-  chats.use();
-  schema.use();
-  workflows.use();
-  members.use();
+  import AccountCard from './AccountCard.svelte';
+  import AgentAvatar from './AgentAvatar.svelte';
+  import AgentDialog from './AgentDialog.svelte';
+  import { app, ws, openSettings, closeDrawer, switchArchive, createArchive, lastAgent, unread, renameView, atLeast, agents, workflows, members, schema } from '../lib/app.svelte.js';
   import { route, active } from '../lib/router.svelte.js';
   import NewArchiveDialog from './NewArchiveDialog.svelte';
   import SetupCard from './SetupCard.svelte';
-  import { chatItems } from '../lib/menus.js';
+  import { agentItems } from '../lib/menus.js';
+
+  agents.use();
+  schema.use();
+  workflows.use();
+  members.use();
 
   const running = $derived(ws().workflows.filter((w) => w.runs[0] && (w.runs[0].status === 'running' || w.runs[0].status === 'waiting')).length);
-  const visible = $derived(pinnedFirst(ws().chats));
-  // Views are the archive's pages: Postgres views, each drawn the way its comment says.
+  const here = $derived(route.parts[0] === 'agent' ? route.parts[1] : route.path === '/' ? lastAgent()?.id : null);
   const views = $derived((ws().schema ?? []).filter((t) => t.kind === 'view'));
-
 
   let creating = $state(false);
   let renaming = $state(null);
@@ -46,7 +44,7 @@
     <ArchiveRail archives={app.archives} current={app.archive} onselect={switchArchive} oncreate={() => { app.drawer = false; creating = true; }} />
   {/snippet}
   {#snippet header()}
-    <Menu label={ws().name} width="md" match>
+    <Menu label={ws().name} width="md">
       {#snippet trigger(props)}<ArchiveHeader archive={ws()} {...props} />{/snippet}
       <MenuItem icon={Workflow} href="/workflows">
         {#snippet end()}{#if running}<Badge>{running}</Badge>{/if}{/snippet}
@@ -54,45 +52,43 @@
       </MenuItem>
       <MenuItem icon={Library} href="/library">Library</MenuItem>
       <MenuItem icon={Database} href="/database">Database</MenuItem>
+      <MenuItem icon={Blocks} onselect={() => { app.drawer = false; openSettings('integrations'); }}>Integrations</MenuItem>
       <MenuItem icon={Lock} href="/access">Access</MenuItem>
       <MenuSeparator />
-      <MenuItem icon={Settings} onselect={() => { app.drawer = false; openArchiveSettings(); }}>Settings</MenuItem>
+      <MenuItem icon={Settings} onselect={() => { app.drawer = false; openSettings('general'); }}>Settings</MenuItem>
     </Menu>
   {/snippet}
 
   <SetupCard />
 
   <SidebarSection>
-    <SidebarItem icon={Plus} label="New chat" href="/" accent shortcut="⌘ ⇧ O" />
-    <SidebarItem icon={Search} label="Search" shortcut="⌘ K" onclick={() => { app.drawer = false; app.palette = true; }} />
+    {#if atLeast('manager')}<SidebarItem icon={Plus} label="New agent" accent onclick={() => { app.drawer = false; app.agentDialog = true; }} />{/if}
   </SidebarSection>
 
-  {#if views.length}
-    <SidebarSection title={collapsed ? undefined : 'Views'}>
-      {#each views as view (view.id)}
-        <SidebarItem icon={layoutOf(view).icon} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={isArchiveOwner() ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
-      {/each}
-    </SidebarSection>
-  {/if}
-
-  {#if !collapsed && visible.length}
-    <SidebarSection title="Chats">
-        {#each visible as chat (chat.id)}
-        <SidebarItem label={chat.title} href={`/chat/${chat.id}`} active={route.path === `/chat/${chat.id}`} items={() => chatItems(chat, { open: false, rename: () => (renaming = chat.id) })} onrename={(title) => renameChat(chat.id, title)} bind:editing={() => renaming === chat.id, (on) => (renaming = on ? chat.id : null)}>
-          {#snippet before()}
-            {#if chat.pinned}<PinButton {chat} />{/if}
-          {/snippet}
-          {#snippet actions()}
-            <ChatActions {chat} size="sm" inline />
+  {#if ws().agents.length}
+    <SidebarSection title={collapsed ? undefined : 'Agents'}>
+      {#each ws().agents as agent (agent.id)}
+        <SidebarItem label={agent.name} tall={!collapsed} detail={agent.description} dot={unread(agent) && here !== agent.id} href={`/agent/${agent.id}`} active={here === agent.id} items={() => agentItems(agent)} ondouble={() => (app.agentDialog = agent.id)}>
+          {#snippet leading()}
+            <AgentAvatar avatar={agent.avatar} tint={agent.tint} seed={agent.id} size={collapsed ? 'xs' : 'lg'} active={agent.streaming} />
           {/snippet}
         </SidebarItem>
       {/each}
     </SidebarSection>
   {/if}
 
+  {#if views.length}
+    <SidebarSection title={collapsed ? undefined : 'Views'}>
+      {#each views as view (view.id)}
+        <SidebarItem icon={viewIcon(view)} label={view.name} href={`/view/${view.id}`} active={active(`/view/${view.id}`)} onrename={atLeast('manager') ? (name) => renameView(view.id, name) : undefined} bind:editing={() => renaming === view.id, (on) => (renaming = on ? view.id : null)} />
+      {/each}
+    </SidebarSection>
+  {/if}
+
   {#snippet footer()}
-    <AccountMenu user={{ ...app.user, name: app.profile.name || app.user.name }} />
+    <AccountCard user={app.user} />
   {/snippet}
 </Sidebar>
 
 <NewArchiveDialog bind:open={creating} oncreate={createArchive} />
+<AgentDialog />

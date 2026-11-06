@@ -67,7 +67,6 @@ type browseView struct {
 	Els   []browseEl `json:"els"`
 }
 
-// list numbers the elements as Jev and Claude see them.
 func (v *browseView) list() []string {
 	out := make([]string, len(v.Els))
 	for i, e := range v.Els {
@@ -93,15 +92,11 @@ type browser struct {
 	history  []string
 }
 
-// runClock is a run's time budget: browse stops the run's clock and spends its own.
-type runClock struct {
-	t      *time.Timer
-	end    time.Time
-	browse time.Duration
-}
-
 func (r *runner) browseSDK(o *goja.Object) {
-	o.Set("browse", func(call goja.FunctionCall) goja.Value { return r.promise(r.browse(call)) })
+	o.Set("browse", func(call goja.FunctionCall) goja.Value {
+		*r.wrote = true
+		return r.promise(r.browse(call))
+	})
 }
 
 func (r *runner) browse(call goja.FunctionCall) (any, error) {
@@ -115,7 +110,7 @@ func (r *runner) browse(call goja.FunctionCall) (any, error) {
 	if err := r.arg(call, 1, "browse", "opts", &opts); err != nil {
 		return nil, err
 	}
-	addr, jev, ant := os.Getenv("ARCHIVE_BROWSER"), strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")), strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
+	addr, jev, ant := os.Getenv("ARCHIVE_BROWSER"), strings.TrimSpace(secretEnv("TYPESAFE_API_KEY")), strings.TrimSpace(secretEnv("ANTHROPIC_API_KEY"))
 	if addr == "" || jev == "" || ant == "" {
 		return nil, errors.New("archive.browse: browse is not configured on this server; it needs ARCHIVE_BROWSER, TYPESAFE_API_KEY and ANTHROPIC_API_KEY")
 	}
@@ -126,20 +121,13 @@ func (r *runner) browse(call goja.FunctionCall) (any, error) {
 	if tx.Wrote {
 		return nil, errors.New("archive.browse: this run already wrote or migrated; browse before you write: call archive.browse first, then save what it found")
 	}
-	c := r.clock
-	if c.browse <= 0 {
-		return nil, fmt.Errorf("archive.browse: this run already browsed for %s, its limit", browseTimeout)
+	resume, err := r.clock.pause(&r.clock.browse, browseTimeout, "browsed")
+	if err != nil {
+		return nil, fmt.Errorf("archive.browse: %w", err)
 	}
-	if !c.t.Stop() {
-		return nil, errors.New("archive.browse: the run timed out")
-	}
-	left, start := time.Until(c.end), time.Now()
-	defer func() {
-		c.browse -= time.Since(start)
-		c.end = time.Now().Add(left)
-		c.t.Reset(left)
-	}()
-	ctx, cancel := context.WithTimeout(r.ctx, c.browse)
+	defer resume()
+	start := time.Now()
+	ctx, cancel := context.WithTimeout(r.ctx, r.clock.browse)
 	defer cancel()
 	res, err := browseRun(ctx, addr, jev, ant, goal, opts.URL)
 	if err != nil {
@@ -202,7 +190,6 @@ func browseRun(ctx context.Context, addr, jev, ant, goal, start string) (*Browse
 	return &BrowseResult{Done: act.Action == "done" && act.Achieved, Answer: act.Answer, URL: v.URL}, nil
 }
 
-// browseID caches the ID token for the browser service; Google's last an hour.
 var browseID struct {
 	sync.Mutex
 	tok string
@@ -301,7 +288,6 @@ var browseActions = map[string]string{
 	"need_planner": "None of these fits: the page is blocked or confusing, or `goal` needs another website",
 }
 
-// next asks Jev for the next action and hands off to Claude when it needs text or Jev is unsure.
 func (b *browser) next(ctx context.Context, v *browseView) (*browseAct, error) {
 	if len(v.Els) == 0 && (v.URL == "" || v.URL == "about:blank") {
 		return b.plan(ctx, v, "")
@@ -391,7 +377,6 @@ var browseTool = map[string]any{
 	},
 }
 
-// plan asks Claude for the next action, for text Jev cannot write and choices it is unsure of.
 func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browseAct, error) {
 	var s strings.Builder
 	fmt.Fprintf(&s, "Goal: %s\nNow on: %s %s\nHistory:\n", b.goal, v.Title, v.URL)
@@ -400,7 +385,7 @@ func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browse
 	}
 	s.WriteString("Elements:\n" + strings.Join(v.list(), "\n") + "\nPage text:\n" + v.Text + "\n" + hint)
 	body, err := json.Marshal(map[string]any{
-		"model":       chatModel,
+		"model":       agentModel,
 		"max_tokens":  2048,
 		"system":      browseSystem,
 		"tools":       []any{browseTool},
@@ -410,7 +395,7 @@ func (b *browser) plan(ctx context.Context, v *browseView, hint string) (*browse
 	if err != nil {
 		return nil, err
 	}
-	resp, err := chatPost(ctx, b.ant, body)
+	resp, err := agentPost(ctx, b.ant, body)
 	if err != nil {
 		return nil, err
 	}
@@ -468,9 +453,6 @@ func (b *browser) act(ctx context.Context, v *browseView, a *browseAct) {
 		if a.Action == "scroll_up" {
 			dy = -dy
 		}
-		// Scrolled in the page, not with a wheel event: cdproto drops a zero deltaX, which Chrome's mouseWheel
-		// requires, so every wheel failed. It scrolls what is under the middle of the viewport if that scrolls,
-		// else the page.
 		err = b.do(chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
 			_, err := chromedp.Evaluate[any](fmt.Sprintf(`(() => {
   let s = document.elementFromPoint(640, 400);

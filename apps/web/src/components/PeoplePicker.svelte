@@ -1,5 +1,5 @@
 <script>
-  import { Mail, X } from '@lucide/svelte';
+  import { X } from '@lucide/svelte';
   import Avatar from './Avatar.svelte';
   import Icon from './Icon.svelte';
   import MenuPanel from './MenuPanel.svelte';
@@ -7,7 +7,7 @@
   import { show, hide } from '../lib/floating.js';
   import { seedOf } from '../lib/app.svelte.js';
 
-  let { value = $bindable([]), people = [], placeholder = 'Add people by name or email', label = 'People', limit = 6, invite = true } = $props();
+  let { value = $bindable([]), people = [], placeholder = 'Add people by name or email', label = 'People', limit = 6 } = $props();
 
   const listId = uid('people');
   let box = $state();
@@ -17,13 +17,10 @@
   let active = $state(0);
   let opened = $state(false);
 
-  const isEmail = (s) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(s);
   const q = $derived(query.trim().toLowerCase());
   const taken = $derived(new Set(value.map((p) => p.email)));
   const matches = $derived(people.filter((p) => !taken.has(p.email) && (!q || p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))).slice(0, limit));
-  const fresh = $derived(invite && isEmail(q) && !taken.has(q) && !people.some((p) => p.email.toLowerCase() === q) ? { name: q, email: q, fresh: true } : null);
-  const options = $derived(fresh ? [fresh, ...matches] : matches);
-  const shown = $derived(opened && (options.length > 0 || q.length > 0));
+  const shown = $derived(opened && (matches.length > 0 || q.length > 0));
 
   $effect(() => {
     if (!panel) return;
@@ -42,8 +39,7 @@
 
   function pick(person) {
     if (!person || taken.has(person.email)) return;
-    const { fresh: _, ...rest } = person;
-    value = [...value, rest];
+    value = [...value, person];
     query = '';
     opened = false;
     input?.focus();
@@ -54,23 +50,15 @@
     input?.focus();
   }
 
-  function byEmail(email) {
-    const e = email.toLowerCase();
-    return people.find((p) => p.email.toLowerCase() === e) ?? { name: e, email: e };
-  }
-
   function keydown(event) {
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      if (!options.length) return;
+      if (!matches.length) return;
       event.preventDefault();
       if (!shown) return void (opened = true);
-      active = (active + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length;
-    } else if (event.key === 'Enter' && shown && options[active]) {
+      active = (active + (event.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+    } else if (event.key === 'Enter' && shown && matches[active]) {
       event.preventDefault();
-      pick(options[active]);
-    } else if (invite && (event.key === ',' || event.key === ';' || event.key === ' ') && isEmail(q)) {
-      event.preventDefault();
-      pick(byEmail(q));
+      pick(matches[active]);
     } else if (event.key === 'Backspace' && !query && value.length) {
       value = value.slice(0, -1);
     } else if (event.key === 'Escape' && shown) {
@@ -79,14 +67,6 @@
       query = '';
       opened = false;
     }
-  }
-
-  function paste(event) {
-    const found = (event.clipboardData?.getData('text') ?? '').split(/[\s,;]+/).filter(isEmail);
-    if (!invite || found.length < 2) return;
-    event.preventDefault();
-    const add = [...new Set(found.map((e) => e.toLowerCase()))].filter((e) => !taken.has(e)).map(byEmail);
-    value = [...value, ...add];
   }
 
   function parts(text) {
@@ -124,17 +104,16 @@
     aria-autocomplete="list"
     aria-expanded={shown}
     aria-controls={listId}
-    aria-activedescendant={shown && options[active] ? `${listId}-${active}` : undefined}
+    aria-activedescendant={shown && matches[active] ? `${listId}-${active}` : undefined}
     placeholder={value.length ? '' : placeholder}
     onblur={() => (opened = false)}
     oninput={() => (opened = true)}
     onkeydown={keydown}
-    onpaste={paste}
   />
 </div>
 
 <MenuPanel bind:panel kind="picker" popover="manual" id={listId} {label} data-placement="bottom-start" data-match>
-  {#each options as person, i (person.email)}
+  {#each matches as person, i (person.email)}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div
       id={`${listId}-${i}`}
@@ -146,23 +125,14 @@
       onmousemove={() => (active = i)}
       onclick={() => pick(person)}
     >
-      {#if person.fresh}
-        <span class="glyph"><Icon icon={Mail} size="md" /></span>
-        <span class="who">
-          <span class="name">Invite {person.email}</span>
-          <span class="meta">Not in this archive yet</span>
-        </span>
-      {:else}
-        <Avatar name={person.name} seed={seedOf(person)} size="md" />
-        <span class="who">
-          <span class="name">{@render highlight(person.name)}</span>
-          <span class="meta">{@render highlight(person.email)}</span>
-        </span>
-        {#if person.guest}<span class="tag">Guest</span>{/if}
-      {/if}
+      <Avatar name={person.name} seed={seedOf(person)} size="md" />
+      <span class="who">
+        <span class="name">{@render highlight(person.name)}</span>
+        <span class="meta">{@render highlight(person.email)}</span>
+      </span>
     </div>
   {:else}
-    <p class="empty">{invite ? 'No one matches. Type a full email to invite someone new.' : 'No one in this archive matches.'}</p>
+    <p class="empty">No one in this archive matches.</p>
   {/each}
 </MenuPanel>
 
@@ -267,17 +237,6 @@
     background: var(--color-fill);
   }
 
-  .glyph {
-    display: grid;
-    place-items: center;
-    flex: none;
-    width: var(--avatar-md);
-    height: var(--avatar-md);
-    border-radius: var(--radius-full);
-    background: var(--color-accent-subtle);
-    color: var(--color-accent);
-  }
-
   .who {
     display: flex;
     flex-direction: column;
@@ -306,12 +265,6 @@
   mark {
     background: none;
     color: var(--color-accent);
-  }
-
-  .tag {
-    flex: none;
-    color: var(--color-text-tertiary);
-    font-size: var(--text-sm);
   }
 
   .empty {

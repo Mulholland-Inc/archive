@@ -18,7 +18,7 @@
     ['Quantity', 'A measurement and the unit it came in', '`5 km`'],
     ['Location', 'Latitude and longitude', '`37.77, -122.42`'],
     ['Bank and tax numbers', 'Checked so a mistyped digit is caught', 'Spaces and dashes are fine'],
-    ['Card, Social Security and passport numbers', 'Locked away and shown masked', 'Revealed only to people you allow'],
+    ['Card, Social Security and passport numbers', 'Checked and kept out of search', 'Seen by anyone who can read the row'],
     ['Web addresses', 'Links and domains, tidied up', '`Example.com/`'],
     ['Book and product codes', 'ISBNs and barcodes in one standard form', 'Old and new ISBNs, and store barcodes'],
     ['Durations and repeats', 'How long something takes, and how often it repeats', 'Standard calendar formats'],

@@ -45,7 +45,7 @@ func init() {
 		},
 		Sync: []*Sync{
 			// A worker's primary assignment, or else their first, says their title, department, manager and pay.
-			{Name: "workers", Gap: time.Second, Req: adpWorkers, Items: "workers", ID: "associateOID", Page: adpPage, Absent: Empty,
+			{Name: "workers", Gap: time.Second, Req: adpWorkers, Items: "workers", ID: "associateOID", Page: adpPage, Empty: true,
 				Doc: "Every worker, the ones who left too, with their name, emails, birthday, status, dates, and every assignment's title, department, manager and pay, " +
 					"and their home address, by associateOID: listed whole each sync, 100 a page, which deletes those gone.",
 				To: Map{Table: "payroll_worker",
@@ -76,7 +76,7 @@ func init() {
 								"state": "coalesce(nullif(a#>>'{countrySubdivisionLevel1,codeValue}', ''), a#>>'{countrySubdivisionLevel1,shortName}')", "zip": "a->>'postalCode'", "country": "a->>'countryCode'", "active": "true"}},
 					}}},
 			// A statement does not change once there, so the one detailed before is only seen.
-			{Name: "pay_statements", Gap: time.Second, Every: 24 * time.Hour, Keep: true, Absent: Empty, Memo: "{payDate}",
+			{Name: "pay_statements", Gap: time.Second, Every: 24 * time.Hour, Keep: true, Empty: true, Memo: "{payDate}",
 				Parts: &Parts{Req: adpWorkers, Items: "workers", Page: adpPage, ID: "{associateOID}"},
 				Req:   Req{URL: "/payroll/v1/workers/{part}/pay-statements", Query: Q{"numberoflastpaydates": "50"}}, Items: "payStatements",
 				Key: []Reads{{Of: "{payDetailUri/href}", Find: `pay-statements/([^/?]+)`}}, Set: Obj{"associateOID": "{part}"},

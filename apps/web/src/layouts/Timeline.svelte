@@ -3,10 +3,6 @@
   import { fill } from './fill.js';
   import { label, day, short } from './format.js';
 
-  // A timeline: each row its name, its two dates and a bar between them over the months they span, for projects
-  // and the like. A row starts on the view's by date and ends on the first date column after it; one with no end
-  // is a dot on its start, and one with no start has no bar. A line marks today. The months stay at the top and
-  // the rows scroll under them.
   let { view, rows, shown, pick } = $props();
 
   const at = $derived(shown.findIndex((c) => c.name === view.by));
@@ -14,7 +10,6 @@
   const startOf = (r) => day(r[view.by]);
   const endOf = (r) => (endCol && day(r[endCol.name])) || startOf(r);
 
-  // The timeline runs from the first of the month of the earliest start to the end of the month of the latest end.
   const range = $derived.by(() => {
     const times = rows.flatMap((r) => [startOf(r), endOf(r)]).filter(Boolean).map((d) => d.getTime());
     if (!times.length) return null;
@@ -34,7 +29,6 @@
   });
   const now = new Date();
   const today = $derived(range && now >= range[0] && now < range[1] ? place(now) : null);
-  // A bar reaches to the end of its last day.
   const span = (r) => `${((endOf(r) - startOf(r) + 864e5) / (range[1] - range[0])) * 100}%`;
 </script>
 
@@ -49,7 +43,6 @@
   </div>
   <div class="scroll">
     <div class="body">
-      <!-- The month lines and today's line run down behind every row. -->
       <div class="row lines" aria-hidden="true">
         <span class="track">
           {#each months as m (m.key)}<span class="line" style:--x={m.x}></span>{/each}
@@ -77,7 +70,6 @@
     flex-direction: column;
   }
 
-  /* Every row, the head's too, has the same columns: the name, the two dates, and the track the bars run on. */
   .row {
     display: grid;
     grid-template-columns: minmax(0, var(--view-timeline-name)) var(--view-timeline-date) var(--view-timeline-date) minmax(0, 1fr);
@@ -107,7 +99,6 @@
     white-space: nowrap;
   }
 
-  /* The rows scroll in a box as much wider than the timeline as a row's hover reaches out past it. */
   .scroll {
     min-height: 0;
     flex: 1;
@@ -144,7 +135,6 @@
     background: var(--color-text-tertiary);
   }
 
-  /* A row's text starts where the head's does, and its divider with it; its hover reaches out past them. */
   .item {
     position: relative;
     width: calc(100% + 2 * var(--space-3));

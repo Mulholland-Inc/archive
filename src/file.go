@@ -24,42 +24,58 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/ledongthuc/pdf"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
-	"golang.org/x/net/html"
 )
 
 type File struct {
-	ID        uuid.UUID      `json:"id"`
-	Hash      string         `json:"sha256"`
-	Name      string         `json:"name"`
-	MIME      string         `json:"mime"`
-	Size      int64          `json:"size"`
-	Metadata  map[string]any `json:"metadata"`
-	Status    string         `json:"status"`
-	Error     string         `json:"error,omitempty"`
-	Access    *uuid.UUID     `json:"access"`
-	CreatedAt time.Time      `json:"created_at"`
+	ID         uuid.UUID      `json:"id"`
+	Hash       string         `json:"hash"`
+	Name       string         `json:"name"`
+	MIME       string         `json:"mime"`
+	Size       int64          `json:"size"`
+	Metadata   map[string]any `json:"metadata"`
+	Status     string         `json:"status"`
+	Error      string         `json:"error,omitempty"`
+	Access     *uuid.UUID     `json:"access"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Kind       string         `json:"kind"`
+	Parent     *uuid.UUID     `json:"parent"`
+	Connection *uuid.UUID     `json:"connection"`
+	Stream     *string        `json:"stream,omitempty"`
+	SourceID   *string        `json:"source_id,omitempty"`
+	Version    *string        `json:"version,omitempty"`
+	URL        string         `json:"url,omitempty"`
+	Drive      *string        `json:"drive,omitempty"`
+	OwnerName  *string        `json:"owner_name,omitempty"`
+	EditorName *string        `json:"editor_name,omitempty"`
+	MadeAt     *time.Time     `json:"made_at,omitempty"`
+	EditedAt   *time.Time     `json:"edited_at,omitempty"`
+	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
 const (
+	fileTextMax = 1 << 20
 	fileMaxPost = 64 << 20
 	fileLinkTTL = 24 * time.Hour
 	tusVersion  = "1.0.0"
 )
 
 type fileRow interface {
-	generated.FileByKeyRow | generated.CreateFileRow | generated.GetFileRow | generated.RenameFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.SetFileAccessRow
+	generated.FileByKeyRow | generated.CreateFileRow | generated.FileKeptRow | generated.KeepFileRow | generated.GetFileRow | generated.LockFileRow | generated.NextPendingFileRow | generated.LockPendingFileRow | generated.ReplaceFileRow | generated.CopyFileRow
 }
 
 func fileOf[R fileRow](r R, err error) (*File, error) {
@@ -81,8 +97,7 @@ func fileName(name, hash string) string {
 	return name
 }
 
-// AddFile stores a file that the group access sees, by its id or its name, or everyone with "".
-func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader) (*File, error) {
+func (a *Archive) AddFile(ctx context.Context, access, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	if _, err := signedIn(ctx); err != nil {
 		return nil, err
 	}
@@ -90,10 +105,197 @@ func (a *Archive) AddFile(ctx context.Context, access, name string, r io.Reader)
 	if err != nil {
 		return nil, err
 	}
-	return a.fileAdd(ctx, g, name, r)
+	return a.fileAdd(ctx, g, name, parent, r)
 }
 
-// fileGroup is the id of the group access names, by its id or its name; nil for "".
+func (a *Archive) fileMine(ctx context.Context, id uuid.UUID, verb string) error {
+	f, err := a.GetFile(ctx, id)
+	if err == nil && f.Connection != nil {
+		return fmt.Errorf("cannot %s %s: its connection syncs it, so it is read only here; archive.copy(%q) makes a copy you can change: %w", verb, f.Name, id, ErrForbidden)
+	}
+	return err
+}
+
+func fileBase(name string) string {
+	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
+	if name == "." || name == "/" {
+		return ""
+	}
+	return name
+}
+
+func (a *Archive) fileCreate(ctx context.Context, data map[string]any) (map[string]any, error) {
+	if data["kind"] != "folder" {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "kind", Message: `the file table takes folders, { kind: "folder", name, parent, access }; a file comes as a multipart upload, and archive.create("name.docx") makes a document`}}}
+	}
+	name, _ := data["name"].(string)
+	if name = fileBase(name); name == "" {
+		return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: "name", Message: "want a folder name"}}}
+	}
+	out := map[string]any{"kind": "folder", "name": name}
+	for _, k := range []string{"parent", "access"} {
+		if v, ok := data[k]; ok {
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+func (a *Archive) fileUpdate(ctx context.Context, id uuid.UUID, data map[string]any) (map[string]any, error) {
+	out := map[string]any{}
+	for _, k := range specKeys(data) {
+		switch k {
+		case "parent", "access":
+			out[k] = data[k]
+		case "name":
+			name, _ := data[k].(string)
+			if name = fileBase(name); name == "" {
+				return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "want a file name"}}}
+			}
+			out[k] = name
+		case "edits":
+		default:
+			return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "of a file, only name, parent, access and edits change"}}}
+		}
+	}
+	if err := a.fileMine(ctx, id, "change"); err != nil {
+		return nil, err
+	}
+	if edits, ok := data["edits"]; ok {
+		raw, err := json.Marshal(edits)
+		if err != nil {
+			return nil, fmt.Errorf("edits: %v: %w", err, httpErrBadRequest)
+		}
+		ops, err := OfficeParseOps(raw)
+		if err != nil {
+			return nil, fmt.Errorf("archive.edit: %v: %w", err, httpErrBadRequest)
+		}
+		if _, err := a.EditDocument(ctx, id, ops); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func (a *Archive) fileDelete(ctx context.Context, id uuid.UUID) error {
+	return a.fileMine(ctx, id, "delete")
+}
+
+func (a *Archive) blobNext(ctx context.Context) (bool, error) {
+	found := false
+	err := a.sys(ctx, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		hash, err := q.NextBlobGone(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		found = true
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
+		used, err := q.BlobUsed(ctx, hash)
+		if err != nil {
+			return err
+		}
+		if !used {
+			if err := a.blobs.remove(ctx, blobKey(hash)); err != nil {
+				fmt.Fprintf(os.Stderr, "archive: workspace %s: blob %s: %v\n", a.ws.ID, hash, err)
+				return q.RetryBlobGone(ctx, time.Now().Add(time.Minute), hash)
+			}
+		}
+		return q.DropBlobGone(ctx, hash)
+	})
+	return found, err
+}
+
+func (a *Archive) CopyFile(ctx context.Context, id uuid.UUID, name string, access *string) (*File, error) {
+	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
+	if err != nil {
+		return nil, err
+	}
+	var g *uuid.UUID
+	if access != nil {
+		if g, err = a.fileGroup(ctx, *access); err != nil {
+			return nil, err
+		}
+	} else if g = f.Access; f.Connection != nil {
+		var c generated.ArchiveConnection
+		if err := a.sys(ctx, func(ctx context.Context) (err error) {
+			c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+			return err
+		}); err != nil {
+			return nil, err
+		}
+		if !c.Integration {
+			return nil, fmt.Errorf("%s is yours alone, as your %s connection's is, and a copy has no such setting: pass access, a group's name or \"\" for everyone, to say who sees the copy: %w", f.Name, c.Provider, httpErrBadRequest)
+		}
+	}
+	name = fileName(cmp.Or(name, f.Name), f.Hash)
+	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, f.Hash); err != nil {
+			return nil, err
+		}
+		c, err := fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: g, Hash: f.Hash, Name: name}))
+		if !errors.Is(err, ErrNotFound) {
+			return c, err
+		}
+		return fileOf(q.CopyFile(ctx, name, g, id))
+	})
+}
+
+type actionFiles struct {
+	a     *Archive
+	ctx   context.Context
+	conn  uuid.UUID
+	until time.Time
+}
+
+func (x actionFiles) Until() time.Time { return x.until }
+
+func (x actionFiles) Open(s string) (*connect.Upfile, error) {
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("file: want an id in the file table, not %q: %w", s, httpErrBadRequest)
+	}
+	f, rc, err := x.a.OpenFile(x.ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return &connect.Upfile{Name: f.Name, Mime: f.MIME, Size: f.Size, Body: rc}, nil
+}
+
+func (x actionFiles) Row(source string) (*connect.Synced, error) {
+	return coreDo(x.a, x.ctx, func(ctx context.Context) (*connect.Synced, error) {
+		r, err := x.a.st.db(ctx).FileBySource(ctx, &x.conn, &source)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("this connection synced nothing with the source_id %s: %w", source, ErrNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return &connect.Synced{Kind: r.Kind, Version: r.Version, Source: r.Source}, nil
+	})
+}
+
+func (f *File) blob() error {
+	switch {
+	case f.Kind == "folder":
+		return fmt.Errorf("%s is a folder: %w", f.Name, httpErrBadRequest)
+	case f.Hash == "" && f.Error != "":
+		return fmt.Errorf("Archive has no copy of %s: %s: %w", f.Name, f.Error, ErrNotFound)
+	case f.Hash == "":
+		return fmt.Errorf("Archive has not copied %s yet: %w", f.Name, ErrNotFound)
+	}
+	return nil
+}
+
 func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, err error) {
 	if access == "" {
 		return nil, nil
@@ -105,7 +307,7 @@ func (a *Archive) fileGroup(ctx context.Context, access string) (g *uuid.UUID, e
 	return g, err
 }
 
-func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r io.Reader) (*File, error) {
+func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, parent *uuid.UUID, r io.Reader) (*File, error) {
 	tmp, err := os.CreateTemp("", "archive-post-")
 	if err != nil {
 		return nil, err
@@ -118,10 +320,10 @@ func (a *Archive) fileAdd(ctx context.Context, access *uuid.UUID, name string, r
 	if err != nil {
 		return nil, err
 	}
-	return a.fileCommit(ctx, access, name, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
+	return a.fileCommit(ctx, access, name, parent, nil, func() (io.ReadCloser, error) { return os.Open(tmp.Name()) })
 }
 
-func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, open func() (io.ReadCloser, error)) (*File, error) {
+func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string, parent, conn *uuid.UUID, open func() (io.ReadCloser, error)) (*File, error) {
 	r, err := open()
 	if err != nil {
 		return nil, err
@@ -142,18 +344,50 @@ func (a *Archive) fileCommit(ctx context.Context, access *uuid.UUID, name string
 	if r, err = open(); err != nil {
 		return nil, err
 	}
-	err = a.blobs.put(ctx, blobKey(hash), r, size)
+	tmp := blobTemp()
+	err = a.blobs.put(ctx, tmp, r, size)
 	r.Close()
 	if err != nil {
 		return nil, err
 	}
-	f, err := coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).FileByKey(ctx, access, hash, name))
+	defer a.blobs.remove(context.WithoutCancel(ctx), tmp)
+	commit := func(ctx context.Context) (*File, error) {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return nil, err
+		}
+		var f *File
+		var err error
+		access := access
+		if access == nil && parent != nil {
+			if up, err := fileOf(q.GetFile(ctx, *parent)); err == nil {
+				access = up.Access
+			}
+		}
+		if conn != nil {
+			f, err = fileOf(q.FileKept(ctx, conn, hash, name))
+		} else {
+			f, err = fileOf(q.FileByKey(ctx, generated.FileByKeyParams{Access: access, Parent: parent, Hash: hash, Name: name}))
+		}
 		if !errors.Is(err, ErrNotFound) {
 			return f, err
 		}
-		return fileOf(a.st.db(ctx).CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access}))
-	})
+		if conn != nil {
+			f, err = fileOf(q.KeepFile(ctx, generated.KeepFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Connection: conn}))
+		} else {
+			f, err = fileOf(q.CreateFile(ctx, generated.CreateFileParams{Hash: hash, Name: name, MIME: mt, Size: size, Access: access, Parent: parent}))
+		}
+		if err != nil {
+			return nil, err
+		}
+		return f, a.blobs.move(ctx, tmp, blobKey(hash))
+	}
+	var f *File
+	if conn != nil {
+		f, err = commit(ctx)
+	} else {
+		f, err = coreDo(a, ctx, commit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -179,63 +413,11 @@ func (a *Archive) fileReady(ctx context.Context, f *File) (*File, error) {
 	return a.ProcessFile(ctx, f.ID)
 }
 
-func (a *Archive) Files(ctx context.Context, limit int, after uuid.UUID) ([]*File, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
-	return coreDo(a, ctx, func(ctx context.Context) ([]*File, error) {
-		rows, err := a.st.db(ctx).Files(ctx, after, int32(limit))
-		fs := make([]*File, len(rows))
-		for i := range rows {
-			fs[i] = (*File)(&rows[i])
-		}
-		return fs, err
-	})
-}
-
 func (a *Archive) GetFile(ctx context.Context, id uuid.UUID) (*File, error) {
 	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
 		f, err := fileOf(a.st.db(ctx).GetFile(ctx, id))
 		if errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		}
-		return f, err
-	})
-}
-
-func (a *Archive) RenameFile(ctx context.Context, id uuid.UUID, name string) (*File, error) {
-	name = strings.TrimSpace(filepath.Base(strings.ReplaceAll(name, "\\", "/")))
-	if name == "" || name == "." || name == "/" {
-		return nil, fmt.Errorf("name: want a file name: %w", httpErrBadRequest)
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).RenameFile(ctx, id, name))
-		var pe *pgconn.PgError
-		switch {
-		case errors.Is(err, ErrNotFound):
-			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		case errors.As(err, &pe) && pe.Code == "23505":
-			return nil, fmt.Errorf("a file named %q with the same content is already here: %w", name, ErrConflict)
-		}
-		return f, err
-	})
-}
-
-// SetFileAccess gives file id to the group access, by its id or its name, or to everyone with "", as an editor
-// in both groups, or an owner, does.
-func (a *Archive) SetFileAccess(ctx context.Context, id uuid.UUID, access string) (*File, error) {
-	g, err := a.fileGroup(ctx, access)
-	if err != nil {
-		return nil, err
-	}
-	return coreDo(a, ctx, func(ctx context.Context) (*File, error) {
-		f, err := fileOf(a.st.db(ctx).SetFileAccess(ctx, g, id))
-		var pe *pgconn.PgError
-		switch {
-		case errors.Is(err, ErrNotFound):
-			return nil, fmt.Errorf("file %s: %w", id, ErrNotFound)
-		case errors.As(err, &pe) && pe.Code == "23505":
-			return nil, fmt.Errorf("a file by that name with the same content is already there: %w", ErrConflict)
 		}
 		return f, err
 	})
@@ -253,6 +435,9 @@ func (a *Archive) FileText(ctx context.Context, id uuid.UUID) (string, error) {
 
 func (a *Archive) OpenFile(ctx context.Context, id uuid.UUID) (*File, io.ReadSeekCloser, error) {
 	f, err := a.GetFile(ctx, id)
+	if err == nil {
+		err = f.blob()
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -267,9 +452,9 @@ func (a *Archive) ProcessFile(ctx context.Context, id uuid.UUID) (*File, error) 
 	return a.GetFile(ctx, id)
 }
 
-func (a *Archive) fileSign(id uuid.UUID, exp int64) string {
+func (a *Archive) fileSign(id uuid.UUID, exp int64, role string) string {
 	m := hmac.New(sha256.New, a.linkKey)
-	fmt.Fprintf(m, "%s.%d", id, exp)
+	fmt.Fprintf(m, "%s.%d.%s", id, exp, role)
 	return hex.EncodeToString(m.Sum(nil))
 }
 
@@ -282,11 +467,16 @@ func (a *Archive) LinkFile(ctx context.Context, id uuid.UUID, ttl time.Duration)
 	if _, err := a.GetFile(ctx, id); err != nil {
 		return nil, err
 	}
+	ac, err := signedIn(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if ttl <= 0 {
 		ttl = fileLinkTTL
 	}
 	exp := time.Now().Add(ttl).Unix()
-	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?exp=%d&sig=%s", a.hub.api, a.ws.ID.String(), id, exp, a.fileSign(id, exp)), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
+	q := url.Values{"exp": {strconv.FormatInt(exp, 10)}, "by": {ac.Role}, "sig": {a.fileSign(id, exp, ac.Role)}}
+	return &FileLink{URL: fmt.Sprintf("%s/files/%s/%s?%s", a.hub.api, a.ws.ID.String(), id, q.Encode()), ExpiresAt: time.Unix(exp, 0).UTC()}, nil
 }
 
 func mediaInline(mt string) bool {
@@ -295,6 +485,10 @@ func mediaInline(mt string) bool {
 }
 
 func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, strip bool) {
+	if err := f.blob(); err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
 	rc, err := a.blobs.open(r.Context(), blobKey(f.Hash), f.Size)
 	if err != nil {
 		httpWrite(w, 0, nil, err)
@@ -312,7 +506,7 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 		content, etag = bytes.NewReader(mediaStripGPS(b)), `"`+f.Hash+`-nogps"`
 	}
 	disp := "attachment"
-	if mediaInline(f.MIME) {
+	if mediaInline(f.MIME) && r.URL.Query().Get("download") == "" {
 		disp = "inline"
 	}
 	h := w.Header()
@@ -323,102 +517,45 @@ func (a *Archive) fileServe(w http.ResponseWriter, r *http.Request, f *File, str
 	http.ServeContent(w, r, "", f.CreatedAt, content)
 }
 
-func (a *Archive) fileRoutes(mux *http.ServeMux) {
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
-	file := func(r *http.Request) (*File, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return nil, err
-		}
-		return a.GetFile(r.Context(), id)
+func (a *Archive) fileUpload(r *http.Request) (*File, error) {
+	r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		return nil, fmt.Errorf("want a multipart/form-data body with a file part: %w", httpErrBadRequest)
 	}
-	handle("GET /api/files", func(r *http.Request) (int, any, error) {
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-		var after uuid.UUID
-		if s := r.URL.Query().Get("after"); s != "" {
-			var err error
-			if after, err = uuid.Parse(s); err != nil {
-				return 0, nil, fmt.Errorf("after: %w", httpErrBadRequest)
-			}
-		}
-		fs, err := a.Files(r.Context(), limit, after)
-		return http.StatusOK, fs, err
-	})
-	handle("POST /api/files", func(r *http.Request) (int, any, error) {
-		r.Body = http.MaxBytesReader(nil, r.Body, fileMaxPost)
-		mr, err := r.MultipartReader()
+	for {
+		p, err := mr.NextPart()
 		if err != nil {
-			return 0, nil, fmt.Errorf("want a multipart/form-data body with a file part: %w", httpErrBadRequest)
+			return nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
 		}
-		for {
-			p, err := mr.NextPart()
+		if p.FormName() == "file" {
+			parent, err := fileParam(r, "parent")
 			if err != nil {
-				return 0, nil, fmt.Errorf("no file part: %w", httpErrBadRequest)
+				return nil, err
 			}
-			if p.FormName() == "file" {
-				f, err := a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), p)
-				return http.StatusCreated, f, err
-			}
+			return a.AddFile(r.Context(), r.URL.Query().Get("access"), p.FileName(), parent, p)
 		}
-	})
-	handle("GET /api/files/{id}", func(r *http.Request) (int, any, error) {
-		f, err := file(r)
-		return http.StatusOK, f, err
-	})
-	handle("PATCH /api/files/{id}", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var body struct {
-			Name   *string         `json:"name"`
-			Access json.RawMessage `json:"access"`
-		}
-		if err := httpDecode(r, &body); err != nil {
-			return 0, nil, err
-		}
-		var f *File
-		if body.Name != nil {
-			if f, err = a.RenameFile(r.Context(), id, *body.Name); err != nil {
-				return 0, nil, err
-			}
-		}
-		if len(body.Access) > 0 {
-			var g *string
-			if err := json.Unmarshal(body.Access, &g); err != nil {
-				return 0, nil, fmt.Errorf("access: want a group's id or name, or null for everyone: %w", httpErrBadRequest)
-			}
-			f, err = a.SetFileAccess(r.Context(), id, deref(g))
-		}
-		if f == nil && err == nil {
-			f, err = a.GetFile(r.Context(), id)
-		}
-		return http.StatusOK, f, err
-	})
-	handle("POST /api/files/{id}/link", func(r *http.Request) (int, any, error) {
-		id, err := httpID(r)
-		if err != nil {
-			return 0, nil, err
-		}
-		var ttl time.Duration
-		if s := r.URL.Query().Get("expires"); s != "" {
-			if ttl, err = time.ParseDuration(s); err != nil || ttl <= 0 {
-				return 0, nil, fmt.Errorf("expires: want a duration like 1h: %w", httpErrBadRequest)
-			}
-		}
-		l, err := a.LinkFile(r.Context(), id, ttl)
-		return http.StatusOK, l, err
-	})
-	mux.HandleFunc("GET /api/files/{id}/content", func(w http.ResponseWriter, r *http.Request) {
-		f, err := file(r)
+	}
+}
+
+func (a *Archive) filePart(w http.ResponseWriter, r *http.Request) {
+	id, err := httpID(r)
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	ctx := r.Context()
+	part := r.PathValue("part")
+	switch {
+	case part == "content":
+		f, err := a.GetFile(ctx, id)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
 		a.fileServe(w, r, f, r.URL.Query().Get("strip") == "gps")
-	})
-	mux.HandleFunc("GET /api/files/{id}/thumbnail", func(w http.ResponseWriter, r *http.Request) {
-		f, err := file(r)
+	case part == "thumbnail":
+		f, err := a.GetFile(ctx, id)
 		t := f.thumbnail()
 		if err == nil && t == nil {
 			err = fmt.Errorf("file %s has no thumbnail: %w", f.ID, ErrNotFound)
@@ -428,20 +565,56 @@ func (a *Archive) fileRoutes(mux *http.ServeMux) {
 			return
 		}
 		a.fileServe(w, r, t, false)
-	})
-	mux.HandleFunc("GET /api/files/{id}/text", func(w http.ResponseWriter, r *http.Request) {
-		id, err := httpID(r)
-		var text string
-		if err == nil {
-			text, err = a.FileText(r.Context(), id)
-		}
+	case part == "text":
+		text, err := a.FileText(ctx, id)
 		if err != nil {
 			httpWrite(w, 0, nil, err)
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		io.WriteString(w, text)
-	})
+	case part == "model":
+		m, err := a.ViewDocument(ctx, id)
+		httpWrite(w, http.StatusOK, m, err)
+	case part == "link":
+		var ttl time.Duration
+		if s := r.URL.Query().Get("expires"); s != "" {
+			if ttl, err = time.ParseDuration(s); err != nil || ttl <= 0 {
+				httpWrite(w, 0, nil, fmt.Errorf("expires: want a duration like 1h: %w", httpErrBadRequest))
+				return
+			}
+		}
+		l, err := a.LinkFile(ctx, id, ttl)
+		httpWrite(w, http.StatusOK, l, err)
+	case strings.HasPrefix(part, "media/"):
+		name := strings.TrimPrefix(part, "media/")
+		_, b, err := a.documentBytes(ctx, id)
+		var pic []byte
+		if err == nil {
+			pic, err = OfficeMedia(b, name)
+		}
+		if err != nil {
+			httpWrite(w, 0, nil, err)
+			return
+		}
+		w.Header().Set("Content-Type", cmp.Or(mime.TypeByExtension(path.Ext(name)), "application/octet-stream"))
+		w.Header().Set("Content-Security-Policy", "sandbox")
+		w.Write(pic)
+	default:
+		httpWrite(w, 0, nil, fmt.Errorf("file part %q: want content, text, thumbnail, model, link or media/...: %w", part, ErrNotFound))
+	}
+}
+
+func fileParam(r *http.Request, name string) (*uuid.UUID, error) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: want an id: %w", name, httpErrBadRequest)
+	}
+	return &id, nil
 }
 
 func (f *File) thumbnail() *File {
@@ -462,21 +635,41 @@ func (a *Archive) fileSigned(w http.ResponseWriter, r *http.Request) {
 	id, err := httpID(r)
 	q := r.URL.Query()
 	exp, _ := strconv.ParseInt(q.Get("exp"), 10, 64)
-	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp)))) {
+	by := q.Get("by")
+	if err == nil && (time.Now().Unix() > exp || !hmac.Equal([]byte(q.Get("sig")), []byte(a.fileSign(id, exp, by)))) {
 		err = fmt.Errorf("link is invalid or expired: %w", ErrForbidden)
 	}
 	var f *File
 	if err == nil {
-		err = a.st.System(r.Context(), func(ctx context.Context) (err error) {
-			f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
-			return err
-		})
+		f, err = a.fileAs(r.Context(), by, id)
 	}
 	if err != nil {
 		httpWrite(w, 0, nil, err)
 		return
 	}
 	a.fileServe(w, r, f, true)
+}
+
+func (a *Archive) fileAs(ctx context.Context, role string, id uuid.UUID) (f *File, err error) {
+	gone := fmt.Errorf("link no longer reaches a file its maker can see: %w", ErrForbidden)
+	var ok bool
+	if err := a.sys(ctx, func(ctx context.Context) (err error) {
+		ok, err = a.st.db(ctx).RoleExists(ctx, role)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, gone
+	}
+	err = a.st.As(ctx, role, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, id))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil, gone
+	}
+	return f, err
 }
 
 type tusUpload = generated.ArchiveUpload
@@ -558,7 +751,7 @@ func (a *Archive) tus(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusPreconditionFailed)
 		return
 	}
-	ref := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/files/tus"), "/")
+	ref := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/file/tus"), "/")
 	if ref == "" && r.Method == http.MethodPost {
 		a.tusCreate(w, r)
 		return
@@ -617,7 +810,7 @@ func (a *Archive) tusCreate(w http.ResponseWriter, r *http.Request) {
 		httpWrite(w, 0, nil, err)
 		return
 	}
-	w.Header().Set("Location", "/api/files/tus/"+up.ID.String())
+	w.Header().Set("Location", "/api/file/tus/"+up.ID.String())
 	if f != nil {
 		w.Header().Set("Archive-File-Id", f.ID.String())
 	}
@@ -696,7 +889,7 @@ func (a *Archive) tusUpload(w http.ResponseWriter, r *http.Request, id uuid.UUID
 }
 
 func (a *Archive) tusFinish(ctx context.Context, up *tusUpload) (*File, error) {
-	f, err := a.fileCommit(ctx, up.Access, up.Name, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
+	f, err := a.fileCommit(ctx, up.Access, up.Name, nil, nil, func() (io.ReadCloser, error) { return &tusReader{a: a, ctx: ctx, up: up}, nil })
 	if err != nil {
 		return nil, err
 	}
@@ -761,7 +954,7 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		found = true
 		meta, text, perr := a.media(ctx, f)
 		err = pgx.BeginFunc(ctx, a.st.Q(ctx), func(tx pgx.Tx) error {
-			return generated.New(tx).SetFileContent(ctx, f.ID, meta, strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�"))
+			return generated.New(tx).SetFileContent(ctx, f.ID, meta, fileWords(text))
 		})
 		status, msg := "done", ""
 		if perr = errors.Join(err, perr); perr != nil {
@@ -770,6 +963,243 @@ func (a *Archive) fileProcess(ctx context.Context, id uuid.UUID) (bool, error) {
 		return a.st.db(ctx).SetFileStatus(ctx, f.ID, status, msg)
 	})
 	return found, err
+}
+
+func fileWords(text string) string {
+	text = strings.ToValidUTF8(strings.ReplaceAll(text, "\x00", ""), "�")
+	if len(text) <= fileTextMax {
+		return text
+	}
+	return strings.ToValidUTF8(text[:fileTextMax], "")
+}
+
+const (
+	pullPar      = 4
+	pullBudget   = 4 * time.Minute
+	pullTime     = 5 * time.Minute
+	pullReadTime = 2 * time.Minute
+	pullRetry    = time.Minute
+	pullBusyWait = 15 * time.Minute
+	pullTries    = 6
+)
+
+func (a *Archive) pullAll(ctx context.Context) {
+	end := time.Now().Add(pullBudget)
+	var wg sync.WaitGroup
+	for range pullPar {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for time.Now().Before(end) && ctx.Err() == nil {
+				var f generated.ClaimPullRow
+				err := a.sys(ctx, func(ctx context.Context) (err error) {
+					f, err = a.st.db(ctx).ClaimPull(ctx, time.Now().Add(pullTime+time.Minute))
+					return err
+				})
+				if err != nil {
+					if !errors.Is(err, pgx.ErrNoRows) && ctx.Err() == nil {
+						fmt.Fprintf(os.Stderr, "archive: workspace %s pulls: %v\n", a.ws.ID, err)
+					}
+					return
+				}
+				a.pull(ctx, f)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func (a *Archive) pull(ctx context.Context, f generated.ClaimPullRow) {
+	pctx, cancel := context.WithTimeout(ctx, pullTime)
+	defer cancel()
+	err := a.pullCopy(pctx, f)
+	if err == nil {
+		err = a.pullRead(pctx, f)
+	}
+	if err == nil {
+		return
+	}
+	stopped := ctx.Err() != nil
+	if errors.Is(err, context.DeadlineExceeded) && !stopped {
+		err = fmt.Errorf("copying it took over %s", pullTime)
+	}
+	bg := context.WithoutCancel(ctx)
+	id, version := f.ID, f.Version
+	var skip *connect.Unsupported
+	err = a.sys(bg, func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		now := time.Now()
+		switch {
+		case errors.As(err, &skip):
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "skipped", Error: "Archive does not copy this file: " + skip.Reason})
+		case errors.Is(err, errRevoked):
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(time.Hour), Tries: f.Tries - 1, Error: err.Error()})
+		case connect.Busy(err) || stopped:
+			wait := max(min(pullRetry<<min(max(f.Tries-1, 0), 16), pullBusyWait), connect.RetryAfter(err))
+			return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(wait), Tries: f.Tries - 1, Error: ""})
+		case f.Tries >= pullTries:
+			return q.SetPullEnd(ctx, generated.SetPullEndParams{ID: id, Version: version, Status: "error", Error: err.Error()})
+		}
+		return q.SetPullRetry(ctx, generated.SetPullRetryParams{ID: id, Version: version, At: now.Add(pullRetry << min(f.Tries-1, 16)), Tries: f.Tries, Error: ""})
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: file %s: %v\n", a.ws.ID, id, err)
+	}
+}
+
+func (a *Archive) pullCopy(ctx context.Context, f generated.ClaimPullRow) error {
+	if f.Copied != nil && f.Version != nil && *f.Copied == *f.Version && f.Hash != "" {
+		return nil
+	}
+	var c generated.ArchiveConnection
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		c, err = a.st.db(ctx).Connection(ctx, *f.Connection)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	p, err := a.hub.connect.Get(c.Provider)
+	if err != nil {
+		return err
+	}
+	i := slices.IndexFunc(p.Streams, func(s *connect.Stream) bool { return f.Stream != nil && s.Name == *f.Stream })
+	if i < 0 || p.Streams[i].Read == nil {
+		return &connect.Unsupported{Reason: p.Name + " has no bytes of it to copy"}
+	}
+	cl, err := a.connClient(ctx, c)
+	if err != nil {
+		return err
+	}
+	defer cl.Close()
+	body, err := p.Streams[i].Read(cl, f.Source)
+	if err != nil {
+		return err
+	}
+	defer body.Body.Close()
+	h := sha256.New()
+	var head fileHead
+	counted := &fileCount{r: io.TeeReader(io.TeeReader(body.Body, h), &head), most: cmp.Or(p.Streams[i].Most, connect.MaxCopy)}
+	tmp := blobTemp()
+	if err := a.blobs.put(ctx, tmp, counted, body.Size); err != nil {
+		if counted.over {
+			return &connect.Unsupported{Reason: fmt.Sprintf("it is over the %d GB Archive copies", counted.most>>30)}
+		}
+		return err
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	moved := false
+	err = a.sys(context.WithoutCancel(ctx), func(ctx context.Context) error {
+		q := a.st.db(ctx)
+		if err := q.LockHash(ctx, hash); err != nil {
+			return err
+		}
+		row, err := fileOf(q.LockFile(ctx, f.ID))
+		if errors.Is(err, ErrNotFound) || err == nil && !slices.Equal(ptrSlice(row.Version), ptrSlice(f.Version)) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err = q.SetPulled(ctx, generated.SetPulledParams{ID: f.ID, Version: f.Version, Hash: hash, Size: counted.n, Sniffed: mediaSniff(f.Name, head.b)}); err != nil {
+			return err
+		}
+		if err = a.blobs.move(ctx, tmp, blobKey(hash)); err == nil {
+			moved = true
+		}
+		return err
+	})
+	if !moved {
+		a.blobs.remove(context.WithoutCancel(ctx), tmp)
+	}
+	return err
+}
+
+func ptrSlice(p *string) []string {
+	if p == nil {
+		return nil
+	}
+	return []string{*p}
+}
+
+type fileHead struct{ b []byte }
+
+func (h *fileHead) Write(p []byte) (int, error) {
+	if n := 512 - len(h.b); n > 0 {
+		h.b = append(h.b, p[:min(n, len(p))]...)
+	}
+	return len(p), nil
+}
+
+type fileCount struct {
+	r       io.Reader
+	n, most int64
+	over    bool
+}
+
+func (c *fileCount) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	if c.n += int64(n); c.n > c.most {
+		c.over = true
+		return n, errors.New("over the most Archive copies")
+	}
+	return n, err
+}
+
+func (a *Archive) pullRead(ctx context.Context, c generated.ClaimPullRow) error {
+	var f *File
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		f, err = fileOf(a.st.db(ctx).GetFile(ctx, c.ID))
+		return err
+	})
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if f.Hash == "" || !slices.Equal(ptrSlice(f.Version), ptrSlice(c.Version)) {
+		return nil
+	}
+	type read struct {
+		meta map[string]any
+		text string
+		err  error
+	}
+	done := func(ctx context.Context, r read) error {
+		status, msg := "done", ""
+		if r.err != nil {
+			status, msg = "error", r.err.Error()
+		}
+		if r.meta == nil {
+			r.meta = map[string]any{}
+		}
+		return a.st.db(ctx).SetPullDone(ctx, generated.SetPullDoneParams{ID: f.ID, Version: c.Version, Status: status, Error: msg, Metadata: r.meta, Body: fileWords(r.text)})
+	}
+	bg := context.WithoutCancel(ctx)
+	late := false
+	err = a.sys(bg, func(ctx context.Context) error {
+		got := make(chan read, 1)
+		a.reading.Lock()
+		go func() {
+			defer a.reading.Unlock()
+			m, t, e := a.media(ctx, f)
+			got <- read{m, t, e}
+		}()
+		select {
+		case r := <-got:
+			return done(ctx, r)
+		case <-time.After(pullReadTime):
+			late = true
+			return errors.New("too long")
+		}
+	})
+	if late {
+		return a.sys(bg, func(ctx context.Context) error {
+			return done(ctx, read{err: fmt.Errorf("reading its words took over %s", pullReadTime)})
+		})
+	}
+	return err
 }
 
 func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, error) {
@@ -786,6 +1216,9 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 	if err != nil {
 		return meta, "", err
 	}
+	if f.MIME == "application/octet-stream" {
+		f.MIME = mediaSniff(f.Name, b[:min(len(b), 512)])
+	}
 	top, _, _ := strings.Cut(f.MIME, "/")
 	if _, office := officeMIME[strings.ToLower(f.MIME)]; office {
 		return meta, mediaText(f.Name, f.MIME, b), nil
@@ -799,7 +1232,7 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 		meta["pages"] = pages
 		return meta, text, err
 	case f.MIME == "text/html":
-		return meta, mediaHTML(b), nil
+		return meta, connect.HTMLText(string(b)), nil
 	case top == "text" || f.MIME == "application/json":
 		return meta, string(b), nil
 	case top == "image":
@@ -831,32 +1264,6 @@ func mediaPDF(b []byte) (text string, pages int, err error) {
 		}
 	}
 	return strings.Join(parts, "\f"), len(parts), nil
-}
-
-func mediaHTML(b []byte) string {
-	z := html.NewTokenizer(bytes.NewReader(b))
-	var sb strings.Builder
-	skip := 0
-	for {
-		tt := z.Next()
-		switch tt {
-		case html.ErrorToken:
-			return strings.Join(strings.Fields(sb.String()), " ")
-		case html.StartTagToken, html.EndTagToken:
-			if n, _ := z.TagName(); string(n) == "script" || string(n) == "style" {
-				if tt == html.StartTagToken {
-					skip++
-				} else {
-					skip--
-				}
-			}
-			sb.WriteByte(' ')
-		case html.TextToken:
-			if skip <= 0 {
-				sb.Write(z.Text())
-			}
-		}
-	}
 }
 
 type mediaIFD struct {
@@ -1041,15 +1448,21 @@ func (a *Archive) mediaThumbnail(ctx context.Context, b []byte) (map[string]any,
 
 type blobStore interface {
 	put(ctx context.Context, key string, r io.Reader, size int64) error
+	move(ctx context.Context, from, to string) error
 	open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error)
 	remove(ctx context.Context, key string) error
 }
 
 func blobKey(hash string) string { return hash[:2] + "/" + hash }
 
+func blobTemp() string { return "copies/" + coreNewID().String() + ".part" }
+
 func (a *Archive) blobPut(ctx context.Context, b []byte) (string, error) {
 	sum := sha256.Sum256(b)
 	hash := hex.EncodeToString(sum[:])
+	if err := a.st.db(ctx).LockHash(ctx, hash); err != nil {
+		return "", err
+	}
 	return hash, a.blobs.put(ctx, blobKey(hash), bytes.NewReader(b), int64(len(b)))
 }
 
@@ -1091,6 +1504,16 @@ func (d *dirBlobs) put(_ context.Context, key string, r io.Reader, _ int64) erro
 		return err
 	}
 	return os.Rename(tmp.Name(), p)
+}
+
+func (d *dirBlobs) move(_ context.Context, from, to string) error {
+	if _, err := os.Stat(d.path(to)); err == nil {
+		return os.Remove(d.path(from))
+	}
+	if err := os.MkdirAll(filepath.Dir(d.path(to)), 0o700); err != nil {
+		return err
+	}
+	return os.Rename(d.path(from), d.path(to))
 }
 
 func (d *dirBlobs) open(_ context.Context, key string, _ int64) (io.ReadSeekCloser, error) {
@@ -1138,6 +1561,10 @@ func (s *gcsBlobs) do(ctx context.Context, method, obj string, body io.Reader, s
 	if rng != "" {
 		req.Header.Set("Range", rng)
 	}
+	if from, ok := strings.CutPrefix(rng, "copy:"); ok {
+		req.Header.Del("Range")
+		req.Header.Set("x-goog-copy-source", "/"+strings.TrimPrefix(s.url(from), strings.TrimRight(s.origin(), "/")+"/"))
+	}
 	tok, err := s.gcp.access(ctx)
 	if err != nil {
 		return nil, err
@@ -1172,6 +1599,33 @@ func (s *gcsBlobs) put(ctx context.Context, key string, r io.Reader, size int64)
 	}
 	resp.Body.Close()
 	return nil
+}
+
+func (s *gcsBlobs) origin() string { return s.base[:strings.LastIndex(s.base, "/")] }
+
+func (s *gcsBlobs) move(ctx context.Context, from, to string) error {
+	resp, err := s.do(ctx, "HEAD", to, nil, 0, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		if resp, err = s.do(ctx, "PUT", to, nil, 0, "copy:"+from); err != nil {
+			return err
+		}
+		if resp.StatusCode/100 != 2 {
+			return gcsErr(resp)
+		}
+		resp.Body.Close()
+		if resp, err = s.do(ctx, "HEAD", to, nil, 0, ""); err != nil {
+			return err
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("gcs: copying to %s left nothing there: %s", to, resp.Status)
+		}
+	}
+	return s.remove(ctx, from)
 }
 
 func (s *gcsBlobs) open(ctx context.Context, key string, size int64) (io.ReadSeekCloser, error) {
@@ -1240,4 +1694,109 @@ func (o *gcsObject) Close() error {
 		return nil
 	}
 	return o.body.Close()
+}
+
+func init() { connect.Extract = mediaText }
+
+var officeMIME = map[string]string{
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document":   "docx",
+	"application/vnd.ms-word.document.macroenabled.12":                          "docm",
+	"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":         "xlsx",
+	"application/vnd.ms-excel.sheet.macroenabled.12":                            "xlsm",
+	"application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+	"application/vnd.ms-powerpoint.presentation.macroenabled.12":                "pptm",
+}
+
+var byExt = map[string]string{".pdf": "application/pdf", ".txt": "text/plain", ".csv": "text/csv", ".md": "text/markdown",
+	".html": "text/html", ".htm": "text/html", ".json": "application/json"}
+
+func mediaText(name, mime string, b []byte) string {
+	mime = strings.ToLower(mime)
+	if mime == "" || mime == "application/octet-stream" {
+		mime = byExt[strings.ToLower(path.Ext(name))]
+	}
+	top, _, _ := strings.Cut(mime, "/")
+	if ext, ok := officeMIME[mime]; ok {
+		return officeText(b, "file."+ext)
+	}
+	if _, err := OfficeKind(name); err == nil {
+		return officeText(b, path.Base(name))
+	}
+	switch {
+	case mime == "application/pdf":
+		text, _, _ := mediaPDF(b)
+		return text
+	case mime == "text/html":
+		return connect.HTMLText(string(b))
+	case top == "text" || mime == "application/json":
+		return string(b)
+	}
+	return ""
+}
+
+func officeText(b []byte, name string) (text string) {
+	defer func() {
+		if recover() != nil {
+			text = ""
+		}
+	}()
+	m, err := OfficeRead(b, name)
+	if err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	line := func(s string) {
+		if s = strings.TrimSpace(s); s != "" {
+			sb.WriteString(s)
+			sb.WriteByte('\n')
+		}
+	}
+	for _, p := range m.Paragraphs {
+		line(p.Text)
+	}
+	for _, t := range m.Tables {
+		for _, r := range t.Rows {
+			line(strings.Join(r, "\t"))
+		}
+	}
+	for _, s := range m.Sheets {
+		line("# " + s.Name)
+		row, cells := "", []string{}
+		flush := func() {
+			line(strings.Join(cells, "\t"))
+			cells = cells[:0]
+		}
+		for _, c := range s.Cells {
+			if r := strings.TrimLeft(c.Ref, "ABCDEFGHIJKLMNOPQRSTUVWXYZ$"); r != row {
+				flush()
+				row = r
+			}
+			if c.Value == "" {
+				continue
+			}
+			col := 0
+			for _, ch := range strings.TrimRight(strings.TrimLeft(c.Ref, "$"), "0123456789") {
+				if ch >= 'A' && ch <= 'Z' {
+					col = col*26 + int(ch-'A') + 1
+				}
+			}
+			for len(cells) < col-1 {
+				cells = append(cells, "")
+			}
+			cells = append(cells, c.Value)
+		}
+		flush()
+	}
+	for _, s := range m.Slides {
+		if s.Hidden {
+			continue
+		}
+		for _, sh := range s.Shapes {
+			for _, p := range sh.Paragraphs {
+				line(p.Text)
+			}
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
 }
