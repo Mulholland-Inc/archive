@@ -10,9 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"path"
 	"reflect"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,8 +40,14 @@ const (
 	runMaxResult = 256 << 10
 	runMaxLogs   = 64 << 10
 	runMaxFetch  = 5 << 20
-	runTimeout   = 30 * time.Second
-	runWrap      = "WITH q AS (\n"
+
+	runEsbuildCommand = "esbuild"
+	runCompileHere    = 2 << 10
+	runCompileTime    = 5 * time.Second
+	runCompileStack   = 256 << 20
+	runCompileMemory  = 512 << 20
+	runTimeout        = 30 * time.Second
+	runWrap           = "WITH q AS (\n"
 )
 
 type RunOutput struct {
@@ -171,13 +181,81 @@ func (e runCompileErr) text() string {
 	return fmt.Sprintf("line %d:%d: %s", e.line, e.col, e.msg)
 }
 
+var runCompiles = make(chan struct{}, 2)
+
 func runTransform(code string) (string, []runCompileErr) {
 	res, errs := runBuild(code, api.SourceMapNone)
 	return string(res.Code), errs
 }
 
+func runEsbuild(code string, sm api.SourceMap) api.TransformResult {
+	return api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts", Sourcemap: sm})
+}
+
+type runEsbuildIn struct {
+	Code string
+	Map  api.SourceMap
+}
+
+func runEsbuildChild() error {
+	debug.SetMaxStack(runCompileStack)
+	go func() {
+		var m runtime.MemStats
+		for {
+			if runtime.ReadMemStats(&m); m.Sys > runCompileMemory {
+				os.Exit(1)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	var in runEsbuildIn
+	if err := json.NewDecoder(os.Stdin).Decode(&in); err != nil {
+		return err
+	}
+	return json.NewEncoder(os.Stdout).Encode(runEsbuild(in.Code, in.Map))
+}
+
+func runEsbuildApart(code string, sm api.SourceMap) (api.TransformResult, error) {
+	var res api.TransformResult
+	ctx, cancel := context.WithTimeout(context.Background(), runCompileTime)
+	defer cancel()
+	select {
+	case runCompiles <- struct{}{}:
+		defer func() { <-runCompiles }()
+	case <-ctx.Done():
+		return res, errors.New("too many long scripts are compiling; try again")
+	}
+	in, err := json.Marshal(runEsbuildIn{code, sm})
+	if err != nil {
+		return res, err
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return res, err
+	}
+	cmd := exec.CommandContext(ctx, self, runEsbuildCommand)
+	cmd.Env = []string{}
+	cmd.Stdin = bytes.NewReader(in)
+	out, err := cmd.Output()
+	if e := (*exec.ExitError)(nil); errors.As(err, &e) {
+		return res, errors.New("this script nests too deeply to compile; flatten it")
+	}
+	if err != nil {
+		return res, err
+	}
+	return res, json.Unmarshal(out, &res)
+}
+
 func runBuild(code string, sm api.SourceMap) (api.TransformResult, []runCompileErr) {
-	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts", Sourcemap: sm})
+	var res api.TransformResult
+	if len(code) <= runCompileHere {
+		res = runEsbuild(code, sm)
+	} else {
+		var err error
+		if res, err = runEsbuildApart(code, sm); err != nil {
+			return res, []runCompileErr{{msg: err.Error()}}
+		}
+	}
 	var errs []runCompileErr
 	for _, m := range res.Errors {
 		e := runCompileErr{msg: m.Text}
