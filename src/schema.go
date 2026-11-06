@@ -1254,12 +1254,20 @@ func schemaCatalog(ctx context.Context, q generated.DBTX) (*Catalog, error) {
 	return catalogParse(b)
 }
 
-func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
+func (s *pgStore) Schema(ctx context.Context, stamp string) (map[string]string, error) {
 	var b interface {
 		Begin(context.Context) (pgx.Tx, error)
 	} = s.sys
-	if t, ok := ctx.Value(storeTxKey{}).(storeTx); ok {
+	t, inTx := ctx.Value(storeTxKey{}).(storeTx)
+	if inTx {
 		b = t.tx
+	} else {
+		s.mu.Lock()
+		ddl, fresh := s.ddl, s.ddl != nil && s.ddlStamp == stamp
+		s.mu.Unlock()
+		if fresh {
+			return ddl, nil
+		}
 	}
 	tx, err := b.Begin(ctx)
 	if err != nil {
@@ -1273,7 +1281,13 @@ func (s *pgStore) Schema(ctx context.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return sch.ddl("public"), nil
+	ddl := sch.ddl("public")
+	if !inTx {
+		s.mu.Lock()
+		s.ddl, s.ddlStamp = ddl, stamp
+		s.mu.Unlock()
+	}
+	return ddl, nil
 }
 
 func (s *pgStore) migrate(ctx context.Context) error {

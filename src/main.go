@@ -21,7 +21,6 @@ import (
 
 	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -78,11 +77,6 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 	}
 	si, err := newSignin(h)
 	if err != nil {
-		return err
-	}
-	if _, err := h.q().FirstAdmin(ctx); errors.Is(err, pgx.ErrNoRows) {
-		fmt.Fprintln(os.Stderr, "archive: no users yet, so nobody can sign in")
-	} else if err != nil {
 		return err
 	}
 	if h.localApp() {
@@ -212,7 +206,14 @@ func httpHandle(mux *http.ServeMux, pattern string, f func(r *http.Request) (int
 
 func httpHandler(a *Archive) http.Handler {
 	mux := http.NewServeMux()
-	handle := func(pattern string, f func(r *http.Request) (int, any, error)) { httpHandle(mux, pattern, f) }
+	handle := func(pattern string, f func(r *http.Request) (int, any, error)) {
+		httpHandle(mux, pattern, func(r *http.Request) (int, any, error) {
+			if r.Method == http.MethodGet {
+				r = r.WithContext(context.WithValue(r.Context(), storeReadKey{}, true))
+			}
+			return f(r)
+		})
+	}
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
 	handle("POST /api/run", func(r *http.Request) (int, any, error) {

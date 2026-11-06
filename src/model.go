@@ -16,13 +16,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/dop251/goja"
 	"github.com/google/uuid"
 	"github.com/pdfcpu/pdfcpu/pkg/api"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu"
 	"github.com/pdfcpu/pdfcpu/pkg/pdfcpu/model"
 	"golang.org/x/oauth2/google"
-	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -131,19 +131,14 @@ func (r *runner) model(call goja.FunctionCall) (any, error) {
 	ctx, cancel := context.WithTimeout(r.ctx, min(modelCall, r.clock.model))
 	defer cancel()
 	results := make([]*ModelResult, len(reqs))
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(modelParallel)
 	var spent atomic.Int64
 	start := time.Now()
-	for i := range reqs {
-		g.Go(func() (err error) {
-			t := time.Now()
-			results[i], err = providers[i](ctx, &reqs[i], files[i])
-			spent.Add(int64(time.Since(t)))
-			return err
-		})
-	}
-	err = g.Wait()
+	err = connect.Parallel(ctx, modelParallel, len(reqs), func(ctx context.Context, i int) (err error) {
+		t := time.Now()
+		results[i], err = providers[i](ctx, &reqs[i], files[i])
+		spent.Add(int64(time.Since(t)))
+		return err
+	})
 	r.clock.model -= max(0, time.Duration(spent.Load())-time.Since(start))
 	if err != nil {
 		return nil, fmt.Errorf("archive.model: %w", err)

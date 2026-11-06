@@ -26,7 +26,7 @@ import (
 
 	"github.com/Mulholland-Inc/archive/connect"
 	"github.com/Mulholland-Inc/archive/generated"
-	"github.com/fxamacker/cbor/v2"
+	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
 	"github.com/google/uuid"
 )
 
@@ -150,7 +150,7 @@ func (d *device) verify() error {
 		Signature []byte `cbor:"signature"`
 		AuthData  []byte `cbor:"authenticatorData"`
 	}
-	if err != nil || cbor.Unmarshal(raw, &as) != nil || len(as.AuthData) < 37 {
+	if err != nil || webauthncbor.Unmarshal(raw, &as) != nil || len(as.AuthData) < 37 {
 		return refused("send Archive-Assertion")
 	}
 	app := sha256.Sum256([]byte(deviceApp()))
@@ -229,7 +229,7 @@ func (h *Hub) deviceAttest(w http.ResponseWriter, d *device) (any, error) {
 		} `cbor:"attStmt"`
 		AuthData []byte `cbor:"authData"`
 	}
-	if errors.Join(err1, err2) != nil || cbor.Unmarshal(raw, &att) != nil || att.Fmt != "apple-appattest" || len(att.Stmt.X5c) < 2 || len(att.AuthData) < 55 {
+	if errors.Join(err1, err2) != nil || webauthncbor.Unmarshal(raw, &att) != nil || att.Fmt != "apple-appattest" || len(att.Stmt.X5c) < 2 || len(att.AuthData) < 55 {
 		return nil, refused("want an apple-appattest attestation")
 	}
 	certs := make([]*x509.Certificate, len(att.Stmt.X5c))

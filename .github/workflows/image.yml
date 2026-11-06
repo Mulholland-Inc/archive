@@ -106,7 +106,7 @@ jobs:
           secrets="$RUNNER_TEMP/secrets.json"
           trap 'rm -f "$secrets"' EXIT
           (umask 077; node -e 'process.stdout.write(JSON.stringify({ LIVE_KEY: process.env.LIVE_KEY }))' > "$secrets")
-          npx wrangler deploy --secrets-file "$secrets"
+          npx wrangler@4.156.2 deploy --secrets-file "$secrets"
         env:
           GCP_PROJECT: ${{ vars.GCP_PROJECT }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

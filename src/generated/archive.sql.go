@@ -790,6 +790,7 @@ WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM arch
     AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
     AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
     AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
+    AND NOT EXISTS (SELECT FROM archive.spend_user x WHERE x.person = k.id)
     AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
 DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
     AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
@@ -1745,23 +1746,6 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 		&i.Member,
 		&i.On,
 	)
-	return i, err
-}
-
-const memberByEmail = `-- name: MemberByEmail :one
-SELECT id, role::text AS role, "group" FROM archive.member WHERE email = $1::text
-`
-
-type MemberByEmailRow struct {
-	ID    uuid.UUID
-	Role  string
-	Group *uuid.UUID
-}
-
-func (q *Queries) MemberByEmail(ctx context.Context, email string) (MemberByEmailRow, error) {
-	row := q.db.QueryRow(ctx, memberByEmail, email)
-	var i MemberByEmailRow
-	err := row.Scan(&i.ID, &i.Role, &i.Group)
 	return i, err
 }
 

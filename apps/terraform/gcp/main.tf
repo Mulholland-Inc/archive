@@ -378,14 +378,6 @@ resource "google_cloud_run_v2_service" "this" {
         }
       }
 
-      startup_probe {
-        failure_threshold = 240
-        period_seconds    = 1
-        http_get {
-          path = "/health"
-        }
-      }
-
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"

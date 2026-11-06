@@ -217,16 +217,15 @@ type Change interface{ change() }
 
 type (
 	SinceTime struct {
-		Req     Req
-		Ms      bool
-		Mark    Path
-		Most    int
-		Expired []int
-		Items   Path          `json:",omitempty"`
-		Cap     int           `json:",omitempty"`
-		Stamp   Path          `json:",omitempty"`
-		Lasts   bool          `json:",omitempty"`
-		Within  time.Duration `json:",omitempty"`
+		Req    Req
+		Ms     bool
+		Mark   Path
+		Most   int
+		Items  Path          `json:",omitempty"`
+		Cap    int           `json:",omitempty"`
+		Stamp  Path          `json:",omitempty"`
+		Lasts  bool          `json:",omitempty"`
+		Within time.Duration `json:",omitempty"`
 	}
 	NewestFirst struct {
 		Query   Q
@@ -478,7 +477,6 @@ type Step struct {
 	Page       Paging
 	Items      Path
 	Soft       []int
-	Words      *Download
 }
 
 func Call[In, Out any](p Plan) *Action {
@@ -620,10 +618,6 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	}
 	v = e
 	switch {
-	case s.Words != nil:
-		if v, _, err = c.download(*s.Words, sc); err != nil {
-			return nil, err
-		}
 	case s.Req.URL != "" || s.Tool != "":
 		if s.Page != nil {
 			v, err = c.every(s.Req, s.Items, s.Page, sc)
@@ -998,7 +992,7 @@ func (r Req) check(where string, roots ...string) error {
 func (a *Action) check() error {
 	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta", "key")
 	for i, s := range a.plan.Steps {
-		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
+		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" {
 			return fmt.Errorf("step %d is nothing to do", i)
 		}
 		if s.URL != "" && s.Each == "" {
@@ -1666,9 +1660,6 @@ func (s *Sync) delta(c *Client, st flow, part string, sc map[string]any) (*Page,
 			from = &x
 		}
 		if ans, recs, err = from.read(c, ch.Req, &st, sc); err != nil {
-			if expired(ch.Expired) {
-				return st.listing(), nil
-			}
 			return nil, err
 		}
 		if ch.Cap > 0 && len(recs) >= ch.Cap {
@@ -2325,7 +2316,7 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	}
 	if e := c.p.Errors; e != nil {
 		if msg := text(pick(ans, e.At)); msg != "" {
-			f := &Refusal{Provider: c.p.Name, Status: cmp.Or(e.Status, http.StatusBadRequest), Message: msg}
+			f := &Refusal{Provider: c.p.Name, Status: http.StatusBadRequest, Message: msg}
 			if slices.Contains(e.Busy, text(pick(ans, e.Code))) {
 				f.Status, f.Busy = http.StatusTooManyRequests, true
 			}

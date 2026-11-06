@@ -142,6 +142,9 @@ SELECT * FROM archive."user" WHERE email = $1;
 -- name: UserByID :one
 SELECT * FROM archive."user" WHERE id = $1;
 
+-- name: UsersWorkspaces :many
+SELECT id, workspaces FROM archive."user" WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+
 -- name: UserByOIDC :one
 SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
 

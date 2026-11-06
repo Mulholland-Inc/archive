@@ -627,7 +627,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Endpoint</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>GET /api/types</code></td><td>The catalog: your tables and views with their columns and DDL, and every connector.</td></tr>
-<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: agents, workflows, members and types.</td></tr>
+<tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: who you are, agents, workflows, members, types and onboarding status.</td></tr>
 <tr><td><code>POST /api/action/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
 <tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>

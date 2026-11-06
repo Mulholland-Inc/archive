@@ -12,7 +12,7 @@
   import Dialog from '../components/Dialog.svelte';
   import Field from '../components/Field.svelte';
   import Input from '../components/Input.svelte';
-  import { app, onboardingSteps, stepDone, signed, atLeast, openDocument, closeFile, downloadAgreement, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, signed, atLeast, openDocument, closeFile, downloadAgreement, loadSignup, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
   import { notify } from '../lib/dialogs.svelte.js';
 
   let error = $state('');
@@ -31,6 +31,10 @@
 
   $effect(() => () => {
     if (app.canvas?.doc) closeFile();
+  });
+
+  $effect(() => {
+    loadSignup();
   });
 
   let linking = $state(null);
@@ -69,7 +73,7 @@
   function openReading(kind) {
     reading = signed(kind);
     const row = reading;
-    openDocument(`read:${kind}`, row.name, row.model, { footer: signature, download: () => downloadAgreement(row) });
+    openDocument(`read:${kind}`, row.name, app.signup.models[kind], { footer: signature, download: () => downloadAgreement(row) });
   }
 
   const fills = () => ({
@@ -212,7 +216,7 @@
             {#if !checked}
               <Button size="sm" variant={step === next ? 'primary' : 'secondary'} disabled={!ready(step.id)} onclick={actions[step.id]}>{step.action}</Button>
             {:else if step.id === 'msa' || step.id === 'baa'}
-              <Button size="sm" variant="secondary" onclick={() => openReading(step.id)}>View</Button>
+              <Button size="sm" variant="secondary" disabled={!app.signup.models[step.id]} onclick={() => openReading(step.id)}>View</Button>
             {:else}
               <Button size="sm" variant="secondary" disabled={!ready(step.id)} onclick={actions[step.id]}>{step.id === 'card' ? 'Change' : 'Edit'}</Button>
             {/if}

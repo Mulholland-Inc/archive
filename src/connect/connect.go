@@ -86,9 +86,28 @@ type Connector struct {
 	Trace       string
 }
 
+func Parallel(ctx context.Context, limit, n int, fn func(ctx context.Context, i int) error) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var wg sync.WaitGroup
+	var once sync.Once
+	var first error
+	slots := make(chan struct{}, limit)
+	for i := range n {
+		slots <- struct{}{}
+		wg.Go(func() {
+			defer func() { <-slots }()
+			if err := fn(ctx, i); err != nil {
+				once.Do(func() { first = err; cancel() })
+			}
+		})
+	}
+	wg.Wait()
+	return first
+}
+
 type Errors struct {
 	At, Code Path
-	Status   int
 	Busy     []string
 }
 
@@ -617,10 +636,6 @@ func (p *Provider) was(t string) *Provider {
 	return &Provider{Connector: registry[p.Was]}
 }
 
-func (c *Client) Context() context.Context { return c.ctx }
-
-func (c *Client) Option(k string) string { return c.p.opts.Get(k) }
-
 func (c *Client) Token() string {
 	if c.tok == nil {
 		return ""
@@ -629,8 +644,6 @@ func (c *Client) Token() string {
 }
 
 func (c *Client) Credentials() (id, secret string) { return c.p.clientID, c.p.secret }
-
-func (c *Client) Get(u string, v any) error { return c.Do("GET", u, nil, v) }
 
 func (c *Client) Do(method, u string, body, v any) error { return c.Send(method, u, nil, body, v) }
 
