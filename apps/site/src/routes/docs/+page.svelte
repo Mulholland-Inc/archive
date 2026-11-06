@@ -644,7 +644,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tr><td><code>GET</code>, <code>POST /api/member</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
 <tr><td><code>DELETE /api/member/&#123;id&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
 <tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
-<tr><td><code>GET /api/connection_list</code></td><td>The connections you can see, with their row counts.</td></tr>
+<tr><td><code>GET /api/connection</code></td><td>The connections you can see, with their row counts.</td></tr>
 <tr><td><code>POST /api/connection</code></td><td>Connect an account with keys: <code>&#123;"provider", "keys"&#125;</code>. <code>&#123;"provider"&#125;</code> alone gives a connector's link token.</td></tr>
 <tr><td><code>PATCH /api/connection/&#123;id&#125;</code></td><td>Narrow an integration to a group: <code>&#123;"access"&#125;</code> (managers and up), or sync it now: <code>&#123;"sync": true&#125;</code>.</td></tr>
 <tr><td><code>DELETE /api/connection/&#123;id&#125;</code></td><td>Disconnect it, deleting what it synced.</td></tr>

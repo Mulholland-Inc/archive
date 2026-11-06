@@ -536,10 +536,12 @@ CREATE TABLE archive.connection (
     integration boolean NOT NULL DEFAULT false,
     access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name       text NOT NULL DEFAULT '',
+    items      bigint NOT NULL DEFAULT 0,
     UNIQUE (member, provider, account)
 ) INHERITS (archive.object);
 CREATE UNIQUE INDEX connection_integration_idx ON archive.connection (provider) WHERE integration;
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
+COMMENT ON COLUMN archive.connection.items IS 'How many rows it synced; counted when a sync finishes';
 COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 icon: plug';
 COMMENT ON COLUMN archive.connection.provider IS 'Which service, a connector: gmail, notion, quickbooks, ...';
@@ -4235,7 +4237,7 @@ CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.turn FOR EACH R
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.inbox FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, source, "on", trigger, hook, member, access ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access, items ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF hash, name, mime, size, metadata, text, status, error, access, kind, parent, connection, stream, source_id, source, url, drive, owner, owner_name, editor, editor_name, made_at, edited_at ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -4446,87 +4448,7 @@ FROM archive.workflow w;
 COMMENT ON VIEW archive.workflow_list IS 'Each workflow you can see, with its last run';
 COMMENT ON COLUMN archive.workflow_list.last IS 'Its last run: id, workflow, at, trigger, ms and error; null before its first';
 
-CREATE VIEW archive.connection_list WITH (security_invoker = true) AS
-SELECT c.id, c.name, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at, c.integration, c.access,
-    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
-    (SELECT m.email::text FROM archive.member m WHERE m.id = c.member) AS connected_by
-FROM archive.connection c;
-COMMENT ON VIEW archive.connection_list IS 'Each connection you can see, with how many of its rows you see and who connected it';
-
-GRANT SELECT ON archive.agent_list, archive.workflow_list, archive.connection_list TO "{p}_viewer";
+GRANT SELECT ON archive.agent_list, archive.workflow_list TO "{p}_viewer";
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -4869,6 +4791,9 @@ SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at 
 
 -- name: HasPendingFiles :one
 SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL);
+
+-- name: UncountedConnections :many
+SELECT id, provider FROM archive.connection WHERE items = 0;
 
 -- name: Connection :one
 SELECT * FROM archive.connection WHERE id = $1;

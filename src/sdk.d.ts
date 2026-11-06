@@ -122,7 +122,7 @@
  * - People connect their own Gmail, Outlook, Drive or Notion in Settings, Connectors; managers and up connect integrations
  *   for everyone in Archive settings, Integrations, and may narrow one to a group. Both are rows of connection. To use an
  *   account, a person connects it there: you cannot, as archive.create, update and delete of connection throw not allowed in a run,
- *   because what they do at the service cannot roll back. connection_list says how many rows each has.
+ *   because what they do at the service cannot roll back. connection.items says how many rows each has.
  * - archive.action("gmail.search", { query }) uses one; Actions lists yours. With several accounts at a connector, pass
  *   { connection }, its account or id. Integrations act for editors and up. Failures throw, with code unauthorized when
  *   the account must connect again. An action counts toward {timeout}. In a workflow, actions are its runner's.

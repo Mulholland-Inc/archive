@@ -319,7 +319,7 @@ const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnection, error) {
@@ -344,6 +344,7 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -412,7 +413,7 @@ func (q *Queries) ConnectedProviders(ctx context.Context) ([]string, error) {
 }
 
 const connection = `-- name: Connection :one
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE id = $1
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -437,6 +438,7 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -453,7 +455,7 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 }
 
 const connectionLocked = `-- name: ConnectionLocked :one
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE id = $1 FOR UPDATE
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -478,6 +480,7 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -706,7 +709,7 @@ func (q *Queries) DDLRevision(ctx context.Context, arg DDLRevisionParams) (uuid.
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+DELETE FROM archive.connection WHERE id = $1 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -731,6 +734,7 @@ func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -787,7 +791,7 @@ const deviceConnection = `-- name: DeviceConnection :one
 INSERT INTO archive.connection (member, provider, account, name, meta, token, sync_at)
 VALUES ($1, 'iphone', $2, $3, jsonb_build_object('device', $3::text), ''::bytea, NULL)
 ON CONFLICT (member, provider, account) DO UPDATE SET meta = archive.connection.meta || excluded.meta, updated_at = now(), revoked = false
-RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string, name string) (ArchiveConnection, error) {
@@ -812,6 +816,7 @@ func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, accoun
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -1701,7 +1706,7 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 }
 
 const memberConnections = `-- name: MemberConnections :many
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
 
 func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
@@ -1732,6 +1737,7 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 			&i.LeaseAt,
 			&i.Revoked,
 			&i.Integration,
+			&i.Items,
 		); err != nil {
 			return nil, err
 		}
@@ -2593,6 +2599,35 @@ func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 	var i TxWroteRow
 	err := row.Scan(&i.Wrote, &i.Members)
 	return i, err
+}
+
+const uncountedConnections = `-- name: UncountedConnections :many
+SELECT id, provider FROM archive.connection WHERE items = 0
+`
+
+type UncountedConnectionsRow struct {
+	ID       uuid.UUID
+	Provider string
+}
+
+func (q *Queries) UncountedConnections(ctx context.Context) ([]UncountedConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, uncountedConnections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UncountedConnectionsRow
+	for rows.Next() {
+		var i UncountedConnectionsRow
+		if err := rows.Scan(&i.ID, &i.Provider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const updateWorkflow = `-- name: UpdateWorkflow :execrows

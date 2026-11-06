@@ -175,7 +175,7 @@ func catalogWorkflow(t *Table) {
 }
 
 func catalogConnection(t *Table) {
-	t.internal = []string{"member", "token", "cursor"}
+	t.internal = []string{"token", "cursor"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
@@ -245,7 +245,7 @@ var (
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
 		"business": true, "agreement": true, "billing": true,
-		"docs": true, "terms": true, "agent_list": true, "workflow_list": true, "connection_list": true}
+		"docs": true, "terms": true, "agent_list": true, "workflow_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )

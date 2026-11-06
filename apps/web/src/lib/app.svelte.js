@@ -1193,7 +1193,7 @@ export const connections = resource({
     const v = ws();
     if (!v.catalog) await schema.refresh();
     const connectors = v.catalog.catalog.connectors;
-    const rows = await api('/api/connection_list?limit=1000', { workspace: v.id });
+    const rows = await api('/api/connection?limit=1000', { workspace: v.id });
     rows.sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account));
     const ids = new Set(connectors.filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
@@ -1243,7 +1243,7 @@ function toIntegration(k, x) {
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
-    connectedBy: x?.connected_by ?? '',
+    member: x?.member ?? '',
     date: x ? relative(x.created_at) : '',
     lastSync: x ? lastSyncOf(x) : '',
     items: x?.items ?? 0,
@@ -1341,7 +1341,7 @@ export const ownConnections = resource({
   tables: ['archive.connection'],
   load: async () => {
     const all = await Promise.all(app.archives.map(async (v) => {
-      const rows = await api('/api/connection_list?integration=false&limit=1000', { workspace: v.id });
+      const rows = await api('/api/connection?integration=false&limit=1000', { workspace: v.id });
       return rows.map((x) => ({ ...x, workspace: { id: v.id, name: v.name }, look: v.look }));
     }));
     app.ownConnections = all.flat().sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account) || a.workspace.name.localeCompare(b.workspace.name));

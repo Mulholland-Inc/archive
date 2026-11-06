@@ -89,6 +89,8 @@ type ArchiveConnection struct {
 	Revoked  bool
 	// It is the archive's, like its QuickBooks, which a manager, engineer or the owner connects for everyone, not one person's own
 	Integration bool
+	// How many rows it synced; counted when a sync finishes
+	Items int64
 }
 
 type ArchiveDue struct {

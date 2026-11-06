@@ -12,7 +12,7 @@
   import Text from './Text.svelte';
   import Icon from './Icon.svelte';
   import KeysDialog from './KeysDialog.svelte';
-  import { connectIntegration, connectLink, disconnectIntegration, syncIntegration, atLeast, connections } from '../lib/app.svelte.js';
+  import { connectIntegration, connectLink, disconnectIntegration, syncIntegration, atLeast, connections, ws } from '../lib/app.svelte.js';
   import { confirmDialog } from '../lib/dialogs.svelte.js';
 
   let { integration: c, onback } = $props();
@@ -50,7 +50,7 @@
     {#if c.connected}
       <Stack gap="0">
         <SettingsRow label="Account"><Text size="sm" tone="secondary" truncate>{c.account}</Text></SettingsRow>
-        <SettingsRow label="Connected by"><Text size="sm" tone="secondary">{c.connectedBy}, {c.date}</Text></SettingsRow>
+        <SettingsRow label="Connected by"><Text size="sm" tone="secondary">{ws().members.find((m) => m.id === c.member)?.email ?? ""}, {c.date}</Text></SettingsRow>
         <SettingsRow label="Last synced"><Text size="sm" tone="secondary">{c.lastSync}</Text></SettingsRow>
         <SettingsRow label="Items synced"><Text size="sm" tone="secondary" tabular>{c.items.toLocaleString()}</Text></SettingsRow>
         {#if c.error}<SettingsRow label="Problem"><Text size="sm" tone="danger">{c.error}</Text></SettingsRow>{/if}

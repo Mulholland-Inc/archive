@@ -805,7 +805,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 			save.Revoked = true
 			return q.SaveSync(ctx, save)
 		}
-		cur, name := &syncStream{}, ""
+		cur, name, recount := &syncStream{}, "", false
 		if s != nil {
 			cur, name = st.of(s.Name).fresh(s), s.Name
 			cur.Def, st[s.Name] = s.Version, cur
@@ -853,6 +853,7 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 					}
 				}
 			}
+			recount = !page.More
 			cur.Cursor, cur.More, cur.Skip, cur.Fails, cur.Error, cur.At = page.Cursor, page.More, "", 0, "", nil
 			cur.Pages++
 			switch {
@@ -889,6 +890,13 @@ func (a *Archive) syncPage(ctx context.Context, c generated.ArchiveConnection) e
 				if err := w.stream(ctx, k); err != nil {
 					return err
 				}
+				recount = true
+			}
+		}
+		if recount {
+			w := &syncDB{db: a.st.Q(ctx), id: c.ID}
+			if err := w.count(ctx, streams); err != nil {
+				return err
 			}
 		}
 		if settled && len(errs) == 0 {
@@ -1475,6 +1483,50 @@ func (w *syncDB) stream(ctx context.Context, name string) error {
 	return nil
 }
 
+func syncStreams(provider string) []*connect.Stream {
+	if provider == "iphone" {
+		streams := make([]*connect.Stream, len(connect.Phone))
+		for i, s := range connect.Phone {
+			streams[i] = connect.PhoneStream(s.Name)
+		}
+		return streams
+	}
+	if c := connect.Get(provider); c != nil {
+		return c.Streams
+	}
+	return nil
+}
+
+func (a *Archive) recount(ctx context.Context) error {
+	return a.sys(ctx, func(ctx context.Context) error {
+		conns, err := a.st.db(ctx).UncountedConnections(ctx)
+		if err != nil {
+			return err
+		}
+		for _, c := range conns {
+			w := &syncDB{db: a.st.Q(ctx), id: c.ID}
+			if err := w.count(ctx, syncStreams(c.Provider)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (w *syncDB) count(ctx context.Context, streams []*connect.Stream) error {
+	tables := []string{"file"}
+	for _, s := range streams {
+		if !slices.Contains(tables, s.Table) {
+			tables = append(tables, s.Table)
+		}
+	}
+	for i, t := range tables {
+		tables[i] = "(SELECT count(*) FROM archive." + t + " WHERE connection = $1)"
+	}
+	_, err := w.db.Exec(ctx, "UPDATE archive.connection SET items = "+strings.Join(tables, " + ")+" WHERE id = $1", w.id)
+	return err
+}
+
 func (w *syncDB) gone(ctx context.Context, sql string, args ...any) error {
 	tag, err := w.db.Exec(ctx, sql, args...)
 	if err != nil || tag.RowsAffected() == 0 {
@@ -1649,7 +1701,7 @@ func (h *Hub) pushForget(ctx context.Context, ws, conn uuid.UUID, heard *connect
 				}
 			}
 		}
-		return nil
+		return w.count(ctx, p.Streams)
 	})
 }
 

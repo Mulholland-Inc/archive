@@ -211,6 +211,7 @@ func (h *Hub) migrateAll(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
+		errs = append(errs, a.recount(ctx))
 		a.Close()
 	}
 	return errors.Join(errs...)

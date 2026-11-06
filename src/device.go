@@ -344,6 +344,11 @@ func (h *Hub) deviceRecords(w http.ResponseWriter, d *device) (any, error) {
 		if err := syncSave(ctx, sw, s, &connect.Page{Records: body.Records, Full: body.Full, More: body.More}, cur); err != nil {
 			return err
 		}
+		if !body.More {
+			if err := sw.count(ctx, syncStreams(c.Provider)); err != nil {
+				return err
+			}
+		}
 		cur.Last = &now
 		cursor, _ := json.Marshal(st)
 		return q.SaveSync(ctx, generated.SaveSyncParams{ID: c.ID, Cursor: cursor, SyncedAt: &now})
