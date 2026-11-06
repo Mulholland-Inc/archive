@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -41,21 +44,25 @@ func (r *migrationResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 	var out struct {
-		Revision string `json:"revision"`
-		Confirm  string `json:"confirm"`
+		Result struct {
+			Revision string `json:"revision"`
+		} `json:"result"`
+		Error string `json:"error"`
 	}
-	body := map[string]any{"sql": m.SQL.ValueString(), "name": m.Name.ValueString()}
-	err := r.c.do(ctx, "POST", "/api/action/migrate", body, &out)
-	if err == nil && out.Confirm != "" {
-		body["confirm"] = out.Confirm
-		err = r.c.do(ctx, "POST", "/api/action/migrate", body, &out)
+	sql, _ := json.Marshal(m.SQL.ValueString())
+	name, _ := json.Marshal(m.Name.ValueString())
+	code := fmt.Sprintf(`const dry = await archive.migrate(%s, { name: %s });
+return dry.confirm ? await archive.migrate(%s, { name: %s, confirm: dry.confirm }) : dry;`, sql, name, sql, name)
+	err := r.c.do(ctx, "POST", "/api/run", map[string]any{"code": code}, &out)
+	if err == nil && out.Error != "" {
+		err = errors.New(out.Error)
 	}
 	if err != nil {
 		resp.Diagnostics.AddError("The migration failed", err.Error())
 		return
 	}
-	m.ID = types.StringValue(out.Revision)
-	if out.Revision == "" {
+	m.ID = types.StringValue(out.Result.Revision)
+	if out.Result.Revision == "" {
 		m.ID = types.StringValue(m.Name.ValueString())
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, m)...)

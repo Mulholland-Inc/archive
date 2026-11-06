@@ -255,39 +255,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.business'::regclass, 'archive.agreement'::regclass, 'archive.billing'::regclass, 'archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
-            'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
-            'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
-            'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
-            'archive.payroll_address'::regclass, 'archive.payroll_employment'::regclass, 'archive.payroll_custom_field'::regclass,
-            'archive.payroll_custom_value'::regclass, 'archive.payroll_department_member'::regclass, 'archive.payroll_schedule_assignment'::regclass,
-            'archive.payroll_schedule_member'::regclass, 'archive.payroll_earning_type'::regclass, 'archive.payroll_time_off_request'::regclass,
-            'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
-            'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
-            'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.file'::regclass,
-            'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
-            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.code_project'::regclass, 'archive.compliance'::regclass,
-            'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
-            'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
-            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
-            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
-            'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
-            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.photo'::regclass, 'archive.place_visit'::regclass,
-            'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
-            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
-            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
-            'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
-            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
-            'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
-            'archive.school_notice'::regclass,
-            'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
-            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass,
-            'archive.agent_list'::regclass, 'archive.workflow_list'::regclass, 'archive.connection_list'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -351,7 +319,7 @@ const claimSync = `-- name: ClaimSync :one
 UPDATE archive.connection SET lease_at = $1::timestamptz
 WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (c.lease_at IS NULL OR c.lease_at < now())
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
-RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnection, error) {
@@ -376,6 +344,7 @@ func (q *Queries) ClaimSync(ctx context.Context, lease time.Time) (ArchiveConnec
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -444,7 +413,7 @@ func (q *Queries) ConnectedProviders(ctx context.Context) ([]string, error) {
 }
 
 const connection = `-- name: Connection :one
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE id = $1
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE id = $1
 `
 
 func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -469,6 +438,7 @@ func (q *Queries) Connection(ctx context.Context, id uuid.UUID) (ArchiveConnecti
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -485,7 +455,7 @@ func (q *Queries) ConnectionFor(ctx context.Context, member uuid.UUID, provider 
 }
 
 const connectionLocked = `-- name: ConnectionLocked :one
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE id = $1 FOR UPDATE
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -510,6 +480,7 @@ func (q *Queries) ConnectionLocked(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -738,7 +709,7 @@ func (q *Queries) DDLRevision(ctx context.Context, arg DDLRevisionParams) (uuid.
 }
 
 const deleteConnection = `-- name: DeleteConnection :one
-DELETE FROM archive.connection WHERE id = $1 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+DELETE FROM archive.connection WHERE id = $1 RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveConnection, error) {
@@ -763,6 +734,7 @@ func (q *Queries) DeleteConnection(ctx context.Context, id uuid.UUID) (ArchiveCo
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -777,24 +749,7 @@ func (q *Queries) DeleteDDLKey(ctx context.Context, key string) error {
 }
 
 const deleteUnknown = `-- name: DeleteUnknown :exec
-WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
-    AND NOT EXISTS (SELECT FROM archive.file x WHERE x.owner = k.id OR x.editor = k.id)
-    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
-    AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
-    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
-    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.spend_user x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
-DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id)
+SELECT archive.delete_unknown()
 `
 
 func (q *Queries) DeleteUnknown(ctx context.Context) error {
@@ -836,7 +791,7 @@ const deviceConnection = `-- name: DeviceConnection :one
 INSERT INTO archive.connection (member, provider, account, name, meta, token, sync_at)
 VALUES ($1, 'iphone', $2, $3, jsonb_build_object('device', $3::text), ''::bytea, NULL)
 ON CONFLICT (member, provider, account) DO UPDATE SET meta = archive.connection.meta || excluded.meta, updated_at = now(), revoked = false
-RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration
+RETURNING id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items
 `
 
 func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, account string, name string) (ArchiveConnection, error) {
@@ -861,6 +816,7 @@ func (q *Queries) DeviceConnection(ctx context.Context, member uuid.UUID, accoun
 		&i.LeaseAt,
 		&i.Revoked,
 		&i.Integration,
+		&i.Items,
 	)
 	return i, err
 }
@@ -1255,17 +1211,6 @@ func (q *Queries) GroupByName(ctx context.Context, name string) (uuid.UUID, erro
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
-}
-
-const hasPendingFiles = `-- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL)
-`
-
-func (q *Queries) HasPendingFiles(ctx context.Context) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingFiles)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
 }
 
 const hasRole = `-- name: HasRole :one
@@ -1749,8 +1694,32 @@ func (q *Queries) LockWorkflow(ctx context.Context, id uuid.UUID) (ArchiveWorkfl
 	return i, err
 }
 
+const loginlessRoles = `-- name: LoginlessRoles :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE (starts_with(rolname, $1::text || '_u') OR starts_with(rolname, $1::text || '_t')) AND (NOT rolcanlogin OR $2::bool)
+`
+
+func (q *Queries) LoginlessRoles(ctx context.Context, prefix string, every bool) ([]string, error) {
+	rows, err := q.db.Query(ctx, loginlessRoles, prefix, every)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var rolname string
+		if err := rows.Scan(&rolname); err != nil {
+			return nil, err
+		}
+		items = append(items, rolname)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const memberConnections = `-- name: MemberConnections :many
-SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
+SELECT id, name, access, created_at, updated_at, member, provider, account, token, scopes, error, meta, sync_at, synced_at, cursor, lease_at, revoked, integration, items FROM archive.connection WHERE member = $1 AND NOT integration OR integration ORDER BY provider, account, id
 `
 
 func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]ArchiveConnection, error) {
@@ -1781,6 +1750,7 @@ func (q *Queries) MemberConnections(ctx context.Context, member uuid.UUID) ([]Ar
 			&i.LeaseAt,
 			&i.Revoked,
 			&i.Integration,
+			&i.Items,
 		); err != nil {
 			return nil, err
 		}
@@ -1977,17 +1947,6 @@ func (q *Queries) NameMembers(ctx context.Context, emails []string, names []stri
 	return err
 }
 
-const nextBlob = `-- name: NextBlob :one
-SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1
-`
-
-func (q *Queries) NextBlob(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextBlob)
-	var at time.Time
-	err := row.Scan(&at)
-	return at, err
-}
-
 const nextBlobGone = `-- name: NextBlobGone :one
 SELECT hash FROM archive.blob_gone WHERE at <= now() ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED
 `
@@ -2059,41 +2018,6 @@ func (q *Queries) NextPendingFile(ctx context.Context) (NextPendingFileRow, erro
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const nextPull = `-- name: NextPull :one
-SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
-WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1
-`
-
-func (q *Queries) NextPull(ctx context.Context) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextPull)
-	var column_1 time.Time
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const nextSyncAt = `-- name: NextSyncAt :one
-SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), $1::timestamptz))::timestamptz FROM archive.connection
-WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1
-`
-
-func (q *Queries) NextSyncAt(ctx context.Context, soon time.Time) (time.Time, error) {
-	row := q.db.QueryRow(ctx, nextSyncAt, soon)
-	var column_1 time.Time
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const nextWorkflowAt = `-- name: NextWorkflowAt :one
-SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1
-`
-
-func (q *Queries) NextWorkflowAt(ctx context.Context) (*time.Time, error) {
-	row := q.db.QueryRow(ctx, nextWorkflowAt)
-	var next_at *time.Time
-	err := row.Scan(&next_at)
-	return next_at, err
 }
 
 const noMembers = `-- name: NoMembers :one
@@ -2219,15 +2143,6 @@ func (q *Queries) ReplaceFile(ctx context.Context, iD uuid.UUID, hash string, si
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const resetProcessing = `-- name: ResetProcessing :exec
-UPDATE archive.file SET status = 'pending' WHERE status = 'processing'
-`
-
-func (q *Queries) ResetProcessing(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, resetProcessing)
-	return err
 }
 
 const retryBlobGone = `-- name: RetryBlobGone :exec
@@ -2644,6 +2559,35 @@ func (q *Queries) TxWrote(ctx context.Context) (TxWroteRow, error) {
 	return i, err
 }
 
+const uncountedConnections = `-- name: UncountedConnections :many
+SELECT id, provider FROM archive.connection WHERE items = 0
+`
+
+type UncountedConnectionsRow struct {
+	ID       uuid.UUID
+	Provider string
+}
+
+func (q *Queries) UncountedConnections(ctx context.Context) ([]UncountedConnectionsRow, error) {
+	rows, err := q.db.Query(ctx, uncountedConnections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UncountedConnectionsRow
+	for rows.Next() {
+		var i UncountedConnectionsRow
+		if err := rows.Scan(&i.ID, &i.Provider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateWorkflow = `-- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = $1, source = $2, "on" = nullif($3::jsonb, 'null'), trigger = $4,
     next_at = $5, cursor_at = $6, cursor_id = $7, access = $8, updated_at = now()
@@ -2718,6 +2662,46 @@ UPDATE archive.connection SET cursor = $1, sync_at = $2 WHERE id = $3
 func (q *Queries) WantSync(ctx context.Context, cursor json.RawMessage, syncAt *time.Time, iD uuid.UUID) error {
 	_, err := q.db.Exec(ctx, wantSync, cursor, syncAt, iD)
 	return err
+}
+
+const work = `-- name: Work :many
+SELECT kind::text AS kind, at::timestamptz AS at FROM archive.work WHERE at IS NOT NULL
+`
+
+type WorkRow struct {
+	Kind string
+	At   time.Time
+}
+
+func (q *Queries) Work(ctx context.Context) ([]WorkRow, error) {
+	rows, err := q.db.Query(ctx, work)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []WorkRow
+	for rows.Next() {
+		var i WorkRow
+		if err := rows.Scan(&i.Kind, &i.At); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const workAt = `-- name: WorkAt :one
+SELECT at::timestamptz FROM archive.work WHERE kind = $1 AND at IS NOT NULL
+`
+
+func (q *Queries) WorkAt(ctx context.Context, kind string) (time.Time, error) {
+	row := q.db.QueryRow(ctx, workAt, kind)
+	var at time.Time
+	err := row.Scan(&at)
+	return at, err
 }
 
 const workflowByHook = `-- name: WorkflowByHook :one

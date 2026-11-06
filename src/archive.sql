@@ -536,10 +536,12 @@ CREATE TABLE archive.connection (
     integration boolean NOT NULL DEFAULT false,
     access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     name       text NOT NULL DEFAULT '',
+    items      bigint NOT NULL DEFAULT 0,
     UNIQUE (member, provider, account)
 ) INHERITS (archive.object);
 CREATE UNIQUE INDEX connection_integration_idx ON archive.connection (provider) WHERE integration;
 CREATE INDEX connection_sync_idx ON archive.connection (sync_at) WHERE sync_at IS NOT NULL;
+COMMENT ON COLUMN archive.connection.items IS 'How many rows it synced; counted when a sync finishes';
 COMMENT ON TABLE archive.connection IS 'One of your own accounts at another service that Archive reads for you, like your Gmail; archive.action uses it. Read only; connect and disconnect them in Settings, Connectors
 icon: plug';
 COMMENT ON COLUMN archive.connection.provider IS 'Which service, a connector: gmail, notion, quickbooks, ...';
@@ -823,11 +825,6 @@ COMMENT ON COLUMN archive.mail_message.text IS 'Its text, or the words of its HT
 COMMENT ON COLUMN archive.mail_message.sent_at IS 'When it was sent, as its Date says, or else when it arrived';
 COMMENT ON COLUMN archive.mail_message.received_at IS 'When the mailbox had it';
 COMMENT ON COLUMN archive.mail_message.labels IS 'Its labels or folders there, like INBOX';
-COMMENT ON COLUMN archive.mail_message.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.mail_message.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.mail_message.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.mail_message.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.mail_message.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.mail_party (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -849,7 +846,6 @@ COMMENT ON COLUMN archive.mail_party.message IS 'references mail_message';
 COMMENT ON COLUMN archive.mail_party.person IS 'references known_person; who, by their address';
 COMMENT ON COLUMN archive.mail_party.role IS 'from, to, cc, bcc or reply_to';
 COMMENT ON COLUMN archive.mail_party.name IS 'The name the message gives them';
-COMMENT ON COLUMN archive.mail_party.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.mail_attachment (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -874,7 +870,6 @@ COMMENT ON COLUMN archive.mail_attachment.mime IS 'Its media type, like applicat
 COMMENT ON COLUMN archive.mail_attachment.size IS 'Its size in bytes';
 COMMENT ON COLUMN archive.mail_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
 COMMENT ON COLUMN archive.mail_attachment.file IS 'references file; its content, kept as a file its connection owns, seen by whoever sees the message; null when Archive did not keep it, like one over 25 MB or inline';
-COMMENT ON COLUMN archive.mail_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.doc_page (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -898,11 +893,6 @@ icon: file-text';
 COMMENT ON COLUMN archive.doc_page.kind IS 'What it is there, like page or database';
 COMMENT ON COLUMN archive.doc_page.icon IS 'Its emoji, or its image''s URL';
 COMMENT ON COLUMN archive.doc_page.edited_at IS 'When it was last edited, when the service says';
-COMMENT ON COLUMN archive.doc_page.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.doc_page.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.doc_page.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.doc_page.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.doc_page.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_company (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -943,11 +933,6 @@ COMMENT ON COLUMN archive.payroll_company.admin IS 'references known_person; its
 COMMENT ON COLUMN archive.payroll_company.admin_name IS 'Its primary payroll admin''s name';
 COMMENT ON COLUMN archive.payroll_company.signatory IS 'references known_person; who signs for it';
 COMMENT ON COLUMN archive.payroll_company.signatory_name IS 'Who signs for it, by name';
-COMMENT ON COLUMN archive.payroll_company.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_company.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_company.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_company.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_company.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_department (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -969,11 +954,6 @@ COMMENT ON TABLE archive.payroll_department IS 'A department of a company in a p
 icon: network';
 COMMENT ON COLUMN archive.payroll_department.company IS 'references payroll_company; the company it is of';
 COMMENT ON COLUMN archive.payroll_department.company_source IS 'The id there of the company it is of';
-COMMENT ON COLUMN archive.payroll_department.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_department.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_department.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_department.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_department.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_location (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1006,11 +986,6 @@ COMMENT ON COLUMN archive.payroll_location.company IS 'references payroll_compan
 COMMENT ON COLUMN archive.payroll_location.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_location.mailing_address IS 'Mail goes to it';
 COMMENT ON COLUMN archive.payroll_location.filing_address IS 'Tax filings name it';
-COMMENT ON COLUMN archive.payroll_location.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_location.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_location.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_location.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_location.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_schedule (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1044,11 +1019,6 @@ COMMENT ON COLUMN archive.payroll_schedule.anchor_period_end IS 'The end of the 
 COMMENT ON COLUMN archive.payroll_schedule.day_1 IS 'The first day of the month it pays, for twice a month or monthly';
 COMMENT ON COLUMN archive.payroll_schedule.day_2 IS 'The second day of the month it pays, for twice a month';
 COMMENT ON COLUMN archive.payroll_schedule.auto_pilot IS 'Its payrolls run on their own';
-COMMENT ON COLUMN archive.payroll_schedule.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_schedule.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_schedule.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_schedule.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_schedule.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_worker (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1123,11 +1093,6 @@ COMMENT ON COLUMN archive.payroll_worker.pay_rate IS 'What their primary job pay
 COMMENT ON COLUMN archive.payroll_worker.pay_per IS 'What pay_rate is for, like Hour, Year or Paycheck';
 COMMENT ON COLUMN archive.payroll_worker.flsa_status IS 'Whether overtime law covers them, like Exempt or Nonexempt';
 COMMENT ON COLUMN archive.payroll_worker.wage_type IS 'A contractor''s pay: Hourly or Fixed';
-COMMENT ON COLUMN archive.payroll_worker.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_worker.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_worker.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_worker.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_worker.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_job (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1152,12 +1117,10 @@ CREATE INDEX payroll_job_connection_idx ON archive.payroll_job (connection);
 COMMENT ON TABLE archive.payroll_job IS 'A job someone holds at a company in a payroll you connected. Read only; Archive syncs them
 icon: briefcase';
 COMMENT ON COLUMN archive.payroll_job.worker IS 'references payroll_worker; who holds it';
-COMMENT ON COLUMN archive.payroll_job.source_id IS 'Its id there';
 COMMENT ON COLUMN archive.payroll_job.rate IS 'What it pays, per pay_per';
 COMMENT ON COLUMN archive.payroll_job.primary_job IS 'It is their primary job';
 COMMENT ON COLUMN archive.payroll_job.location IS 'references payroll_location; where it is';
 COMMENT ON COLUMN archive.payroll_job.location_source IS 'The id there of where it is';
-COMMENT ON COLUMN archive.payroll_job.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_compensation (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1180,7 +1143,6 @@ icon: trending-up';
 COMMENT ON COLUMN archive.payroll_compensation.worker IS 'references payroll_worker';
 COMMENT ON COLUMN archive.payroll_compensation.job_source IS 'The id there of its job, a payroll_job''s source_id';
 COMMENT ON COLUMN archive.payroll_compensation.effective_on IS 'When it started to apply';
-COMMENT ON COLUMN archive.payroll_compensation.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_address (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1213,7 +1175,6 @@ COMMENT ON COLUMN archive.payroll_address.active IS 'It is their address now';
 COMMENT ON COLUMN archive.payroll_address.effective_on IS 'When it started to apply';
 COMMENT ON COLUMN archive.payroll_address.location IS 'references payroll_location; the company location it is';
 COMMENT ON COLUMN archive.payroll_address.location_source IS 'The id there of the company location it is';
-COMMENT ON COLUMN archive.payroll_address.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_employment (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1233,7 +1194,6 @@ COMMENT ON TABLE archive.payroll_employment IS 'A span of someone''s employment:
 icon: history';
 COMMENT ON COLUMN archive.payroll_employment.worker IS 'references payroll_worker';
 COMMENT ON COLUMN archive.payroll_employment.status IS 'Like full_time or part_time';
-COMMENT ON COLUMN archive.payroll_employment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_custom_field (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1259,11 +1219,6 @@ COMMENT ON COLUMN archive.payroll_custom_field.company IS 'references payroll_co
 COMMENT ON COLUMN archive.payroll_custom_field.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_custom_field.type IS 'Like text, date or radio';
 COMMENT ON COLUMN archive.payroll_custom_field.options IS 'What it may be, for a choice';
-COMMENT ON COLUMN archive.payroll_custom_field.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_custom_field.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_custom_field.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_custom_field.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_custom_field.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_custom_value (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1286,7 +1241,6 @@ COMMENT ON COLUMN archive.payroll_custom_value.worker IS 'references payroll_wor
 COMMENT ON COLUMN archive.payroll_custom_value.field IS 'references payroll_custom_field; the custom field';
 COMMENT ON COLUMN archive.payroll_custom_value.field_source IS 'The id there of the custom field';
 COMMENT ON COLUMN archive.payroll_custom_value.name IS 'The field''s name';
-COMMENT ON COLUMN archive.payroll_custom_value.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_department_member (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1307,7 +1261,6 @@ icon: users';
 COMMENT ON COLUMN archive.payroll_department_member.department IS 'references payroll_department';
 COMMENT ON COLUMN archive.payroll_department_member.worker IS 'references payroll_worker; who it is of';
 COMMENT ON COLUMN archive.payroll_department_member.worker_source IS 'The id there of who it is of';
-COMMENT ON COLUMN archive.payroll_department_member.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_schedule_assignment (
     id                       uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1345,11 +1298,6 @@ COMMENT ON COLUMN archive.payroll_schedule_assignment.hourly_schedule IS 'refere
 COMMENT ON COLUMN archive.payroll_schedule_assignment.hourly_schedule_source IS 'The id there of the schedule of the hourly';
 COMMENT ON COLUMN archive.payroll_schedule_assignment.salaried_schedule IS 'references payroll_schedule; the schedule of the salaried';
 COMMENT ON COLUMN archive.payroll_schedule_assignment.salaried_schedule_source IS 'The id there of the schedule of the salaried';
-COMMENT ON COLUMN archive.payroll_schedule_assignment.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_schedule_assignment.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_schedule_assignment.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_schedule_assignment.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_schedule_assignment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_schedule_member (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1380,7 +1328,6 @@ COMMENT ON COLUMN archive.payroll_schedule_member.department IS 'references payr
 COMMENT ON COLUMN archive.payroll_schedule_member.department_source IS 'The id there of the department it is of';
 COMMENT ON COLUMN archive.payroll_schedule_member.schedule IS 'references payroll_schedule; their schedule';
 COMMENT ON COLUMN archive.payroll_schedule_member.schedule_source IS 'The id there of their schedule';
-COMMENT ON COLUMN archive.payroll_schedule_member.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_earning_type (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1403,11 +1350,6 @@ icon: coins';
 COMMENT ON COLUMN archive.payroll_earning_type.company IS 'references payroll_company; the company it is of';
 COMMENT ON COLUMN archive.payroll_earning_type.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_earning_type.kind IS 'default or custom';
-COMMENT ON COLUMN archive.payroll_earning_type.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_earning_type.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_earning_type.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_earning_type.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_earning_type.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_time_off_request (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1450,11 +1392,6 @@ COMMENT ON COLUMN archive.payroll_time_off_request.status IS 'Like pending, appr
 COMMENT ON COLUMN archive.payroll_time_off_request.hours IS 'The hours of all its days';
 COMMENT ON COLUMN archive.payroll_time_off_request.approver IS 'references payroll_worker; who decided it';
 COMMENT ON COLUMN archive.payroll_time_off_request.approver_source IS 'The id there of who decided it';
-COMMENT ON COLUMN archive.payroll_time_off_request.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_time_off_request.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_time_off_request.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_time_off_request.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_time_off_request.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_time_off_day (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1472,7 +1409,6 @@ CREATE INDEX payroll_time_off_day_connection_idx ON archive.payroll_time_off_day
 COMMENT ON TABLE archive.payroll_time_off_day IS 'A day of a time-off request, with its hours. Read only; Archive syncs them
 icon: calendar-days';
 COMMENT ON COLUMN archive.payroll_time_off_day.request IS 'references payroll_time_off_request';
-COMMENT ON COLUMN archive.payroll_time_off_day.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_time_off_balance (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1498,11 +1434,6 @@ COMMENT ON COLUMN archive.payroll_time_off_balance.company IS 'references payrol
 COMMENT ON COLUMN archive.payroll_time_off_balance.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_time_off_balance.worker IS 'references payroll_worker; who it is of';
 COMMENT ON COLUMN archive.payroll_time_off_balance.worker_source IS 'The id there of who it is of';
-COMMENT ON COLUMN archive.payroll_time_off_balance.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_time_off_balance.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_time_off_balance.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_time_off_balance.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_time_off_balance.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_time_off_policy (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1530,7 +1461,6 @@ COMMENT ON COLUMN archive.payroll_time_off_policy.hours IS 'Hours left';
 COMMENT ON COLUMN archive.payroll_time_off_policy.accrued_hours IS 'Hours accrued';
 COMMENT ON COLUMN archive.payroll_time_off_policy.used_hours IS 'Hours used';
 COMMENT ON COLUMN archive.payroll_time_off_policy.pending_hours IS 'Hours asked for and not yet taken';
-COMMENT ON COLUMN archive.payroll_time_off_policy.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_run (
     id               uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1579,11 +1509,6 @@ COMMENT ON COLUMN archive.payroll_run.deadline IS 'When it must be run by to pay
 COMMENT ON COLUMN archive.payroll_run.processed IS 'It was run; until then its amounts may change';
 COMMENT ON COLUMN archive.payroll_run.off_cycle IS 'It is off its schedule, like a bonus or a correction';
 COMMENT ON COLUMN archive.payroll_run.external IS 'It was paid outside the payroll provider and recorded there';
-COMMENT ON COLUMN archive.payroll_run.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_run.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_run.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_run.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_run.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_pay (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1614,7 +1539,6 @@ COMMENT ON COLUMN archive.payroll_pay.worker IS 'references payroll_worker; who 
 COMMENT ON COLUMN archive.payroll_pay.worker_source IS 'The id there of who it is of';
 COMMENT ON COLUMN archive.payroll_pay.hours IS 'The hours they were paid for by the hour';
 COMMENT ON COLUMN archive.payroll_pay.payment_method IS 'How they were paid, like Direct Deposit or Check';
-COMMENT ON COLUMN archive.payroll_pay.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_pay_line (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1641,7 +1565,6 @@ COMMENT ON COLUMN archive.payroll_pay_line.worker IS 'references payroll_worker;
 COMMENT ON COLUMN archive.payroll_pay_line.worker_source IS 'The id there of who it is of';
 COMMENT ON COLUMN archive.payroll_pay_line.kind IS 'earning, time_off, deduction, benefit or tax';
 COMMENT ON COLUMN archive.payroll_pay_line.employer IS 'The company pays it, not the person';
-COMMENT ON COLUMN archive.payroll_pay_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_pay_period (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1679,11 +1602,6 @@ COMMENT ON COLUMN archive.payroll_pay_period.schedule_source IS 'The id there of
 COMMENT ON COLUMN archive.payroll_pay_period.run IS 'references payroll_run; the payroll it is paid in';
 COMMENT ON COLUMN archive.payroll_pay_period.run_source IS 'The id there of the payroll it is paid in';
 COMMENT ON COLUMN archive.payroll_pay_period.processed IS 'Its payroll was run';
-COMMENT ON COLUMN archive.payroll_pay_period.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_pay_period.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_pay_period.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_pay_period.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_pay_period.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_contractor_payment (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1720,11 +1638,6 @@ COMMENT ON COLUMN archive.payroll_contractor_payment.company_source IS 'The id t
 COMMENT ON COLUMN archive.payroll_contractor_payment.worker IS 'references payroll_worker; who it is of';
 COMMENT ON COLUMN archive.payroll_contractor_payment.worker_source IS 'The id there of who it is of';
 COMMENT ON COLUMN archive.payroll_contractor_payment.wage_type IS 'Hourly or Fixed';
-COMMENT ON COLUMN archive.payroll_contractor_payment.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_contractor_payment.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_contractor_payment.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_contractor_payment.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_contractor_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_contractor_payment_group (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1753,11 +1666,6 @@ icon: wallet';
 COMMENT ON COLUMN archive.payroll_contractor_payment_group.company IS 'references payroll_company; the company it is of';
 COMMENT ON COLUMN archive.payroll_contractor_payment_group.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_contractor_payment_group.debit_date IS 'When the company''s account is debited';
-COMMENT ON COLUMN archive.payroll_contractor_payment_group.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_contractor_payment_group.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_contractor_payment_group.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_contractor_payment_group.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_contractor_payment_group.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.payroll_task (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1786,11 +1694,6 @@ icon: list-todo';
 COMMENT ON COLUMN archive.payroll_task.company IS 'references payroll_company; the company it is of';
 COMMENT ON COLUMN archive.payroll_task.company_source IS 'The id there of the company it is of';
 COMMENT ON COLUMN archive.payroll_task.url IS 'Where it is done there';
-COMMENT ON COLUMN archive.payroll_task.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.payroll_task.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.payroll_task.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.payroll_task.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.payroll_task.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.chat_message (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1828,11 +1731,6 @@ COMMENT ON COLUMN archive.chat_message.files IS 'The names of the files it share
 COMMENT ON COLUMN archive.chat_message.sent_at IS 'When it was sent';
 COMMENT ON COLUMN archive.chat_message.edited_at IS 'When it last changed there';
 COMMENT ON COLUMN archive.chat_message.url IS 'Where it opens there';
-COMMENT ON COLUMN archive.chat_message.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.chat_message.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.chat_message.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.chat_message.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.chat_message.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.crm_company (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1871,11 +1769,6 @@ COMMENT ON COLUMN archive.crm_company.employees IS 'How many people work there, 
 COMMENT ON COLUMN archive.crm_company.revenue IS 'Its annual revenue, as the CRM says';
 COMMENT ON COLUMN archive.crm_company.made_at IS 'When it was added there';
 COMMENT ON COLUMN archive.crm_company.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.crm_company.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.crm_company.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.crm_company.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.crm_company.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.crm_company.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.crm_contact (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1917,11 +1810,6 @@ COMMENT ON COLUMN archive.crm_contact.stage IS 'Their lifecycle stage, like lead
 COMMENT ON COLUMN archive.crm_contact.lead_status IS 'Where they are as a lead, like NEW or IN_PROGRESS';
 COMMENT ON COLUMN archive.crm_contact.made_at IS 'When they were added there';
 COMMENT ON COLUMN archive.crm_contact.edited_at IS 'When they last changed there';
-COMMENT ON COLUMN archive.crm_contact.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.crm_contact.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.crm_contact.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.crm_contact.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.crm_contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.crm_deal (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1961,11 +1849,6 @@ COMMENT ON COLUMN archive.crm_deal.company IS 'references crm_company; the compa
 COMMENT ON COLUMN archive.crm_deal.company_source IS 'The id there of the company it is with';
 COMMENT ON COLUMN archive.crm_deal.made_at IS 'When it was added there';
 COMMENT ON COLUMN archive.crm_deal.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.crm_deal.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.crm_deal.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.crm_deal.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.crm_deal.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.crm_deal.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.marketing_campaign (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -1997,11 +1880,6 @@ COMMENT ON COLUMN archive.marketing_campaign.scheduled_at IS 'When it is set to 
 COMMENT ON COLUMN archive.marketing_campaign.sent_at IS 'When it was sent';
 COMMENT ON COLUMN archive.marketing_campaign.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.marketing_campaign.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.marketing_campaign.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.marketing_campaign.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.marketing_campaign.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.marketing_campaign.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.marketing_campaign.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.work_item (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2046,11 +1924,6 @@ COMMENT ON COLUMN archive.work_item.done_on IS 'When it was done';
 COMMENT ON COLUMN archive.work_item.url IS 'Where it opens there';
 COMMENT ON COLUMN archive.work_item.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.work_item.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.work_item.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.work_item.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.work_item.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.work_item.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.work_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.code_project (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2070,11 +1943,6 @@ COMMENT ON TABLE archive.code_project IS 'A project of an error tracker you conn
 icon: bug';
 COMMENT ON COLUMN archive.code_project.title IS 'Its slug';
 COMMENT ON COLUMN archive.code_project.organization IS 'The organization it is in, by slug';
-COMMENT ON COLUMN archive.code_project.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.code_project.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.code_project.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.code_project.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.code_project.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.compliance (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2124,11 +1992,6 @@ COMMENT ON COLUMN archive.compliance.description IS 'What it is, and for a test 
 COMMENT ON COLUMN archive.compliance.url IS 'Where it opens there, or a vendor''s website';
 COMMENT ON COLUMN archive.compliance.made_at IS 'When it was made there, or a person started';
 COMMENT ON COLUMN archive.compliance.edited_at IS 'When it last changed there, or a test last flipped';
-COMMENT ON COLUMN archive.compliance.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.compliance.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.compliance.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.compliance.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.compliance.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.commerce_product (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2165,11 +2028,6 @@ COMMENT ON COLUMN archive.commerce_product.description IS 'What it says of itsel
 COMMENT ON COLUMN archive.commerce_product.url IS 'Where it is sold online';
 COMMENT ON COLUMN archive.commerce_product.made_at IS 'When it was added there';
 COMMENT ON COLUMN archive.commerce_product.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.commerce_product.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.commerce_product.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.commerce_product.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.commerce_product.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.commerce_product.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.commerce_order (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2219,11 +2077,6 @@ COMMENT ON COLUMN archive.commerce_order.cancelled_at IS 'When it was cancelled,
 COMMENT ON COLUMN archive.commerce_order.city IS 'Where it ships to';
 COMMENT ON COLUMN archive.commerce_order.placed_at IS 'When it was placed';
 COMMENT ON COLUMN archive.commerce_order.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.commerce_order.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.commerce_order.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.commerce_order.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.commerce_order.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.commerce_order.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.commerce_line (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2253,7 +2106,6 @@ COMMENT ON COLUMN archive.commerce_line.product_source IS 'The id there of what 
 COMMENT ON COLUMN archive.commerce_line.variant IS 'Which of the product, like Large / Blue';
 COMMENT ON COLUMN archive.commerce_line.price IS 'What one cost';
 COMMENT ON COLUMN archive.commerce_line.total IS 'What they cost together, less discounts';
-COMMENT ON COLUMN archive.commerce_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ad_metric (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2293,11 +2145,6 @@ COMMENT ON COLUMN archive.ad_metric.clicks IS 'How many clicks they got';
 COMMENT ON COLUMN archive.ad_metric.purchases IS 'How many purchases they are credited with';
 COMMENT ON COLUMN archive.ad_metric.purchase_value IS 'What those purchases came to';
 COMMENT ON COLUMN archive.ad_metric.leads IS 'How many leads they are credited with';
-COMMENT ON COLUMN archive.ad_metric.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.ad_metric.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.ad_metric.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.ad_metric.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.ad_metric.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dental_provider (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2327,11 +2174,6 @@ COMMENT ON COLUMN archive.dental_provider.specialty IS 'Their specialty there';
 COMMENT ON COLUMN archive.dental_provider.npi IS 'Their US National Provider Identifier';
 COMMENT ON COLUMN archive.dental_provider.hidden IS 'Hidden there, as one who left';
 COMMENT ON COLUMN archive.dental_provider.edited_at IS 'When it last changed there, in the practice''s local time';
-COMMENT ON COLUMN archive.dental_provider.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.dental_provider.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.dental_provider.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dental_provider.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dental_provider.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dental_patient (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2379,11 +2221,6 @@ COMMENT ON COLUMN archive.dental_patient.provider_source IS 'The id there of the
 COMMENT ON COLUMN archive.dental_patient.first_visit_on IS 'When they first came';
 COMMENT ON COLUMN archive.dental_patient.balance IS 'What their family owes in all, as the practice reckons it';
 COMMENT ON COLUMN archive.dental_patient.edited_at IS 'When it last changed there, in the practice''s local time';
-COMMENT ON COLUMN archive.dental_patient.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.dental_patient.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.dental_patient.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dental_patient.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dental_patient.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dental_appointment (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2431,11 +2268,6 @@ COMMENT ON COLUMN archive.dental_appointment.procedures IS 'What is to be done, 
 COMMENT ON COLUMN archive.dental_appointment.new_patient IS 'It is the patient''s first';
 COMMENT ON COLUMN archive.dental_appointment.operatory IS 'The chair or room, by its id there';
 COMMENT ON COLUMN archive.dental_appointment.edited_at IS 'When it last changed there, in the practice''s local time';
-COMMENT ON COLUMN archive.dental_appointment.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.dental_appointment.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.dental_appointment.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dental_appointment.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dental_appointment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dental_procedure (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2481,11 +2313,6 @@ COMMENT ON COLUMN archive.dental_procedure.fee IS 'What it costs';
 COMMENT ON COLUMN archive.dental_procedure.tooth IS 'The tooth, or teeth';
 COMMENT ON COLUMN archive.dental_procedure.surface IS 'The surfaces, like MODL';
 COMMENT ON COLUMN archive.dental_procedure.edited_at IS 'When it last changed there, in the practice''s local time';
-COMMENT ON COLUMN archive.dental_procedure.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.dental_procedure.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.dental_procedure.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dental_procedure.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dental_procedure.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dental_payment (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2514,11 +2341,6 @@ COMMENT ON COLUMN archive.dental_payment.patient IS 'references dental_patient; 
 COMMENT ON COLUMN archive.dental_payment.patient_source IS 'The id there of the patient';
 COMMENT ON COLUMN archive.dental_payment.type IS 'How it was paid, by its type there';
 COMMENT ON COLUMN archive.dental_payment.entered_on IS 'When it was entered';
-COMMENT ON COLUMN archive.dental_payment.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.dental_payment.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.dental_payment.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dental_payment.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dental_payment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.calendar_event (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2568,11 +2390,6 @@ COMMENT ON COLUMN archive.calendar_event.organizer_name IS 'Who organizes it, by
 COMMENT ON COLUMN archive.calendar_event.url IS 'Where it opens there';
 COMMENT ON COLUMN archive.calendar_event.meeting_url IS 'Where to join it online, like a Meet or Teams link';
 COMMENT ON COLUMN archive.calendar_event.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.calendar_event.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.calendar_event.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.calendar_event.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.calendar_event.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.calendar_event.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.calendar_attendee (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2595,7 +2412,6 @@ COMMENT ON COLUMN archive.calendar_attendee.event IS 'references calendar_event'
 COMMENT ON COLUMN archive.calendar_attendee.person IS 'references known_person; who, by their address';
 COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resource, like a room';
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
-COMMENT ON COLUMN archive.calendar_attendee.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ledger_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2633,11 +2449,6 @@ COMMENT ON COLUMN archive.ledger_account.balance IS 'Its balance now, its subacc
 COMMENT ON COLUMN archive.ledger_account.parent IS 'references ledger_account; the account it is a subaccount of';
 COMMENT ON COLUMN archive.ledger_account.parent_source IS 'The id there of the account it is a subaccount of';
 COMMENT ON COLUMN archive.ledger_account.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.ledger_account.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.ledger_account.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.ledger_account.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.ledger_account.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.ledger_account.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ledger_contact (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2671,11 +2482,6 @@ COMMENT ON COLUMN archive.ledger_contact.person IS 'references known_person; who
 COMMENT ON COLUMN archive.ledger_contact.address IS 'Its billing address, on one line';
 COMMENT ON COLUMN archive.ledger_contact.balance IS 'What it owes, or is owed, now';
 COMMENT ON COLUMN archive.ledger_contact.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.ledger_contact.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.ledger_contact.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.ledger_contact.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.ledger_contact.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.ledger_contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ledger_item (
     id                     uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2716,11 +2522,6 @@ COMMENT ON COLUMN archive.ledger_item.income_account_source IS 'The id there of 
 COMMENT ON COLUMN archive.ledger_item.expense_account IS 'references ledger_account; where its purchases go';
 COMMENT ON COLUMN archive.ledger_item.expense_account_source IS 'The id there of where its purchases go';
 COMMENT ON COLUMN archive.ledger_item.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.ledger_item.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.ledger_item.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.ledger_item.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.ledger_item.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.ledger_item.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ledger_entry (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2767,11 +2568,6 @@ COMMENT ON COLUMN archive.ledger_entry.balance IS 'What is left to pay of it, fo
 COMMENT ON COLUMN archive.ledger_entry.memo IS 'Its private note, and the note to the customer';
 COMMENT ON COLUMN archive.ledger_entry.status IS 'Where it is there, like an estimate''s Accepted or Pending, or a purchase order''s Open or Closed';
 COMMENT ON COLUMN archive.ledger_entry.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.ledger_entry.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.ledger_entry.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.ledger_entry.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.ledger_entry.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.ledger_entry.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.ledger_line (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2809,7 +2605,6 @@ COMMENT ON COLUMN archive.ledger_line.account_source IS 'The id there of the acc
 COMMENT ON COLUMN archive.ledger_line.item IS 'references ledger_item; the product or service it is for';
 COMMENT ON COLUMN archive.ledger_line.item_source IS 'The id there of the product or service it is for';
 COMMENT ON COLUMN archive.ledger_line.unit_price IS 'What one of it costs';
-COMMENT ON COLUMN archive.ledger_line.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.bank_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2841,11 +2636,6 @@ COMMENT ON COLUMN archive.bank_account.subtype IS 'Like checking, savings or cre
 COMMENT ON COLUMN archive.bank_account.balance IS 'Its balance when the bank last said: what is in it, or what is owed on a credit card or loan';
 COMMENT ON COLUMN archive.bank_account.available IS 'What can be spent or drawn from it, pending transactions taken off';
 COMMENT ON COLUMN archive.bank_account.credit_limit IS 'Its credit limit, for a credit card or line of credit';
-COMMENT ON COLUMN archive.bank_account.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.bank_account.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.bank_account.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.bank_account.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.bank_account.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.bank_transaction (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2892,11 +2682,6 @@ COMMENT ON COLUMN archive.bank_transaction.category IS 'Its category, like FOOD_
 COMMENT ON COLUMN archive.bank_transaction.detail IS 'Its category in detail, like TRANSFER_IN_ACCOUNT_TRANSFER';
 COMMENT ON COLUMN archive.bank_transaction.pending IS 'Whether it has not posted yet; once it posts, the pending one goes and the posted one comes';
 COMMENT ON COLUMN archive.bank_transaction.check_number IS 'Its check number, for a check';
-COMMENT ON COLUMN archive.bank_transaction.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.bank_transaction.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.bank_transaction.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.bank_transaction.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.bank_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.spend_department (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2914,11 +2699,6 @@ CREATE TABLE archive.spend_department (
 COMMENT ON TABLE archive.spend_department IS 'A department of a spend platform you connected, like Ramp or Brex. Read only; Archive syncs them
 icon: network';
 COMMENT ON COLUMN archive.spend_department.title IS 'Its name';
-COMMENT ON COLUMN archive.spend_department.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.spend_department.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.spend_department.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.spend_department.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.spend_department.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.spend_user (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2956,11 +2736,6 @@ COMMENT ON COLUMN archive.spend_user.department IS 'references spend_department;
 COMMENT ON COLUMN archive.spend_user.department_source IS 'The id there of their department';
 COMMENT ON COLUMN archive.spend_user.manager IS 'references spend_user; who they report to';
 COMMENT ON COLUMN archive.spend_user.manager_source IS 'The id there of who they report to';
-COMMENT ON COLUMN archive.spend_user.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.spend_user.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.spend_user.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.spend_user.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.spend_user.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.spend_card (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2999,11 +2774,6 @@ COMMENT ON COLUMN archive.spend_card.holder_name IS 'Who holds it, by name';
 COMMENT ON COLUMN archive.spend_card.spend_limit IS 'What it may spend in a period, when the card has a limit of its own';
 COMMENT ON COLUMN archive.spend_card.limit_period IS 'How often its limit starts again, like MONTHLY or ONE_TIME';
 COMMENT ON COLUMN archive.spend_card.made_at IS 'When it was issued';
-COMMENT ON COLUMN archive.spend_card.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.spend_card.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.spend_card.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.spend_card.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.spend_card.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.spend_transaction (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3063,11 +2833,6 @@ COMMENT ON COLUMN archive.spend_transaction.department_source IS 'The id there o
 COMMENT ON COLUMN archive.spend_transaction.department_name IS 'Its department, by name';
 COMMENT ON COLUMN archive.spend_transaction.url IS 'Where it opens there';
 COMMENT ON COLUMN archive.spend_transaction.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.spend_transaction.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.spend_transaction.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.spend_transaction.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.spend_transaction.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.spend_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.spend_receipt (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3087,7 +2852,6 @@ icon: receipt';
 COMMENT ON COLUMN archive.spend_receipt.spend IS 'references spend_transaction; the purchase or reimbursement it is for';
 COMMENT ON COLUMN archive.spend_receipt.receipt_source IS 'Its id there';
 COMMENT ON COLUMN archive.spend_receipt.position IS 'Where it is among its transaction''s receipts, from 1';
-COMMENT ON COLUMN archive.spend_receipt.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.warehouse_table (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3123,11 +2887,8 @@ COMMENT ON COLUMN archive.warehouse_table.comment IS 'What its comment there say
 COMMENT ON COLUMN archive.warehouse_table.clustering IS 'Its clustering key';
 COMMENT ON COLUMN archive.warehouse_table.made_at IS 'When it was made there';
 COMMENT ON COLUMN archive.warehouse_table.edited_at IS 'When its rows or definition last changed there';
-COMMENT ON COLUMN archive.warehouse_table.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.warehouse_table.stream IS 'What its connector syncs it as, like tables';
 COMMENT ON COLUMN archive.warehouse_table.source_id IS 'Its id there, <database>.<schema>.<name>';
-COMMENT ON COLUMN archive.warehouse_table.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.warehouse_table.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.warehouse_column (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3197,9 +2958,6 @@ COMMENT ON COLUMN archive.contact.note IS 'What the book notes about them, up to
 COMMENT ON COLUMN archive.contact.made_at IS 'When they were added, like when you became Facebook friends';
 COMMENT ON COLUMN archive.contact.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.contact.stream IS 'What its connector syncs it as, like contacts';
-COMMENT ON COLUMN archive.contact.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.contact.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.contact.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.location (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3236,9 +2994,6 @@ COMMENT ON COLUMN archive.location.address IS 'The place''s address';
 COMMENT ON COLUMN archive.location.activity IS 'How you moved, like walking or in_passenger_vehicle';
 COMMENT ON COLUMN archive.location.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.location.stream IS 'What its connector syncs it as, like places';
-COMMENT ON COLUMN archive.location.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.location.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.location.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.history (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3269,9 +3024,6 @@ COMMENT ON COLUMN archive.history.url IS 'Where it is';
 COMMENT ON COLUMN archive.history.detail IS 'More about it, like the YouTube channel, how Chrome got to the page or how many plays';
 COMMENT ON COLUMN archive.history.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.history.stream IS 'What its connector syncs it as, like history';
-COMMENT ON COLUMN archive.history.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.history.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.history.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.post (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3301,9 +3053,6 @@ COMMENT ON COLUMN archive.post.place IS 'Where you checked in';
 COMMENT ON COLUMN archive.post.files IS 'The names of its photos and videos, as files of the import';
 COMMENT ON COLUMN archive.post.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.post.stream IS 'What its connector syncs it as, like posts';
-COMMENT ON COLUMN archive.post.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.post.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.post.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.kin (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3337,9 +3086,6 @@ COMMENT ON COLUMN archive.kin.died_in IS 'Where they died';
 COMMENT ON COLUMN archive.kin.note IS 'What the tree notes about them, up to 64 KB';
 COMMENT ON COLUMN archive.kin.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.kin.stream IS 'What its connector syncs it as, like people';
-COMMENT ON COLUMN archive.kin.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.kin.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.kin.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.kin_tie (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3362,7 +3108,6 @@ COMMENT ON COLUMN archive.kin_tie.person IS 'references kin; whose tie it is';
 COMMENT ON COLUMN archive.kin_tie.kind IS 'What the relative is to them: parent, child or spouse';
 COMMENT ON COLUMN archive.kin_tie.relative IS 'references kin; who they are tied to';
 COMMENT ON COLUMN archive.kin_tie.relative_source IS 'The id there of who they are tied to';
-COMMENT ON COLUMN archive.kin_tie.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.dna (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3394,9 +3139,6 @@ COMMENT ON COLUMN archive.dna.file IS 'references file; the raw file';
 COMMENT ON COLUMN archive.dna.file_source IS 'The raw file''s path in the export';
 COMMENT ON COLUMN archive.dna.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.dna.stream IS 'What its connector syncs it as, like dna';
-COMMENT ON COLUMN archive.dna.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.dna.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.dna.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.media (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3437,9 +3179,6 @@ COMMENT ON COLUMN archive.media.isbn IS 'A book''s ISBN-13, or else its ISBN';
 COMMENT ON COLUMN archive.media.url IS 'Where it is there';
 COMMENT ON COLUMN archive.media.connection IS 'references connection; the import it is from';
 COMMENT ON COLUMN archive.media.stream IS 'What its connector syncs it as, like media';
-COMMENT ON COLUMN archive.media.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.media.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.media.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.health_sample (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3468,11 +3207,6 @@ COMMENT ON COLUMN archive.health_sample.unit IS 'Like count/min, count, kg, %, m
 COMMENT ON COLUMN archive.health_sample.starts_at IS 'When it was measured, or when the span it covers starts';
 COMMENT ON COLUMN archive.health_sample.ends_at IS 'When the span it covers ends; starts_at for a moment';
 COMMENT ON COLUMN archive.health_sample.device IS 'What measured it, like Oura ring or Apple Watch';
-COMMENT ON COLUMN archive.health_sample.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.health_sample.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.health_sample.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.health_sample.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.health_sample.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.health_day (
     id                 uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3517,11 +3251,6 @@ COMMENT ON COLUMN archive.health_day.spo2 IS 'Average blood oxygen, in percent';
 COMMENT ON COLUMN archive.health_day.respiratory_rate IS 'Breaths a minute';
 COMMENT ON COLUMN archive.health_day.temperature IS 'Skin temperature against your baseline, in °C';
 COMMENT ON COLUMN archive.health_day.detail IS 'Everything else the device said of the day, like the contributors to a score, by its own names';
-COMMENT ON COLUMN archive.health_day.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.health_day.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.health_day.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.health_day.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.health_day.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.health_sleep (
     id                uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3570,11 +3299,6 @@ COMMENT ON COLUMN archive.health_sleep.hrv IS 'Average heart rate variability, i
 COMMENT ON COLUMN archive.health_sleep.respiratory_rate IS 'Breaths a minute';
 COMMENT ON COLUMN archive.health_sleep.nap IS 'It was a nap, not the main sleep';
 COMMENT ON COLUMN archive.health_sleep.device IS 'What measured it, like Oura ring';
-COMMENT ON COLUMN archive.health_sleep.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.health_sleep.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.health_sleep.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.health_sleep.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.health_sleep.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.health_workout (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3613,11 +3337,6 @@ COMMENT ON COLUMN archive.health_workout.max_heart_rate IS 'Highest heart rate, 
 COMMENT ON COLUMN archive.health_workout.strain IS 'Whoop''s strain, 0 to 21';
 COMMENT ON COLUMN archive.health_workout.device IS 'What recorded it, like Garmin Forerunner 965';
 COMMENT ON COLUMN archive.health_workout.route IS 'references file; where it went, as a GPX track';
-COMMENT ON COLUMN archive.health_workout.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.health_workout.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.health_workout.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.health_workout.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.health_workout.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.health_record (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3672,11 +3391,6 @@ COMMENT ON COLUMN archive.health_record.organization IS 'The health system it is
 COMMENT ON COLUMN archive.health_record.note IS 'Its notes and, for a document, its text when the portal sends it as text, up to 256 KB';
 COMMENT ON COLUMN archive.health_record.resource IS 'The whole FHIR resource';
 COMMENT ON COLUMN archive.health_record.edited_at IS 'When it last changed there';
-COMMENT ON COLUMN archive.health_record.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.health_record.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.health_record.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.health_record.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.health_record.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.photo (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3722,8 +3436,6 @@ COMMENT ON COLUMN archive.photo.original IS 'references file; the photo or video
 COMMENT ON COLUMN archive.photo.connection IS 'references connection; the iPhone it is from';
 COMMENT ON COLUMN archive.photo.stream IS 'What the app syncs it as: photos';
 COMMENT ON COLUMN archive.photo.source_id IS 'Its id in the Photos library';
-COMMENT ON COLUMN archive.photo.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.photo.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.place_visit (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3763,8 +3475,6 @@ COMMENT ON COLUMN archive.place_visit.departed_at IS 'When you left; null while 
 COMMENT ON COLUMN archive.place_visit.connection IS 'references connection; the iPhone it is from';
 COMMENT ON COLUMN archive.place_visit.stream IS 'What the app syncs it as: places';
 COMMENT ON COLUMN archive.place_visit.source_id IS 'When you arrived and where, as the phone keys it';
-COMMENT ON COLUMN archive.place_visit.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.place_visit.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.investment_holding (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3805,11 +3515,6 @@ COMMENT ON COLUMN archive.investment_holding.price IS 'The price of one, when it
 COMMENT ON COLUMN archive.investment_holding.priced_on IS 'The day it was last priced';
 COMMENT ON COLUMN archive.investment_holding.value IS 'What it was worth, all of it, when it was last priced';
 COMMENT ON COLUMN archive.investment_holding.cost_basis IS 'What was paid for all of it, when the institution says';
-COMMENT ON COLUMN archive.investment_holding.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.investment_holding.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.investment_holding.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.investment_holding.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.investment_holding.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.investment_transaction (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3851,11 +3556,6 @@ COMMENT ON COLUMN archive.investment_transaction.quantity IS 'How many shares or
 COMMENT ON COLUMN archive.investment_transaction.price IS 'The price of one';
 COMMENT ON COLUMN archive.investment_transaction.amount IS 'How much money: positive for cash into the account, like a sale or dividend, negative for cash out, like a buy or fee; for a crypto wallet, what the coins that came in or went out were worth';
 COMMENT ON COLUMN archive.investment_transaction.fees IS 'What it cost in fees';
-COMMENT ON COLUMN archive.investment_transaction.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.investment_transaction.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.investment_transaction.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.investment_transaction.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.investment_transaction.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.bank_liability (
     id                 uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3912,11 +3612,6 @@ COMMENT ON COLUMN archive.bank_liability.matures_on IS 'When the loan is due to 
 COMMENT ON COLUMN archive.bank_liability.escrow_balance IS 'What a mortgage holds in escrow for taxes and insurance';
 COMMENT ON COLUMN archive.bank_liability.interest_paid_ytd IS 'Interest paid so far this year';
 COMMENT ON COLUMN archive.bank_liability.principal_paid_ytd IS 'Principal paid so far this year';
-COMMENT ON COLUMN archive.bank_liability.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.bank_liability.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.bank_liability.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.bank_liability.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.bank_liability.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.budget_category (
     id          uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -3952,11 +3647,6 @@ COMMENT ON COLUMN archive.budget_category.goal IS 'Its goal''s target, when it h
 COMMENT ON COLUMN archive.budget_category.goal_due_on IS 'When its goal is due';
 COMMENT ON COLUMN archive.budget_category.hidden IS 'Whether it is hidden';
 COMMENT ON COLUMN archive.budget_category.note IS 'The note on it';
-COMMENT ON COLUMN archive.budget_category.connection IS 'references connection; the account it is from';
-COMMENT ON COLUMN archive.budget_category.stream IS 'What its connector syncs it as, like messages';
-COMMENT ON COLUMN archive.budget_category.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.budget_category.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.budget_category.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 CREATE TABLE archive.parcel (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -4008,11 +3698,7 @@ COMMENT ON COLUMN archive.parcel.last_event IS 'Its last scan, like Out for deli
 COMMENT ON COLUMN archive.parcel.last_event_at IS 'When its last scan was';
 COMMENT ON COLUMN archive.parcel.mail_subject IS 'The subject of the newest mail its tracking number was in';
 COMMENT ON COLUMN archive.parcel.mail_message IS 'That mail''s id in its mailbox';
-COMMENT ON COLUMN archive.parcel.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.parcel.stream IS 'What its connector syncs it as, like packages';
-COMMENT ON COLUMN archive.parcel.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.parcel.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.parcel.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.parcel_event (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4038,7 +3724,6 @@ COMMENT ON COLUMN archive.parcel_event.at IS 'When it was';
 COMMENT ON COLUMN archive.parcel_event.status IS 'What the carrier said, like Arrived at Facility';
 COMMENT ON COLUMN archive.parcel_event.code IS 'The carrier''s code for it';
 COMMENT ON COLUMN archive.parcel_event.city IS 'Where it was';
-COMMENT ON COLUMN archive.parcel_event.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.vehicle (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4078,11 +3763,7 @@ COMMENT ON COLUMN archive.vehicle.range IS 'How far it could go on that charge, 
 COMMENT ON COLUMN archive.vehicle.charging IS 'Whether it was charging, like Charging, Complete or Disconnected';
 COMMENT ON COLUMN archive.vehicle.software IS 'Its software version';
 COMMENT ON COLUMN archive.vehicle.read_at IS 'When it last said how it was; a car asleep says nothing';
-COMMENT ON COLUMN archive.vehicle.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.vehicle.stream IS 'What its connector syncs it as, like packages';
-COMMENT ON COLUMN archive.vehicle.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.vehicle.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.vehicle.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.vehicle_charge (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4120,11 +3801,7 @@ COMMENT ON COLUMN archive.vehicle_charge.energy IS 'How much energy it took, in 
 COMMENT ON COLUMN archive.vehicle_charge.cost IS 'What it cost, charging and any fees';
 COMMENT ON COLUMN archive.vehicle_charge.billing IS 'How it was paid, like IMMEDIATE';
 COMMENT ON COLUMN archive.vehicle_charge.invoice IS 'Its invoice''s id, for the connector''s get action';
-COMMENT ON COLUMN archive.vehicle_charge.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.vehicle_charge.stream IS 'What its connector syncs it as, like packages';
-COMMENT ON COLUMN archive.vehicle_charge.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.vehicle_charge.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.vehicle_charge.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.home_device (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4166,11 +3843,7 @@ COMMENT ON COLUMN archive.home_device.heat_to IS 'What a thermostat heats to, in
 COMMENT ON COLUMN archive.home_device.cool_to IS 'What a thermostat cools to, in °C';
 COMMENT ON COLUMN archive.home_device.scale IS 'Whether its display shows CELSIUS or FAHRENHEIT';
 COMMENT ON COLUMN archive.home_device.traits IS 'What it can do, like Temperature, ThermostatMode or CameraLiveStream';
-COMMENT ON COLUMN archive.home_device.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.home_device.stream IS 'What its connector syncs it as, like packages';
-COMMENT ON COLUMN archive.home_device.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.home_device.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.home_device.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 -- Music: what a music service you connected, like Spotify, says you saved, played and put in playlists, and the
 -- artists you follow and play most. The music itself stays there.
@@ -4204,11 +3877,7 @@ COMMENT ON COLUMN archive.music_playlist.collaborative IS 'Whether others may ad
 COMMENT ON COLUMN archive.music_playlist.tracks IS 'How many tracks it has';
 COMMENT ON COLUMN archive.music_playlist.url IS 'Where it is there';
 COMMENT ON COLUMN archive.music_playlist.version IS 'Its version there, which changes when it does';
-COMMENT ON COLUMN archive.music_playlist.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.music_playlist.stream IS 'What its connector syncs it as, like playlists';
-COMMENT ON COLUMN archive.music_playlist.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.music_playlist.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.music_playlist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.music_track (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4229,6 +3898,7 @@ CREATE TABLE archive.music_track (
     track_id      text,
     rank          integer,
     playlist      uuid REFERENCES archive.music_playlist ON DELETE SET NULL,
+    playlist_source text,
     added_at      timestamptz,
     played_at     timestamptz,
     UNIQUE (connection, stream, source_id)
@@ -4245,13 +3915,11 @@ COMMENT ON COLUMN archive.music_track.url IS 'Where it is there';
 COMMENT ON COLUMN archive.music_track.track_id IS 'The track''s id there, the same on every list';
 COMMENT ON COLUMN archive.music_track.rank IS 'Where it is among your top tracks, from 1';
 COMMENT ON COLUMN archive.music_track.playlist IS 'references music_playlist; the playlist it is in';
+COMMENT ON COLUMN archive.music_track.playlist_source IS 'The id there of the playlist it is in';
 COMMENT ON COLUMN archive.music_track.added_at IS 'When it was saved or added to its playlist';
 COMMENT ON COLUMN archive.music_track.played_at IS 'When it was played, for a play';
-COMMENT ON COLUMN archive.music_track.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.music_track.stream IS 'What its connector syncs it as, like saved';
 COMMENT ON COLUMN archive.music_track.source_id IS 'Its id there: the track''s, a play''s time, or <playlist>/<track>/<when added>';
-COMMENT ON COLUMN archive.music_track.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.music_track.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.music_artist (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4279,11 +3947,8 @@ COMMENT ON COLUMN archive.music_artist.genres IS 'Their genres, comma separated'
 COMMENT ON COLUMN archive.music_artist.url IS 'Where they are there';
 COMMENT ON COLUMN archive.music_artist.artist_id IS 'Their id there';
 COMMENT ON COLUMN archive.music_artist.rank IS 'Where they are among your top artists, from 1';
-COMMENT ON COLUMN archive.music_artist.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.music_artist.stream IS 'What its connector syncs it as, like artists';
 COMMENT ON COLUMN archive.music_artist.source_id IS 'Their id there';
-COMMENT ON COLUMN archive.music_artist.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.music_artist.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.notebook (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4309,11 +3974,7 @@ COMMENT ON COLUMN archive.notebook.stack IS 'The stack it is in, when it is in o
 COMMENT ON COLUMN archive.notebook.is_default IS 'Whether new notes go in it';
 COMMENT ON COLUMN archive.notebook.made_at IS 'When it was made';
 COMMENT ON COLUMN archive.notebook.edited_at IS 'When it was last changed';
-COMMENT ON COLUMN archive.notebook.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.notebook.stream IS 'What its connector syncs it as, like notebooks';
-COMMENT ON COLUMN archive.notebook.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.notebook.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.notebook.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.note (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4356,11 +4017,7 @@ COMMENT ON COLUMN archive.note.reminder_at IS 'When it reminds you';
 COMMENT ON COLUMN archive.note.done_at IS 'When its reminder was marked done';
 COMMENT ON COLUMN archive.note.made_at IS 'When it was written';
 COMMENT ON COLUMN archive.note.edited_at IS 'When it was last edited';
-COMMENT ON COLUMN archive.note.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.note.stream IS 'What its connector syncs it as, like notes';
-COMMENT ON COLUMN archive.note.source_id IS 'Its id there';
-COMMENT ON COLUMN archive.note.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.note.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.note_attachment (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4386,7 +4043,6 @@ COMMENT ON COLUMN archive.note_attachment.mime IS 'Its media type, like applicat
 COMMENT ON COLUMN archive.note_attachment.size IS 'Its size in bytes';
 COMMENT ON COLUMN archive.note_attachment.text IS 'Its words, up to 64 KB, when it is a PDF, Word, Excel, PowerPoint or text file Archive read';
 COMMENT ON COLUMN archive.note_attachment.file IS 'references file; its content, kept as a file its connection owns, seen by whoever sees the note; null when Archive did not keep it, like one over 25 MB';
-COMMENT ON COLUMN archive.note_attachment.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE TABLE archive.school_notice (
     id           uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -4421,11 +4077,8 @@ COMMENT ON COLUMN archive.school_notice.title IS 'Its subject';
 COMMENT ON COLUMN archive.school_notice.text IS 'Its text, up to 64 KB';
 COMMENT ON COLUMN archive.school_notice.sent_at IS 'When it was sent';
 COMMENT ON COLUMN archive.school_notice.mail_message IS 'The mail''s id in its mailbox';
-COMMENT ON COLUMN archive.school_notice.connection IS 'references connection; the account it is from';
 COMMENT ON COLUMN archive.school_notice.stream IS 'What its connector syncs it as, like notices';
 COMMENT ON COLUMN archive.school_notice.source_id IS 'The mail''s id in its mailbox';
-COMMENT ON COLUMN archive.school_notice.updated_at IS 'When Archive last saw it change';
-COMMENT ON COLUMN archive.school_notice.access IS 'Group that sees it, its connection''s: null for everyone who sees the connection';
 
 CREATE FUNCTION archive.mine(m uuid) RETURNS bool LANGUAGE sql STABLE AS $$
     SELECT EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = '{p}_m' || translate(rtrim(encode(uuid_send(m), 'base64'), '='), '+/', '-_')
@@ -4578,107 +4231,13 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.workflow_run FOR E
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.known_person FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.known_org FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_party FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.mail_attachment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.doc_page FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_department FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_location FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_worker FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_job FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_compensation FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_address FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_employment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_custom_field FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_custom_value FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_department_member FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule_assignment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_schedule_member FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_earning_type FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_request FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_day FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_balance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_time_off_policy FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_run FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_pay_period FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_contractor_payment_group FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.payroll_task FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_provider FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_patient FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_appointment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_procedure FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dental_payment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ad_metric FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.work_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.code_project FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.compliance FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_product FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_order FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.commerce_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.marketing_campaign FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.chat_message FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_company FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.crm_deal FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.calendar_attendee FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_account FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_department FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_user FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_card FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.spend_receipt FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_table FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.warehouse_column FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.location FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.history FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.post FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.kin FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.kin_tie FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.dna FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.media FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sample FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_day FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_sleep FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_workout FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.health_record FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.photo FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.place_visit FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_holding FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.investment_transaction FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.bank_liability FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.budget_category FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.parcel_event FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.vehicle_charge FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.home_device FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_playlist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_track FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.music_artist FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.notebook FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.note FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.note_attachment FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.school_notice FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_contact FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_item FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_entry FOR EACH ROW EXECUTE FUNCTION archive.object_name();
-CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.ledger_line FOR EACH ROW EXECUTE FUNCTION archive.object_name();
 
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.turn FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.inbox FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, source, "on", trigger, hook, member, access ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access, items ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF hash, name, mime, size, metadata, text, status, error, access, kind, parent, connection, stream, source_id, source, url, drive, owner, owner_name, editor, editor_name, made_at, edited_at ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive."group" FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -4800,100 +4359,6 @@ GRANT INSERT, UPDATE, DELETE ON archive.agent TO "{p}_manager";
 GRANT SELECT ON archive.connection TO "{p}_viewer";
 GRANT SELECT ON archive.known_person TO "{p}_viewer";
 GRANT SELECT ON archive.known_org TO "{p}_viewer";
-GRANT SELECT ON archive.mail_message TO "{p}_viewer";
-GRANT SELECT ON archive.mail_party TO "{p}_viewer";
-GRANT SELECT ON archive.mail_attachment TO "{p}_viewer";
-GRANT SELECT ON archive.doc_page TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_company TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_department TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_location TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_schedule TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_worker TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_job TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_compensation TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_address TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_employment TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_custom_field TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_custom_value TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_department_member TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_schedule_assignment TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_schedule_member TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_earning_type TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_time_off_request TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_time_off_day TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_time_off_balance TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_time_off_policy TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_run TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_pay TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_pay_line TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_pay_period TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_contractor_payment TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_contractor_payment_group TO "{p}_viewer";
-GRANT SELECT ON archive.payroll_task TO "{p}_viewer";
-GRANT SELECT ON archive.dental_provider TO "{p}_viewer";
-GRANT SELECT ON archive.dental_patient TO "{p}_viewer";
-GRANT SELECT ON archive.dental_appointment TO "{p}_viewer";
-GRANT SELECT ON archive.dental_procedure TO "{p}_viewer";
-GRANT SELECT ON archive.dental_payment TO "{p}_viewer";
-GRANT SELECT ON archive.ad_metric TO "{p}_viewer";
-GRANT SELECT ON archive.work_item TO "{p}_viewer";
-GRANT SELECT ON archive.code_project TO "{p}_viewer";
-GRANT SELECT ON archive.compliance TO "{p}_viewer";
-GRANT SELECT ON archive.commerce_product TO "{p}_viewer";
-GRANT SELECT ON archive.commerce_order TO "{p}_viewer";
-GRANT SELECT ON archive.commerce_line TO "{p}_viewer";
-GRANT SELECT ON archive.marketing_campaign TO "{p}_viewer";
-GRANT SELECT ON archive.chat_message TO "{p}_viewer";
-GRANT SELECT ON archive.crm_company TO "{p}_viewer";
-GRANT SELECT ON archive.crm_contact TO "{p}_viewer";
-GRANT SELECT ON archive.crm_deal TO "{p}_viewer";
-GRANT SELECT ON archive.calendar_event TO "{p}_viewer";
-GRANT SELECT ON archive.calendar_attendee TO "{p}_viewer";
-GRANT SELECT ON archive.ledger_account TO "{p}_viewer";
-GRANT SELECT ON archive.ledger_contact TO "{p}_viewer";
-GRANT SELECT ON archive.ledger_item TO "{p}_viewer";
-GRANT SELECT ON archive.ledger_entry TO "{p}_viewer";
-GRANT SELECT ON archive.ledger_line TO "{p}_viewer";
-GRANT SELECT ON archive.bank_account TO "{p}_viewer";
-GRANT SELECT ON archive.bank_transaction TO "{p}_viewer";
-GRANT SELECT ON archive.spend_department TO "{p}_viewer";
-GRANT SELECT ON archive.spend_user TO "{p}_viewer";
-GRANT SELECT ON archive.spend_card TO "{p}_viewer";
-GRANT SELECT ON archive.spend_transaction TO "{p}_viewer";
-GRANT SELECT ON archive.spend_receipt TO "{p}_viewer";
-GRANT SELECT ON archive.warehouse_table TO "{p}_viewer";
-GRANT SELECT ON archive.warehouse_column TO "{p}_viewer";
-GRANT SELECT ON archive.contact TO "{p}_viewer";
-GRANT SELECT ON archive.location TO "{p}_viewer";
-GRANT SELECT ON archive.history TO "{p}_viewer";
-GRANT SELECT ON archive.post TO "{p}_viewer";
-GRANT SELECT ON archive.kin TO "{p}_viewer";
-GRANT SELECT ON archive.kin_tie TO "{p}_viewer";
-GRANT SELECT ON archive.dna TO "{p}_viewer";
-GRANT SELECT ON archive.media TO "{p}_viewer";
-GRANT SELECT ON archive.health_sample TO "{p}_viewer";
-GRANT SELECT ON archive.health_day TO "{p}_viewer";
-GRANT SELECT ON archive.health_sleep TO "{p}_viewer";
-GRANT SELECT ON archive.health_workout TO "{p}_viewer";
-GRANT SELECT ON archive.health_record TO "{p}_viewer";
-GRANT SELECT ON archive.photo TO "{p}_viewer";
-GRANT SELECT ON archive.place_visit TO "{p}_viewer";
-GRANT SELECT ON archive.investment_holding TO "{p}_viewer";
-GRANT SELECT ON archive.investment_transaction TO "{p}_viewer";
-GRANT SELECT ON archive.bank_liability TO "{p}_viewer";
-GRANT SELECT ON archive.budget_category TO "{p}_viewer";
-GRANT SELECT ON archive.parcel TO "{p}_viewer";
-GRANT SELECT ON archive.parcel_event TO "{p}_viewer";
-GRANT SELECT ON archive.vehicle TO "{p}_viewer";
-GRANT SELECT ON archive.vehicle_charge TO "{p}_viewer";
-GRANT SELECT ON archive.home_device TO "{p}_viewer";
-GRANT SELECT ON archive.music_playlist TO "{p}_viewer";
-GRANT SELECT ON archive.music_track TO "{p}_viewer";
-GRANT SELECT ON archive.music_artist TO "{p}_viewer";
-GRANT SELECT ON archive.notebook TO "{p}_viewer";
-GRANT SELECT ON archive.note TO "{p}_viewer";
-GRANT SELECT ON archive.note_attachment TO "{p}_viewer";
-GRANT SELECT ON archive.school_notice TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "{p}_viewer";
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT INSERT, UPDATE, DELETE ON TABLES TO "{p}_editor";
 
@@ -4925,214 +4390,60 @@ CREATE POLICY mine ON archive.workflow_run FOR SELECT USING (EXISTS (SELECT FROM
 ALTER TABLE archive.connection ENABLE ROW LEVEL SECURITY;
 CREATE POLICY mine ON archive.connection FOR SELECT USING (archive.mine(member) AND NOT integration OR integration AND archive.can(access));
 
-ALTER TABLE archive.mail_message ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.mail_message FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = mail_message.connection));
-ALTER TABLE archive.mail_party ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.mail_party FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = mail_party.connection));
-ALTER TABLE archive.mail_attachment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.mail_attachment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = mail_attachment.connection));
-ALTER TABLE archive.doc_page ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.doc_page FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = doc_page.connection));
-ALTER TABLE archive.payroll_company ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_company FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_company.connection));
-ALTER TABLE archive.payroll_department ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_department FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_department.connection));
-ALTER TABLE archive.payroll_location ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_location FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_location.connection));
-ALTER TABLE archive.payroll_schedule ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_schedule FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_schedule.connection));
-ALTER TABLE archive.payroll_worker ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_worker FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_worker.connection));
-ALTER TABLE archive.payroll_job ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_job FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_job.connection));
-ALTER TABLE archive.payroll_compensation ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_compensation FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_compensation.connection));
-ALTER TABLE archive.payroll_address ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_address FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_address.connection));
-ALTER TABLE archive.payroll_employment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_employment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_employment.connection));
-ALTER TABLE archive.payroll_custom_field ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_custom_field FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_custom_field.connection));
-ALTER TABLE archive.payroll_custom_value ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_custom_value FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_custom_value.connection));
-ALTER TABLE archive.payroll_department_member ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_department_member FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_department_member.connection));
-ALTER TABLE archive.payroll_schedule_assignment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_schedule_assignment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_schedule_assignment.connection));
-ALTER TABLE archive.payroll_schedule_member ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_schedule_member FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_schedule_member.connection));
-ALTER TABLE archive.payroll_earning_type ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_earning_type FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_earning_type.connection));
-ALTER TABLE archive.payroll_time_off_request ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_time_off_request FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_time_off_request.connection));
-ALTER TABLE archive.payroll_time_off_day ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_time_off_day FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_time_off_day.connection));
-ALTER TABLE archive.payroll_time_off_balance ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_time_off_balance FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_time_off_balance.connection));
-ALTER TABLE archive.payroll_time_off_policy ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_time_off_policy FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_time_off_policy.connection));
-ALTER TABLE archive.payroll_run ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_run FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_run.connection));
-ALTER TABLE archive.payroll_pay ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_pay FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_pay.connection));
-ALTER TABLE archive.payroll_pay_line ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_pay_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_pay_line.connection));
-ALTER TABLE archive.payroll_pay_period ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_pay_period FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_pay_period.connection));
-ALTER TABLE archive.payroll_contractor_payment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_contractor_payment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_contractor_payment.connection));
-ALTER TABLE archive.payroll_contractor_payment_group ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_contractor_payment_group FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_contractor_payment_group.connection));
-ALTER TABLE archive.payroll_task ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.payroll_task FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = payroll_task.connection));
-ALTER TABLE archive.dental_provider ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dental_provider FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_provider.connection));
-ALTER TABLE archive.dental_patient ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dental_patient FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_patient.connection));
-ALTER TABLE archive.dental_appointment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dental_appointment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_appointment.connection));
-ALTER TABLE archive.dental_procedure ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dental_procedure FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_procedure.connection));
-ALTER TABLE archive.dental_payment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dental_payment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dental_payment.connection));
-ALTER TABLE archive.ad_metric ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ad_metric FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ad_metric.connection));
-ALTER TABLE archive.work_item ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.work_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = work_item.connection));
-ALTER TABLE archive.code_project ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.code_project FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = code_project.connection));
-ALTER TABLE archive.compliance ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.compliance FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = compliance.connection));
-ALTER TABLE archive.commerce_product ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.commerce_product FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_product.connection));
-ALTER TABLE archive.commerce_order ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.commerce_order FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_order.connection));
-ALTER TABLE archive.commerce_line ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.commerce_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = commerce_line.connection));
-ALTER TABLE archive.marketing_campaign ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.marketing_campaign FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = marketing_campaign.connection));
-ALTER TABLE archive.chat_message ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.chat_message FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = chat_message.connection));
-ALTER TABLE archive.crm_company ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.crm_company FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_company.connection));
-ALTER TABLE archive.crm_contact ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.crm_contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_contact.connection));
-ALTER TABLE archive.crm_deal ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.crm_deal FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = crm_deal.connection));
-ALTER TABLE archive.calendar_event ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.calendar_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_event.connection));
-ALTER TABLE archive.calendar_attendee ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.calendar_attendee FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = calendar_attendee.connection));
-ALTER TABLE archive.ledger_account ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ledger_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_account.connection));
-ALTER TABLE archive.ledger_contact ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ledger_contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_contact.connection));
-ALTER TABLE archive.ledger_item ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ledger_item FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_item.connection));
-ALTER TABLE archive.ledger_entry ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ledger_entry FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_entry.connection));
-ALTER TABLE archive.ledger_line ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.ledger_line FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = ledger_line.connection));
-ALTER TABLE archive.bank_account ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.bank_account FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_account.connection));
-ALTER TABLE archive.bank_transaction ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.bank_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_transaction.connection));
-ALTER TABLE archive.spend_department ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.spend_department FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_department.connection));
-ALTER TABLE archive.spend_user ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.spend_user FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_user.connection));
-ALTER TABLE archive.spend_card ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.spend_card FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_card.connection));
-ALTER TABLE archive.spend_transaction ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.spend_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_transaction.connection));
-ALTER TABLE archive.spend_receipt ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.spend_receipt FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = spend_receipt.connection));
-ALTER TABLE archive.warehouse_table ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.warehouse_table FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_table.connection));
-ALTER TABLE archive.warehouse_column ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.warehouse_column FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = warehouse_column.connection));
-ALTER TABLE archive.contact ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.contact FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = contact.connection));
-ALTER TABLE archive.location ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.location FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = location.connection));
-ALTER TABLE archive.history ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.history FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = history.connection));
-ALTER TABLE archive.post ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.post FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = post.connection));
-ALTER TABLE archive.kin ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.kin FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = kin.connection));
-ALTER TABLE archive.kin_tie ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.kin_tie FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = kin_tie.connection));
-ALTER TABLE archive.dna ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.dna FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = dna.connection));
-ALTER TABLE archive.media ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.media FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = media.connection));
-ALTER TABLE archive.health_sample ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_sample FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sample.connection));
-ALTER TABLE archive.health_day ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_day FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_day.connection));
-ALTER TABLE archive.health_sleep ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_sleep FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_sleep.connection));
-ALTER TABLE archive.health_workout ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_workout FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_workout.connection));
-ALTER TABLE archive.health_record ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.health_record FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = health_record.connection));
-ALTER TABLE archive.photo ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.photo FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = photo.connection));
-ALTER TABLE archive.place_visit ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.place_visit FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = place_visit.connection));
-ALTER TABLE archive.investment_holding ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.investment_holding FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = investment_holding.connection));
-ALTER TABLE archive.investment_transaction ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.investment_transaction FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = investment_transaction.connection));
-ALTER TABLE archive.bank_liability ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.bank_liability FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = bank_liability.connection));
-ALTER TABLE archive.budget_category ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.budget_category FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = budget_category.connection));
-ALTER TABLE archive.parcel ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.parcel FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = parcel.connection));
-ALTER TABLE archive.parcel_event ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.parcel_event FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = parcel_event.connection));
-ALTER TABLE archive.vehicle ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.vehicle FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle.connection));
-ALTER TABLE archive.vehicle_charge ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.vehicle_charge FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = vehicle_charge.connection));
-ALTER TABLE archive.home_device ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.home_device FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = home_device.connection));
-ALTER TABLE archive.music_playlist ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.music_playlist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_playlist.connection));
-ALTER TABLE archive.music_track ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.music_track FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_track.connection));
-ALTER TABLE archive.music_artist ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.music_artist FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = music_artist.connection));
-ALTER TABLE archive.notebook ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.notebook FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = notebook.connection));
-ALTER TABLE archive.note ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.note FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = note.connection));
-ALTER TABLE archive.note_attachment ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.note_attachment FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = note_attachment.connection));
-ALTER TABLE archive.school_notice ENABLE ROW LEVEL SECURITY;
-CREATE POLICY mine ON archive.school_notice FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = school_notice.connection));
 ALTER TABLE archive.known_person ENABLE ROW LEVEL SECURITY;
-CREATE POLICY seen ON archive.known_person FOR SELECT USING (EXISTS (SELECT FROM archive.mail_party p WHERE p.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.payroll_worker w WHERE w.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.payroll_company c WHERE c.admin = known_person.id OR c.signatory = known_person.id)
-    OR EXISTS (SELECT FROM archive.file f WHERE f.owner = known_person.id OR f.editor = known_person.id)
-    OR EXISTS (SELECT FROM archive.ledger_contact l WHERE l.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.calendar_event e WHERE e.organizer = known_person.id)
-    OR EXISTS (SELECT FROM archive.calendar_attendee a WHERE a.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = known_person.id)
-    OR EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = known_person.id)
-    OR EXISTS (SELECT FROM archive.compliance x WHERE x.owner = known_person.id)
-    OR EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = known_person.id)
-    OR EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.spend_user x WHERE x.person = known_person.id)
-    OR EXISTS (SELECT FROM archive.contact x WHERE x.person = known_person.id));
 ALTER TABLE archive.known_org ENABLE ROW LEVEL SECURITY;
-CREATE POLICY seen ON archive.known_org FOR SELECT USING (EXISTS (SELECT FROM archive.payroll_company c WHERE c.org = known_org.id)
-    OR EXISTS (SELECT FROM archive.crm_company x WHERE x.org = known_org.id)
-    OR EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = known_org.id));
+
+CREATE FUNCTION archive.known_uses(known regclass) RETURNS text LANGUAGE sql STABLE AS $$
+    SELECT string_agg(format('EXISTS (SELECT FROM %s x WHERE x.%I = %s.id)', k.conrelid::regclass, a.attname, known), ' OR ' ORDER BY k.conrelid::regclass::text, a.attname)
+    FROM pg_catalog.pg_constraint k
+    JOIN pg_catalog.pg_class c ON c.oid = k.conrelid
+    JOIN pg_catalog.pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+    WHERE k.contype = 'f' AND k.confrelid = known AND c.relnamespace = 'archive'::regnamespace
+$$;
+
+CREATE FUNCTION archive.delete_unknown() RETURNS void LANGUAGE plpgsql AS $$
+BEGIN
+    EXECUTE format('DELETE FROM archive.known_person WHERE NOT (%s)', archive.known_uses('archive.known_person'));
+    EXECUTE format('DELETE FROM archive.known_org WHERE NOT (%s)', archive.known_uses('archive.known_org'));
+END $$;
+
+DO $$
+DECLARE
+    t regclass;
+    k record;
+BEGIN
+    FOR t IN SELECT c.conrelid::regclass FROM pg_catalog.pg_constraint c
+        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
+        WHERE c.contype = 'f' AND c.confrelid = 'archive.connection'::regclass AND a.attname = 'connection' AND a.attnotnull LOOP
+        EXECUTE format('GRANT SELECT ON %s TO %I', t, '{p}_viewer');
+        EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', t);
+        EXECUTE format('CREATE POLICY mine ON %s FOR SELECT USING (archive.can(access) AND EXISTS (SELECT FROM archive.connection c WHERE c.id = %s.connection))', t, t);
+        EXECUTE format('CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION archive.object_name()', t);
+        FOR k IN SELECT a.attname, v.text FROM pg_catalog.pg_attribute a JOIN (VALUES
+            ('access', 'Group that sees it, its connection''s: null for everyone who sees the connection'),
+            ('updated_at', 'When Archive last saw it change'),
+            ('source_id', 'Its id there'),
+            ('connection', 'references connection; the account it is from'),
+            ('stream', 'What its connector syncs it as, like messages')) v(col, text) ON v.col = a.attname
+            WHERE a.attrelid = t AND col_description(t, a.attnum) IS NULL LOOP
+            EXECUTE format('COMMENT ON COLUMN %s.%I IS %L', t, k.attname, k.text);
+        END LOOP;
+    END LOOP;
+    EXECUTE format('CREATE POLICY seen ON archive.known_person FOR SELECT USING (%s)', archive.known_uses('archive.known_person'));
+    EXECUTE format('CREATE POLICY seen ON archive.known_org FOR SELECT USING (%s)', archive.known_uses('archive.known_org'));
+END $$;
+
+CREATE VIEW archive.work AS
+SELECT 'sync'::text AS kind, (SELECT min(greatest(c.sync_at, least(coalesce(c.lease_at, c.sync_at), now() + interval '15 seconds'))) FROM archive.connection c WHERE c.sync_at IS NOT NULL)::timestamptz AS at
+UNION ALL
+SELECT 'pull', (SELECT coalesce(f.retry_at, now()) FROM archive.file f JOIN archive.connection c ON c.id = f.connection
+    WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1)
+UNION ALL
+SELECT 'blob', (SELECT min(b.at) FROM archive.blob_gone b)
+UNION ALL
+SELECT 'workflow', (SELECT min(w.next_at) FROM archive.workflow w)
+UNION ALL
+SELECT 'file', CASE WHEN EXISTS (SELECT FROM archive.file f WHERE f.status = 'pending' AND f.connection IS NULL) THEN now() + interval '10 seconds' END;
 
 CREATE VIEW archive.agent_list WITH (security_invoker = true) AS
 SELECT a.id, a.name, a.description, a.instructions, a.avatar, a.tint, a.slug, a.access, a.created_at, a.updated_at,
@@ -5149,87 +4460,10 @@ FROM archive.workflow w;
 COMMENT ON VIEW archive.workflow_list IS 'Each workflow you can see, with its last run';
 COMMENT ON COLUMN archive.workflow_list.last IS 'Its last run: id, workflow, at, trigger, ms and error; null before its first';
 
-CREATE VIEW archive.connection_list WITH (security_invoker = true) AS
-SELECT c.id, c.name, c.provider, c.account, c.scopes, c.error, c.created_at, c.updated_at, c.sync_at, c.synced_at, c.integration, c.access,
-    ((SELECT count(*) FROM archive.mail_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.doc_page x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_worker x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_custom_field x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_schedule_assignment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_earning_type x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_request x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_time_off_balance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_run x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_pay_period x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_contractor_payment_group x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.payroll_task x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.file x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ledger_entry x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.calendar_event x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_company x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.crm_deal x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.chat_message x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.marketing_campaign x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.work_item x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.code_project x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.compliance x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_product x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.commerce_order x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.ad_metric x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_provider x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_patient x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_appointment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_procedure x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dental_payment x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_account x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_department x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_user x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_card x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.spend_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.warehouse_table x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.photo x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.place_visit x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_holding x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.investment_transaction x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.bank_liability x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.budget_category x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.parcel x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.vehicle_charge x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.home_device x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sample x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_day x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_sleep x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_workout x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.health_record x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_playlist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_track x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.music_artist x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.notebook x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.note x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.school_notice x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.contact x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.location x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.history x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.post x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.kin x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.dna x WHERE x.connection = c.id)
-        + (SELECT count(*) FROM archive.media x WHERE x.connection = c.id))::bigint AS items,
-    (SELECT m.email::text FROM archive.member m WHERE m.id = c.member) AS connected_by
-FROM archive.connection c;
-COMMENT ON VIEW archive.connection_list IS 'Each connection you can see, with how many of its rows you see and who connected it';
+GRANT SELECT ON archive.agent_list, archive.workflow_list TO "{p}_viewer";
 
-GRANT SELECT ON archive.agent_list, archive.workflow_list, archive.connection_list TO "{p}_viewer";
+-- name: LoginlessRoles :many
+SELECT rolname::text FROM pg_catalog.pg_roles WHERE (starts_with(rolname, sqlc.arg(prefix)::text || '_u') OR starts_with(rolname, sqlc.arg(prefix)::text || '_t')) AND (NOT rolcanlogin OR sqlc.arg(every)::bool);
 
 -- name: HasRole :one
 SELECT pg_has_role(sqlc.arg(member)::name, rolname, 'USAGE') FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(grp)::name;
@@ -5337,10 +4571,6 @@ WHERE id = (SELECT f.id FROM archive.file f JOIN archive.connection c ON c.id = 
     ORDER BY f.retry_at NULLS FIRST LIMIT 1 FOR UPDATE OF f SKIP LOCKED)
 RETURNING id, name, hash, connection, stream, version, copied, source, tries;
 
--- name: NextPull :one
-SELECT coalesce(f.retry_at, now())::timestamptz FROM archive.file f JOIN archive.connection c ON c.id = f.connection
-WHERE f.status = 'pending' AND f.connection IS NOT NULL AND NOT c.revoked ORDER BY f.retry_at NULLS FIRST LIMIT 1;
-
 -- name: SetPulled :execrows
 UPDATE archive.file SET hash = sqlc.arg(hash), size = sqlc.arg(size), mime = CASE WHEN mime = 'application/octet-stream' THEN sqlc.arg(sniffed)::text ELSE mime END, copied = version
 WHERE id = sqlc.arg(id) AND version IS NOT DISTINCT FROM sqlc.narg(version);
@@ -5372,9 +4602,6 @@ DELETE FROM archive.blob_gone WHERE hash = $1;
 -- name: RetryBlobGone :exec
 UPDATE archive.blob_gone SET at = sqlc.arg(at)::timestamptz WHERE hash = sqlc.arg(hash);
 
--- name: NextBlob :one
-SELECT at FROM archive.blob_gone ORDER BY at LIMIT 1;
-
 -- name: CopyFile :one
 INSERT INTO archive.file (hash, name, mime, size, metadata, text, status, access)
 SELECT s.hash, sqlc.arg(name), s.mime, s.size, s.metadata, s.text, 'done', sqlc.narg(access)::uuid FROM archive.file s WHERE s.id = sqlc.arg(id)
@@ -5385,9 +4612,6 @@ SELECT kind, coalesce(version, '')::text AS version, source FROM archive.file WH
 
 -- name: SetFileStatus :exec
 UPDATE archive.file SET status = $2, error = $3 WHERE id = $1;
-
--- name: ResetProcessing :exec
-UPDATE archive.file SET status = 'pending' WHERE status = 'processing';
 
 -- name: ReplaceFile :one
 UPDATE archive.file SET hash = $2, size = $3, status = 'pending', text = '', error = '', metadata = '{}' WHERE id = $1
@@ -5481,39 +4705,7 @@ SELECT jsonb_build_object(
             AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '^archive\.', '') = 'can(access)')
             FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
         'columns', (SELECT jsonb_agg(col.c ORDER BY col.num) FROM col WHERE col.rel = c.oid)))
-        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.oid IN ('archive.business'::regclass, 'archive.agreement'::regclass, 'archive.billing'::regclass, 'archive.agent'::regclass, 'archive.inbox'::regclass, 'archive.turn'::regclass, 'archive.memory'::regclass, 'archive.member'::regclass, 'archive."group"'::regclass, 'archive.workflow'::regclass, 'archive.workflow_run'::regclass, 'archive.connection'::regclass, 'archive.known_person'::regclass, 'archive.known_org'::regclass, 'archive.mail_message'::regclass,
-            'archive.mail_party'::regclass, 'archive.mail_attachment'::regclass, 'archive.doc_page'::regclass, 'archive.payroll_company'::regclass,
-            'archive.payroll_department'::regclass, 'archive.payroll_location'::regclass, 'archive.payroll_schedule'::regclass,
-            'archive.payroll_worker'::regclass, 'archive.payroll_job'::regclass, 'archive.payroll_compensation'::regclass,
-            'archive.payroll_address'::regclass, 'archive.payroll_employment'::regclass, 'archive.payroll_custom_field'::regclass,
-            'archive.payroll_custom_value'::regclass, 'archive.payroll_department_member'::regclass, 'archive.payroll_schedule_assignment'::regclass,
-            'archive.payroll_schedule_member'::regclass, 'archive.payroll_earning_type'::regclass, 'archive.payroll_time_off_request'::regclass,
-            'archive.payroll_time_off_day'::regclass, 'archive.payroll_time_off_balance'::regclass, 'archive.payroll_time_off_policy'::regclass,
-            'archive.payroll_run'::regclass, 'archive.payroll_pay'::regclass, 'archive.payroll_pay_line'::regclass,
-            'archive.payroll_pay_period'::regclass, 'archive.payroll_contractor_payment'::regclass,
-            'archive.payroll_contractor_payment_group'::regclass, 'archive.payroll_task'::regclass, 'archive.file'::regclass,
-            'archive.ledger_account'::regclass, 'archive.ledger_contact'::regclass, 'archive.ledger_item'::regclass,
-            'archive.ledger_entry'::regclass, 'archive.ledger_line'::regclass, 'archive.calendar_event'::regclass,
-            'archive.calendar_attendee'::regclass, 'archive.crm_company'::regclass, 'archive.crm_contact'::regclass, 'archive.crm_deal'::regclass,
-            'archive.chat_message'::regclass, 'archive.marketing_campaign'::regclass, 'archive.work_item'::regclass, 'archive.code_project'::regclass, 'archive.compliance'::regclass,
-            'archive.commerce_product'::regclass, 'archive.commerce_order'::regclass, 'archive.commerce_line'::regclass,
-            'archive.ad_metric'::regclass, 'archive.dental_provider'::regclass, 'archive.dental_patient'::regclass,
-            'archive.dental_appointment'::regclass, 'archive.dental_procedure'::regclass, 'archive.dental_payment'::regclass,
-            'archive.bank_account'::regclass, 'archive.bank_transaction'::regclass,
-            'archive.spend_department'::regclass, 'archive.spend_user'::regclass, 'archive.spend_card'::regclass,
-            'archive.spend_transaction'::regclass, 'archive.spend_receipt'::regclass,
-            'archive.warehouse_table'::regclass, 'archive.warehouse_column'::regclass,
-            'archive.photo'::regclass, 'archive.place_visit'::regclass,
-            'archive.investment_holding'::regclass, 'archive.investment_transaction'::regclass,
-            'archive.bank_liability'::regclass, 'archive.budget_category'::regclass,
-            'archive.parcel'::regclass, 'archive.parcel_event'::regclass, 'archive.vehicle'::regclass, 'archive.vehicle_charge'::regclass, 'archive.home_device'::regclass,
-            'archive.health_sample'::regclass, 'archive.health_day'::regclass, 'archive.health_sleep'::regclass, 'archive.health_workout'::regclass, 'archive.health_record'::regclass,
-            'archive.music_playlist'::regclass, 'archive.music_track'::regclass, 'archive.music_artist'::regclass,
-            'archive.notebook'::regclass, 'archive.note'::regclass, 'archive.note_attachment'::regclass,
-            'archive.school_notice'::regclass,
-            'archive.contact'::regclass, 'archive.location'::regclass, 'archive.history'::regclass, 'archive.post'::regclass,
-            'archive.kin'::regclass, 'archive.kin_tie'::regclass, 'archive.dna'::regclass, 'archive.media'::regclass,
-            'archive.agent_list'::regclass, 'archive.workflow_list'::regclass, 'archive.connection_list'::regclass)
+        FROM pg_catalog.pg_class c WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
             AND NOT EXISTS (SELECT FROM pg_catalog.pg_class p WHERE p.relnamespace = 'public'::regnamespace AND p.relname = c.relname)) AND c.relkind IN ('r', 'p', 'v')), '{}'),
     'types', coalesce((SELECT jsonb_object_agg(t.typnamespace::regnamespace::text || '.' || t.typname, jsonb_build_object(
         'name', t.typname,
@@ -5599,11 +4791,14 @@ RETURNING id;
 -- name: WakeTableWorkflows :execrows
 UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL;
 
--- name: NextWorkflowAt :one
-SELECT next_at FROM archive.workflow WHERE next_at IS NOT NULL ORDER BY next_at LIMIT 1;
+-- name: Work :many
+SELECT kind::text AS kind, at::timestamptz AS at FROM archive.work WHERE at IS NOT NULL;
 
--- name: HasPendingFiles :one
-SELECT EXISTS (SELECT FROM archive.file WHERE status = 'pending' AND connection IS NULL);
+-- name: WorkAt :one
+SELECT at::timestamptz FROM archive.work WHERE kind = $1 AND at IS NOT NULL;
+
+-- name: UncountedConnections :many
+SELECT id, provider FROM archive.connection WHERE items = 0;
 
 -- name: Connection :one
 SELECT * FROM archive.connection WHERE id = $1;
@@ -5666,10 +4861,6 @@ WHERE id = (SELECT c.id FROM archive.connection c WHERE c.sync_at <= now() AND (
     ORDER BY c.sync_at LIMIT 1 FOR UPDATE SKIP LOCKED)
 RETURNING *;
 
--- name: NextSyncAt :one
-SELECT greatest(sync_at, least(coalesce(lease_at, sync_at), sqlc.arg(soon)::timestamptz))::timestamptz FROM archive.connection
-WHERE sync_at IS NOT NULL ORDER BY 1 LIMIT 1;
-
 -- name: SaveSync :exec
 UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(sync_at), synced_at = coalesce(sqlc.narg(synced_at), synced_at),
     error = sqlc.arg(error), revoked = sqlc.arg(revoked), lease_at = NULL
@@ -5685,24 +4876,7 @@ UPDATE archive.connection SET cursor = sqlc.arg(cursor), sync_at = sqlc.narg(syn
 SELECT pg_try_advisory_xact_lock(hashtextextended(sqlc.arg(name)::text, 0));
 
 -- name: DeleteUnknown :exec
-WITH p AS (DELETE FROM archive.known_person k WHERE NOT EXISTS (SELECT FROM archive.mail_party x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_worker x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.admin = k.id OR x.signatory = k.id)
-    AND NOT EXISTS (SELECT FROM archive.file x WHERE x.owner = k.id OR x.editor = k.id)
-    AND NOT EXISTS (SELECT FROM archive.ledger_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_event x WHERE x.organizer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.calendar_attendee x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_contact x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.chat_message x WHERE x.sender = k.id)
-    AND NOT EXISTS (SELECT FROM archive.work_item x WHERE x.assignee = k.id)
-    AND NOT EXISTS (SELECT FROM archive.compliance x WHERE x.owner = k.id)
-    AND NOT EXISTS (SELECT FROM archive.commerce_order x WHERE x.customer = k.id)
-    AND NOT EXISTS (SELECT FROM archive.dental_patient x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.spend_user x WHERE x.person = k.id)
-    AND NOT EXISTS (SELECT FROM archive.contact x WHERE x.person = k.id))
-DELETE FROM archive.known_org o WHERE NOT EXISTS (SELECT FROM archive.payroll_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.crm_company x WHERE x.org = o.id)
-    AND NOT EXISTS (SELECT FROM archive.bank_transaction x WHERE x.org = o.id);
+SELECT archive.delete_unknown();
 
 -- name: KnownPeople :many
 WITH added AS (INSERT INTO archive.known_person (email) SELECT DISTINCT e FROM unnest(sqlc.arg(emails)::text[]) e ORDER BY e ON CONFLICT (email) DO NOTHING

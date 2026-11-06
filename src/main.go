@@ -7,7 +7,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -235,20 +234,22 @@ func httpHandler(a *Archive) http.Handler {
 	handle("GET /api/types", func(r *http.Request) (int, any, error) {
 		return ok(a.types(r.Context()))
 	})
-	handle("POST /api/action/{name}", func(r *http.Request) (int, any, error) {
-		act, found := actions[r.PathValue("name")]
-		if !found {
-			return 0, nil, fmt.Errorf("action %q; there are %s: %w", r.PathValue("name"), strings.Join(specKeys(actions), ", "), ErrNotFound)
-		}
-		b, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 10<<20))
-		if err != nil {
-			return 0, nil, fmt.Errorf("body: %v: %w", err, httpErrBadRequest)
-		}
-		return ok(act(a, r.Context(), b))
+	handle("GET /api/docs", func(r *http.Request) (int, any, error) {
+		return ok(a.RunDocs(r.Context()), nil)
+	})
+	handle("GET /api/terms", func(r *http.Request) (int, any, error) {
+		return ok(a.onboarding(r.Context()))
 	})
 	mux.HandleFunc("GET /api/file/{id}/{part...}", a.filePart)
 	handle("GET /api/search", func(r *http.Request) (int, any, error) {
 		q := r.URL.Query()
+		if q.Has("provider") {
+			p, err := a.hub.connector(q.Get("provider"))
+			if err != nil {
+				return 0, nil, err
+			}
+			return ok(p.Places(q.Get("q"), 20), nil)
+		}
 		limit, _ := strconv.Atoi(q.Get("limit"))
 		f := SearchFilter{Type: q.Get("type"), From: q.Get("from"), To: q.Get("to"), Limit: limit}
 		return ok(a.Search(r.Context(), q.Get("q"), f))
@@ -314,67 +315,6 @@ func httpHandler(a *Archive) http.Handler {
 		return http.StatusNoContent, nil, a.Delete(r.Context(), r.PathValue("type"), id)
 	})
 	return mux
-}
-
-type action = func(a *Archive, ctx context.Context, body []byte) (any, error)
-
-func act[T any](f func(a *Archive, ctx context.Context, in T) (any, error)) action {
-	return func(a *Archive, ctx context.Context, body []byte) (any, error) {
-		var in T
-		if len(body) > 0 {
-			if err := json.Unmarshal(body, &in); err != nil {
-				return nil, fmt.Errorf("body: %v: %w", err, httpErrBadRequest)
-			}
-		}
-		return f(a, ctx, in)
-	}
-}
-
-var actions map[string]action
-
-func init() {
-	type ofConnector struct {
-		Provider string `json:"provider"`
-		Q        string `json:"q"`
-	}
-	actions = map[string]action{
-		"docs":       act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.RunDocs(ctx), nil }),
-		"onboarding": act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.onboarding(ctx) }),
-		"card":       act(func(a *Archive, ctx context.Context, _ struct{}) (any, error) { return a.cardStart(ctx) }),
-		"linked": act(func(a *Archive, ctx context.Context, in struct {
-			SetupIntent string `json:"setup_intent"`
-		}) (any, error) {
-			return a.cardLinked(ctx, in.SetupIntent)
-		}),
-		"migrate": act(func(a *Archive, ctx context.Context, in struct {
-			SQL     string `json:"sql"`
-			Name    string `json:"name"`
-			Confirm string `json:"confirm"`
-		}) (any, error) {
-			return a.Migrate(ctx, in.SQL, in.Name, in.Confirm)
-		}),
-		"clear": act(func(a *Archive, ctx context.Context, in struct {
-			Agent uuid.UUID `json:"agent"`
-		}) (any, error) {
-			return nil, a.ClearTurns(ctx, in.Agent)
-		}),
-		"sync": act(func(a *Archive, ctx context.Context, in struct {
-			Connection uuid.UUID `json:"connection"`
-		}) (any, error) {
-			return nil, a.SyncNow(ctx, in.Connection)
-		}),
-		"link": act(func(a *Archive, ctx context.Context, in ofConnector) (any, error) {
-			tok, err := a.connectLink(ctx, in.Provider)
-			return map[string]string{"token": tok}, err
-		}),
-		"places": act(func(a *Archive, ctx context.Context, in ofConnector) (any, error) {
-			p, err := a.hub.connector(in.Provider)
-			if err != nil {
-				return nil, err
-			}
-			return p.Places(in.Q, 20), nil
-		}),
-	}
 }
 
 func httpError(err error) (int, any) {

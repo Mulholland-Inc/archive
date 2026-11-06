@@ -1,6 +1,5 @@
 <script>
   import { Copy } from '@lucide/svelte';
-  import { encode } from 'uqr';
   import Art from './Art.svelte';
   import Button from './Button.svelte';
   import CodeInput from './CodeInput.svelte';
@@ -15,7 +14,7 @@
   let error = $state('');
   let busy = $state(false);
 
-  const qr = $derived(link && encode(link.uri, { border: 4, ecc: 'H' }));
+  let qr = $state(null);
   const dark = $derived(qr && qr.data.flatMap((row, y) => row.flatMap((cell, x) => (cell ? [`M${x} ${y}h1v1h-1z`] : []))).join(''));
 
   const plate = $derived(qr && Math.round(qr.size * 0.24));
@@ -37,7 +36,12 @@
     busy = false;
   }
 
-  const start = () => act(async () => (link = await api('/auth/totp/setup', { method: 'POST' })));
+  const start = () =>
+    act(async () => {
+      const [got, { encode }] = await Promise.all([api('/auth/totp/setup', { method: 'POST' }), import('uqr')]);
+      qr = encode(got.uri, { border: 4, ecc: 'H' });
+      link = got;
+    });
 
   const post = async (path) => (on = (await api(path, { method: 'POST', body: { code } })).on);
 

@@ -336,7 +336,7 @@ icon: receipt'</span>;
 <p>Managers, engineers and the owner. Everyone else can read the schema.</p>
 
 <h3 id="schema-git">Keep it in git</h3>
-<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/action/migrate</code> takes <code>&#123;"sql", "name", "confirm"&#125;</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
+<p>Keep migrations as <code>.sql</code> files. Over HTTP, <code>POST /api/run</code> runs <code>archive.migrate(sql, &#123; name, confirm &#125;)</code>, and the Terraform provider has an <code>archive_migration</code> resource.</p>
 
 <h2 id="views">Views</h2>
 <p>A view is a saved way to look at a table: a real Postgres view, with its layout in its comment. Boards, calendars and filtered tables are all views.</p>
@@ -513,7 +513,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 </Code>
 
 <h3 id="code-docs">The tool's docs</h3>
-<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text with <code>POST /api/action/docs</code>.</p>
+<p>The <code>run</code> tool's description is the SDK reference plus an interface for each of your tables, generated from the live schema. Read the same text with <code>GET /api/docs</code>.</p>
 
 <h3 id="code-elsewhere">Run it from anywhere</h3>
 <p>The same runtime answers <code>POST /api/run</code> with <code>&#123;"code": "..."&#125;</code>. The output is always <code>&#123;"result", "logs", "error"&#125;</code>.</p>
@@ -628,12 +628,10 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tbody>
 <tr><td><code>GET /api/types</code></td><td>The catalog: your tables and views with their columns and DDL, and every connector.</td></tr>
 <tr><td><code>GET /api/boot</code></td><td>What the app reads on first load: who you are, agents, workflows, members, types and onboarding status.</td></tr>
-<tr><td><code>POST /api/action/migrate</code></td><td>Dry-runs <code>&#123;"sql", "name"&#125;</code>, or runs it with <code>"confirm"</code>; a named migration runs once.</td></tr>
-<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>.</td></tr>
+<tr><td><code>GET /api/search?q=</code></td><td>Search, with <code>type</code>, <code>from</code>, <code>to</code> and <code>limit</code>; with <code>provider</code>, the places a connector offers.</td></tr>
 <tr><td><code>POST /api/run</code></td><td>Runs a script: <code>&#123;"code": "..."&#125;</code>.</td></tr>
-<tr><td><code>POST /api/turn</code></td><td>Talks with an agent, as a stream: <code>&#123;"agent", "text"&#125;</code>.</td></tr>
-<tr><td><code>POST /api/action/docs</code></td><td>The SDK reference with your table types.</td></tr>
-<tr><td><code>POST /api/action/&#123;name&#125;</code></td><td>What is not a write: <code>clear</code> an agent's conversation with you <code>&#123;"agent"&#125;</code>, <code>sync</code> a connection <code>&#123;"connection"&#125;</code>, a connector's <code>link</code> token <code>&#123;"provider"&#125;</code> or <code>places</code> <code>&#123;"provider", "q"&#125;</code>.</td></tr>
+<tr><td><code>POST /api/turn</code></td><td>Talks with an agent, as a stream: <code>&#123;"agent", "text"&#125;</code>. <code>&#123;"agent", "clear": true&#125;</code> clears your conversation with it.</td></tr>
+<tr><td><code>GET /api/docs</code></td><td>The SDK reference with your table types.</td></tr>
 <tr><td><code>/api/file…</code></td><td>Files, see <a href="#files-endpoints">Files</a>.</td></tr>
 </tbody>
 </table>
@@ -646,9 +644,9 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <tr><td><code>GET</code>, <code>POST /api/member</code></td><td>List the people here, or invite one with <code>&#123;"email", "name", "role"&#125;</code> (managers and up).</td></tr>
 <tr><td><code>DELETE /api/member/&#123;id&#125;</code></td><td>Remove someone, with their tokens (managers and up).</td></tr>
 <tr><td><code>PATCH /api/member/&#123;id&#125;</code></td><td>Change someone's <code>role</code> or <code>group</code> (managers and up).</td></tr>
-<tr><td><code>GET /api/connection_list</code></td><td>The connections you can see, with their row counts.</td></tr>
-<tr><td><code>POST /api/connection</code></td><td>Connect an account with keys: <code>&#123;"provider", "keys"&#125;</code>.</td></tr>
-<tr><td><code>PATCH /api/connection/&#123;id&#125;</code></td><td>Narrow an integration to a group: <code>&#123;"access"&#125;</code> (managers and up).</td></tr>
+<tr><td><code>GET /api/connection</code></td><td>The connections you can see, with their row counts.</td></tr>
+<tr><td><code>POST /api/connection</code></td><td>Connect an account with keys: <code>&#123;"provider", "keys"&#125;</code>. <code>&#123;"provider"&#125;</code> alone gives a connector's link token.</td></tr>
+<tr><td><code>PATCH /api/connection/&#123;id&#125;</code></td><td>Narrow an integration to a group: <code>&#123;"access"&#125;</code> (managers and up), or sync it now: <code>&#123;"sync": true&#125;</code>.</td></tr>
 <tr><td><code>DELETE /api/connection/&#123;id&#125;</code></td><td>Disconnect it, deleting what it synced.</td></tr>
 <tr><td><code>GET</code>, <code>POST /auth/tokens</code></td><td>List tokens, or create one (engineers and the owner).</td></tr>
 <tr><td><code>DELETE /auth/tokens/&#123;id&#125;</code></td><td>Revoke a token (engineers and the owner).</td></tr>

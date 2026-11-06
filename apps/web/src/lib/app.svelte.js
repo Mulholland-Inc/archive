@@ -629,7 +629,7 @@ export const onboardingSteps = [
 
 export async function loadSignup() {
   try {
-    Object.assign(app.signup, await call('/api/action/onboarding', { method: 'POST' }));
+    Object.assign(app.signup, await call('/api/terms'));
   } catch (e) {
     await complain(e);
   }
@@ -654,10 +654,10 @@ export async function signAgreement(data) {
   await loadSignup();
 }
 
-export const startCard = () => call('/api/action/card', { method: 'POST' });
+export const startCard = () => call('/api/billing', { method: 'POST', body: {} });
 
 export async function cardLinked(setup_intent) {
-  await call('/api/action/linked', { method: 'POST', body: { setup_intent } });
+  await call('/api/billing', { method: 'POST', body: { setup_intent } });
   await loadSignup();
 }
 
@@ -834,7 +834,7 @@ async function onIntegration(id, what, act) {
 }
 
 export const disconnectIntegration = (id) => onIntegration(id, 'disconnect', (c) => call(`/api/connection/${c}`, { method: 'DELETE' }));
-export const syncIntegration = (id) => onIntegration(id, 'sync', (connection) => call('/api/action/sync', { method: 'POST', body: { connection } }));
+export const syncIntegration = (id) => onIntegration(id, 'sync', (c) => call(`/api/connection/${c}`, { method: 'PATCH', body: { sync: true } }));
 
 
 const KEY_NAME = 'Archive API key';
@@ -1162,8 +1162,9 @@ export async function renameView(id, name) {
   if (!/^[a-z]/.test(to)) return complain(new Error('A view’s name starts with a letter.'), 'Couldn’t rename the view');
   const sql = `ALTER VIEW public."${id}" RENAME TO "${to}"`;
   try {
-    const dry = await call('/api/action/migrate', { method: 'POST', body: { sql } });
-    await call('/api/action/migrate', { method: 'POST', body: { sql, confirm: dry.confirm } });
+    const code = `const dry = await archive.migrate(${JSON.stringify(sql)}); return archive.migrate(${JSON.stringify(sql)}, { confirm: dry.confirm });`;
+    const { error } = await call('/api/run', { method: 'POST', body: { code } });
+    if (error) throw new Error(error);
   } catch (e) {
     return complain(e, 'Couldn’t rename the view');
   }
@@ -1192,7 +1193,7 @@ export const connections = resource({
     const v = ws();
     if (!v.catalog) await schema.refresh();
     const connectors = v.catalog.catalog.connectors;
-    const rows = await api('/api/connection_list?limit=1000', { workspace: v.id });
+    const rows = await api('/api/connection?limit=1000', { workspace: v.id });
     rows.sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account));
     const ids = new Set(connectors.filter((k) => !k.integration).map((k) => k.id));
     v.connectors = v.connectors.filter((c) => ids.has(c.id));
@@ -1242,7 +1243,7 @@ function toIntegration(k, x) {
     connected: Boolean(x),
     connection: x ?? null,
     account: x?.account ?? '',
-    connectedBy: x?.connected_by ?? '',
+    member: x?.member ?? '',
     date: x ? relative(x.created_at) : '',
     lastSync: x ? lastSyncOf(x) : '',
     items: x?.items ?? 0,
@@ -1259,7 +1260,7 @@ export function connect(id, asked = {}, workspace = app.archive) {
 }
 
 export async function connectPlaces(id, q) {
-  return (await call('/api/action/places', { method: 'POST', body: { provider: id, q } })) ?? [];
+  return (await call(`/api/search?provider=${encodeURIComponent(id)}&q=${encodeURIComponent(q)}`)) ?? [];
 }
 
 export async function connectKeys(id, keys, workspace, quiet = false) {
@@ -1318,7 +1319,7 @@ async function openLink({ id, token, workspace }, back) {
 
 export async function connectLink(id) {
   try {
-    const { token } = await call('/api/action/link', { method: 'POST', body: { provider: id } });
+    const { token } = await call('/api/connection', { method: 'POST', body: { provider: id } });
     const at = { id, token, workspace: app.archive };
     linking(at);
     await openLink(at);
@@ -1340,7 +1341,7 @@ export const ownConnections = resource({
   tables: ['archive.connection'],
   load: async () => {
     const all = await Promise.all(app.archives.map(async (v) => {
-      const rows = await api('/api/connection_list?integration=false&limit=1000', { workspace: v.id });
+      const rows = await api('/api/connection?integration=false&limit=1000', { workspace: v.id });
       return rows.map((x) => ({ ...x, workspace: { id: v.id, name: v.name }, look: v.look }));
     }));
     app.ownConnections = all.flat().sort((a, b) => a.provider.localeCompare(b.provider) || a.account.localeCompare(b.account) || a.workspace.name.localeCompare(b.workspace.name));
@@ -1357,6 +1358,6 @@ async function onOwnConnection(x, act, failed) {
   return ownConnections.refresh();
 }
 
-export const syncOwnConnection = (x) => onOwnConnection(x, (workspace) => call('/api/action/sync', { method: 'POST', body: { connection: x.id }, workspace }), `Couldn’t sync ${x.account}`);
+export const syncOwnConnection = (x) => onOwnConnection(x, (workspace) => call(`/api/connection/${x.id}`, { method: 'PATCH', body: { sync: true }, workspace }), `Couldn’t sync ${x.account}`);
 export const disconnectOwnConnection = (x) => onOwnConnection(x, (workspace) => call(`/api/connection/${x.id}`, { method: 'DELETE', workspace }), `Couldn’t disconnect ${x.account}`);
 

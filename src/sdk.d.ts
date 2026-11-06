@@ -122,7 +122,7 @@
  * - People connect their own Gmail, Outlook, Drive or Notion in Settings, Connectors; managers and up connect integrations
  *   for everyone in Archive settings, Integrations, and may narrow one to a group. Both are rows of connection. To use an
  *   account, a person connects it there: you cannot, as archive.create, update and delete of connection throw not allowed in a run,
- *   because what they do at the service cannot roll back. connection_list says how many rows each has.
+ *   because what they do at the service cannot roll back. connection.items says how many rows each has.
  * - archive.action("gmail.search", { query }) uses one; Actions lists yours. With several accounts at a connector, pass
  *   { connection }, its account or id. Integrations act for editors and up. Failures throw, with code unauthorized when
  *   the account must connect again. An action counts toward {timeout}. In a workflow, actions are its runner's.
@@ -153,8 +153,8 @@ declare const archive: {
     schema(): Promise<Table[]>;
     /** Any table or view, Archive's own too, and those of connectors this workspace has not connected; throws not_found, naming the ones there are. */
     schema(name: string): Promise<Table>;
-    /** Dry-run DDL and report what it changes; with the report's confirm, run it as part of this run (see Schema). */
-    migrate(sql: string, opts?: { confirm?: string }): Promise<Migration>;
+    /** Dry-run DDL and report what it changes; with the report's confirm, run it as part of this run (see Schema). A name, like 2026_11_house, runs it once: later calls with that name are skipped. */
+    migrate(sql: string, opts?: { confirm?: string; name?: string }): Promise<Migration>;
     /** Files and folders you can see, yours and what your connections synced, oldest first, with their extracted text; page with after = the last id. */
     files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */

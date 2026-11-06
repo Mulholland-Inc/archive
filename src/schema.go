@@ -28,6 +28,7 @@ type Catalog struct {
 	Tables map[string]*Table  `json:"tables"`
 	Types  map[string]*PgType `json:"types"`
 	stamp  string
+	sync   map[string]syncTable
 }
 
 type Table struct {
@@ -125,6 +126,7 @@ func catalogParse(b []byte) (*Catalog, error) {
 	if err := json.Unmarshal(b, c); err != nil {
 		return nil, fmt.Errorf("catalog: %w", err)
 	}
+	c.sync = c.syncTables()
 	for _, t := range c.Tables {
 		t.Description, t.meta = catalogComment(t.Description)
 		for _, kv := range t.meta {
@@ -173,7 +175,7 @@ func catalogWorkflow(t *Table) {
 }
 
 func catalogConnection(t *Table) {
-	t.internal = []string{"member", "token", "cursor"}
+	t.internal = []string{"token", "cursor"}
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(t.internal, c.Name) })
 }
 
@@ -183,9 +185,36 @@ func catalogFile(t *Table) {
 	t.Columns = slices.DeleteFunc(t.Columns, func(c *Column) bool { return slices.Contains(gone, c.Name) })
 }
 
+func (t *Table) syncs() bool {
+	c := t.col("connection")
+	return t.Schema == "archive" && c != nil && c.Ref == "archive.connection"
+}
+
 func (t *Table) synced() bool {
-	_, ok := syncSchema[t.Name]
-	return t.Schema == "archive" && (ok || t.Name == "known_person" || t.Name == "known_org")
+	return t.syncs() || t.Schema == "archive" && (t.Name == "known_person" || t.Name == "known_org")
+}
+
+func (c *Catalog) syncTables() map[string]syncTable {
+	out := map[string]syncTable{}
+	for _, t := range c.Tables {
+		if !t.syncs() {
+			continue
+		}
+		st := syncTable{links: map[string]string{}}
+		for _, col := range t.Columns {
+			to, ok := strings.CutPrefix(col.Ref, "archive.")
+			if !ok || c.Tables[to] == nil || !c.Tables[to].syncs() {
+				continue
+			}
+			if t.col(col.Name+"_source") != nil {
+				st.links[col.Name] = to
+			} else if col.NotNull {
+				st.parent, st.of = to, col.Name
+			}
+		}
+		out[t.Name] = st
+	}
+	return out
 }
 
 func (t *Table) isWorkflow() bool {
@@ -216,7 +245,7 @@ var (
 		"member": true, "group": true, "user": true, "token": true, "file": true, "upload": true, "revision": true, "run": true,
 		"workflow": true, "workflow_run": true, "connection": true, "agent": true, "turn": true, "memory": true,
 		"business": true, "agreement": true, "billing": true,
-		"action": true, "agent_list": true, "workflow_list": true, "connection_list": true}
+		"docs": true, "terms": true, "work": true, "agent_list": true, "workflow_list": true}
 	catalogNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
 	catalogRefRe  = regexp.MustCompile(`(?i)^references\s+([a-z][a-z0-9_]*)\b[\s.;:,-]*`)
 )

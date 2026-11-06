@@ -39,7 +39,6 @@ import (
 	"github.com/ledongthuc/pdf"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
-	"golang.org/x/net/html"
 )
 
 type File struct {
@@ -1233,7 +1232,7 @@ func (a *Archive) media(ctx context.Context, f *File) (map[string]any, string, e
 		meta["pages"] = pages
 		return meta, text, err
 	case f.MIME == "text/html":
-		return meta, mediaHTML(b), nil
+		return meta, connect.HTMLText(string(b)), nil
 	case top == "text" || f.MIME == "application/json":
 		return meta, string(b), nil
 	case top == "image":
@@ -1265,32 +1264,6 @@ func mediaPDF(b []byte) (text string, pages int, err error) {
 		}
 	}
 	return strings.Join(parts, "\f"), len(parts), nil
-}
-
-func mediaHTML(b []byte) string {
-	z := html.NewTokenizer(bytes.NewReader(b))
-	var sb strings.Builder
-	skip := 0
-	for {
-		tt := z.Next()
-		switch tt {
-		case html.ErrorToken:
-			return strings.Join(strings.Fields(sb.String()), " ")
-		case html.StartTagToken, html.EndTagToken:
-			if n, _ := z.TagName(); string(n) == "script" || string(n) == "style" {
-				if tt == html.StartTagToken {
-					skip++
-				} else {
-					skip--
-				}
-			}
-			sb.WriteByte(' ')
-		case html.TextToken:
-			if skip <= 0 {
-				sb.Write(z.Text())
-			}
-		}
-	}
 }
 
 type mediaIFD struct {
@@ -1754,7 +1727,7 @@ func mediaText(name, mime string, b []byte) string {
 		text, _, _ := mediaPDF(b)
 		return text
 	case mime == "text/html":
-		return mediaHTML(b)
+		return connect.HTMLText(string(b))
 	case top == "text" || mime == "application/json":
 		return string(b)
 	}

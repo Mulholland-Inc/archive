@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"golang.org/x/net/html"
 )
 
 type Stream struct {
@@ -143,12 +144,31 @@ func clamp(n, def, most int) int {
 
 const maxText = 64 << 10
 
-var tagRe = regexp.MustCompile(`(?s)<(script|style)\b.*?</(script|style)>|<[^>]*>`)
-
-func htmlText(s string) string {
-	s = tagRe.ReplaceAllString(s, " ")
-	s = strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", `"`, "&#39;", "'").Replace(s)
-	return strings.Join(strings.Fields(s), " ")
+// HTMLText is the words of a page, without its tags, scripts and styles.
+func HTMLText(s string) string {
+	z := html.NewTokenizer(strings.NewReader(s))
+	var sb strings.Builder
+	skip := 0
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			return strings.Join(strings.Fields(sb.String()), " ")
+		case html.StartTagToken, html.EndTagToken:
+			if n, _ := z.TagName(); string(n) == "script" || string(n) == "style" {
+				if tt == html.StartTagToken {
+					skip++
+				} else {
+					skip--
+				}
+			}
+			sb.WriteByte(' ')
+		case html.TextToken:
+			if skip <= 0 {
+				sb.Write(z.Text())
+			}
+		}
+	}
 }
 
 var Extract func(name, mime string, b []byte) string

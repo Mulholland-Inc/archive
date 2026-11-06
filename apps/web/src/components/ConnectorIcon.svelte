@@ -4,14 +4,12 @@
 
   let { id, size = 'md', label } = $props();
   const brand = $derived(brandFor(id));
-  const uid = $props.id();
-  const markup = $derived(brand?.[1].replace(/(id="|url\(#|href="#)([^")]+)/g, `$1$2-${uid}`));
   const Glyph = $derived(id === 'scim' ? Users : Plug);
 </script>
 
 <span class={['tile', size]} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
   {#if brand}
-    <svg viewBox={brand[0]}>{@html markup}</svg>
+    <svg><use href="/brands.svg#{brand}" /></svg>
   {:else}
     <span class="glyph"><Glyph /></span>
   {/if}

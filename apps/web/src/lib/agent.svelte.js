@@ -125,7 +125,7 @@ export async function clearAgent(id) {
   const agent = agentById(id);
   if (!agent) return;
   controllers.get(id)?.abort();
-  await api('/api/action/clear', { method: 'POST', body: { agent: id }, workspace: w.id });
+  await api('/api/turn', { method: 'POST', body: { agent: id, clear: true }, workspace: w.id });
   w.conversations[id] = [];
   Object.assign(agent, { saved: 0, limit: PAGE, more: false, keep: false });
 }

@@ -164,9 +164,6 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := syncCheck(); err != nil {
-		return nil, err
-	}
 	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
@@ -214,6 +211,7 @@ func (h *Hub) migrateAll(ctx context.Context) error {
 			errs = append(errs, err)
 			continue
 		}
+		errs = append(errs, a.recount(ctx))
 		a.Close()
 	}
 	return errors.Join(errs...)
@@ -355,6 +353,9 @@ func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), erro
 		}
 		close(e.ready)
 		h.mu.Unlock()
+		if err == nil && !h.migrating && ctx.Value(hubOpeningKey{}) == nil {
+			go h.opening(a.ws.ID)
+		}
 	} else {
 		e.users++
 		if e.idle != nil {
@@ -416,7 +417,6 @@ func (h *Hub) load(ctx context.Context, short string) (*Archive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace %s: %w", short, err)
 	}
-	a.afterOpen(ctx)
 	return a, nil
 }
 
@@ -430,21 +430,36 @@ func (h *Hub) forget(short string) {
 	}
 }
 
-func (a *Archive) afterOpen(ctx context.Context) {
-	err := a.st.System(ctx, func(ctx context.Context) error {
-		return a.st.db(ctx).ResetProcessing(ctx)
-	})
-	err = errors.Join(err, a.syncMembers(ctx, false))
-	for _, kind := range []string{"workflow", "file", "sync", "pull", "blob"} {
-		next, nerr := a.nextDue(ctx, kind)
-		if nerr == nil && next != nil {
-			nerr = a.soon(ctx, kind, *next)
-		}
-		err = errors.Join(err, nerr)
+type hubOpeningKey struct{}
+
+func (h *Hub) opening(ws uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.wake(ctx, ws, "open", time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing its opening: %v\n", ws, err)
+	}
+}
+
+func (h *Hub) opened(ctx context.Context, ws uuid.UUID) error {
+	a, release, err := h.acquire(context.WithValue(ctx, hubOpeningKey{}, true), ws.String())
+	if errors.Is(err, ErrNotFound) {
+		return nil
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s: %v\n", a.ws.ID, err)
+		return err
 	}
+	defer release()
+	err = a.syncMembers(ctx, false)
+	var work []generated.WorkRow
+	werr := a.st.System(ctx, func(ctx context.Context) (err error) {
+		work, err = a.st.db(ctx).Work(ctx)
+		return err
+	})
+	err = errors.Join(err, werr)
+	for _, w := range work {
+		err = errors.Join(err, a.soon(ctx, w.Kind, w.At))
+	}
+	return err
 }
 
 func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
@@ -664,8 +679,8 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ok := strings.CutSuffix(body.Work, "s")
-	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" && kind != "blob" {
-		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls or blobs: %w", httpErrBadRequest))
+	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" && kind != "blob" && kind != "open" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls, blobs or opens: %w", httpErrBadRequest))
 		return
 	}
 	err := h.work(r.Context(), body.Workspace, kind)
@@ -676,6 +691,9 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
+	if kind == "open" {
+		return h.opened(ctx, ws)
+	}
 	q := h.q()
 	lease := runTimeout + workflowRetry
 	switch {
@@ -719,38 +737,17 @@ func (h *Hub) wakeAll(ctx context.Context) error {
 
 func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) {
 	var next *time.Time
-	return next, a.st.System(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		if kind == "file" {
-			pending, err := q.HasPendingFiles(ctx)
-			if pending {
-				t := time.Now().Add(hubFileDelay)
-				next = &t
-			}
-			return err
+	err := a.st.System(ctx, func(ctx context.Context) error {
+		t, err := a.st.db(ctx).WorkAt(ctx, kind)
+		if err == nil {
+			next = &t
 		}
-		var n *time.Time
-		var err error
-		var t time.Time
-		switch kind {
-		case "sync":
-			t, err = q.NextSyncAt(ctx, time.Now().Add(syncLeaseCheck))
-			n = &t
-		case "pull":
-			t, err = q.NextPull(ctx)
-			n = &t
-		case "blob":
-			t, err = q.NextBlob(ctx)
-			n = &t
-		default:
-			n, err = q.NextWorkflowAt(ctx)
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		next = n
 		return err
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return next, err
 }
 
 func (a *Archive) scheduleWorkflows(ctx context.Context) error {
@@ -1575,7 +1572,14 @@ func (a *Archive) billingCustomer(ctx context.Context) (string, error) {
 	return customer, err
 }
 
-func (a *Archive) cardStart(ctx context.Context) (any, error) {
+func (a *Archive) billingSave(ctx context.Context, _ uuid.UUID, data map[string]any) (map[string]any, error) {
+	if id, ok := data["setup_intent"].(string); ok {
+		return a.cardLinked(ctx, id)
+	}
+	return a.cardStart(ctx)
+}
+
+func (a *Archive) cardStart(ctx context.Context) (map[string]any, error) {
 	ac, err := a.ownerInPerson(ctx, "links a card")
 	if err != nil {
 		return nil, err
@@ -1612,10 +1616,10 @@ func (a *Archive) cardStart(ctx context.Context) (any, error) {
 	if err := s.call(ctx, http.MethodPost, "/v1/setup_intents", form, "", &si); err != nil {
 		return nil, err
 	}
-	return map[string]string{"secret": si.Secret, "key": s.publishable}, nil
+	return map[string]any{"secret": si.Secret, "key": s.publishable}, nil
 }
 
-func (a *Archive) cardLinked(ctx context.Context, id string) (any, error) {
+func (a *Archive) cardLinked(ctx context.Context, id string) (map[string]any, error) {
 	if _, err := a.ownerInPerson(ctx, "links a card"); err != nil {
 		return nil, err
 	}
@@ -1654,5 +1658,5 @@ func (a *Archive) cardLinked(ctx context.Context, id string) (any, error) {
 	}
 	card := si.Method.Card.Brand + " " + si.Method.Card.Last4
 	err = a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).LinkCard(ctx, card) })
-	return map[string]string{"card": card}, err
+	return map[string]any{"card": card}, err
 }
