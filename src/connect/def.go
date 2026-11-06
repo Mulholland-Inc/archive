@@ -478,6 +478,7 @@ type Step struct {
 	Page       Paging
 	Items      Path
 	Soft       []int
+	Words      *Download
 }
 
 func Call[In, Out any](p Plan) *Action {
@@ -619,6 +620,10 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	}
 	v = e
 	switch {
+	case s.Words != nil:
+		if v, _, err = c.download(*s.Words, sc); err != nil {
+			return nil, err
+		}
 	case s.Req.URL != "" || s.Tool != "":
 		if s.Page != nil {
 			v, err = c.every(s.Req, s.Items, s.Page, sc)
@@ -1006,7 +1011,7 @@ func (r Req) check(where string, roots ...string) error {
 func (a *Action) check() error {
 	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta", "key")
 	for i, s := range a.plan.Steps {
-		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" {
+		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
 			return fmt.Errorf("step %d is nothing to do", i)
 		}
 		if s.URL != "" && s.Each == "" {
