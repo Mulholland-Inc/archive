@@ -1917,7 +1917,7 @@ CREATE TABLE archive.work_item (
 ) INHERITS (archive.object);
 CREATE INDEX work_item_assignee_idx ON archive.work_item (assignee);
 CREATE INDEX work_item_due_on_idx ON archive.work_item (due_on);
-COMMENT ON TABLE archive.work_item IS 'A job a practice-management or project tool you connected tracks, like a Karbon work item. Read only; Archive syncs them
+COMMENT ON TABLE archive.work_item IS 'A job a practice-management, project or property-management tool you connected tracks, like a Karbon work item or an AppFolio work order. Read only; Archive syncs them
 icon: briefcase';
 COMMENT ON COLUMN archive.work_item.title IS 'What it is';
 COMMENT ON COLUMN archive.work_item.type IS 'What kind of work it is, like Tax Return or Bookkeeping';
@@ -2487,6 +2487,157 @@ COMMENT ON COLUMN archive.dental_payment.patient_source IS 'The id there of the 
 COMMENT ON COLUMN archive.dental_payment.type IS 'How it was paid, by its type there';
 COMMENT ON COLUMN archive.dental_payment.entered_on IS 'When it was entered';
 
+CREATE TABLE archive.rental_property (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    address       text,
+    city          text,
+    state         text,
+    zip           text,
+    type          text,
+    units         integer,
+    sqft          numeric,
+    year_built    integer,
+    market_rent   archive.money,
+    owners        text,
+    portfolio     text,
+    manager       text,
+    status        text,
+    managed_from  date,
+    managed_until date,
+    description   text,
+    made_on       date,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.rental_property IS 'A property a property manager you connected manages, like one in AppFolio. Read only; Archive syncs them
+icon: building-2';
+COMMENT ON COLUMN archive.rental_property.title IS 'Its name';
+COMMENT ON COLUMN archive.rental_property.address IS 'Its street address';
+COMMENT ON COLUMN archive.rental_property.type IS 'Like Single-Family, Multi-Family, Commercial or Association';
+COMMENT ON COLUMN archive.rental_property.units IS 'How many units it has';
+COMMENT ON COLUMN archive.rental_property.sqft IS 'Its size in square feet';
+COMMENT ON COLUMN archive.rental_property.market_rent IS 'Its market rent, of all its units';
+COMMENT ON COLUMN archive.rental_property.owners IS 'Who owns it, by name';
+COMMENT ON COLUMN archive.rental_property.portfolio IS 'The portfolio it is in';
+COMMENT ON COLUMN archive.rental_property.manager IS 'Its site manager, by name';
+COMMENT ON COLUMN archive.rental_property.status IS 'Active or Hidden there';
+COMMENT ON COLUMN archive.rental_property.managed_from IS 'When its management began';
+COMMENT ON COLUMN archive.rental_property.managed_until IS 'When its management ends';
+COMMENT ON COLUMN archive.rental_property.made_on IS 'When it was added there';
+
+CREATE TABLE archive.rental_unit (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    property        uuid REFERENCES archive.rental_property ON DELETE SET NULL,
+    property_source text,
+    title           text,
+    address         text,
+    city            text,
+    state           text,
+    zip             text,
+    type            text,
+    bedrooms        numeric,
+    bathrooms       numeric,
+    sqft            numeric,
+    market_rent     archive.money,
+    rent_status     text,
+    rent_ready      boolean,
+    status          text,
+    tags            text,
+    description     text,
+    made_on         date,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX rental_unit_property_idx ON archive.rental_unit (property);
+COMMENT ON TABLE archive.rental_unit IS 'A unit of a property a property manager you connected manages, like one in AppFolio. Read only; Archive syncs them
+icon: door-open';
+COMMENT ON COLUMN archive.rental_unit.property IS 'references rental_property; the property it is in';
+COMMENT ON COLUMN archive.rental_unit.property_source IS 'The id there of the property it is in';
+COMMENT ON COLUMN archive.rental_unit.title IS 'Its name, like 4B';
+COMMENT ON COLUMN archive.rental_unit.address IS 'Its street address';
+COMMENT ON COLUMN archive.rental_unit.type IS 'What kind of unit it is there';
+COMMENT ON COLUMN archive.rental_unit.sqft IS 'Its size in square feet';
+COMMENT ON COLUMN archive.rental_unit.market_rent IS 'What it would rent for';
+COMMENT ON COLUMN archive.rental_unit.rent_status IS 'Whether it is let, like Occupied, Vacant-Rented or Vacant-Unrented';
+COMMENT ON COLUMN archive.rental_unit.rent_ready IS 'It is ready to be let';
+COMMENT ON COLUMN archive.rental_unit.status IS 'Active or Hidden there';
+COMMENT ON COLUMN archive.rental_unit.tags IS 'Its tags there, comma separated';
+COMMENT ON COLUMN archive.rental_unit.description IS 'How it is advertised';
+COMMENT ON COLUMN archive.rental_unit.made_on IS 'When it was added there';
+
+CREATE TABLE archive.rental_tenant (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    first_name      text,
+    last_name       text,
+    company         text,
+    email           archive.email,
+    person          uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    phones          text,
+    status          text,
+    type            text,
+    primary_tenant  boolean,
+    property        uuid REFERENCES archive.rental_property ON DELETE SET NULL,
+    property_source text,
+    unit            uuid REFERENCES archive.rental_unit ON DELETE SET NULL,
+    unit_source     text,
+    lease_source    text,
+    move_in         date,
+    move_out        date,
+    lease_from      date,
+    lease_to        date,
+    rent            archive.money,
+    deposit         archive.money,
+    tags            text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX rental_tenant_person_idx ON archive.rental_tenant (person);
+CREATE INDEX rental_tenant_property_idx ON archive.rental_tenant (property);
+CREATE INDEX rental_tenant_unit_idx ON archive.rental_tenant (unit);
+COMMENT ON TABLE archive.rental_tenant IS 'A tenant of a property manager you connected, current, past, future or on notice, with the lease of their unit, like one in AppFolio. Read only; Archive syncs them
+icon: key-round';
+COMMENT ON COLUMN archive.rental_tenant.company IS 'Their company, for a commercial tenant';
+COMMENT ON COLUMN archive.rental_tenant.email IS 'Their first email address';
+COMMENT ON COLUMN archive.rental_tenant.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.rental_tenant.phones IS 'Their phone numbers, as the system lists them';
+COMMENT ON COLUMN archive.rental_tenant.status IS 'Like Current, Past, Future, Notice or Evict';
+COMMENT ON COLUMN archive.rental_tenant.type IS 'Like Financially Responsible, Occupant or Cosigner';
+COMMENT ON COLUMN archive.rental_tenant.primary_tenant IS 'They are the lease''s primary tenant';
+COMMENT ON COLUMN archive.rental_tenant.property IS 'references rental_property';
+COMMENT ON COLUMN archive.rental_tenant.property_source IS 'The id there of the property';
+COMMENT ON COLUMN archive.rental_tenant.unit IS 'references rental_unit';
+COMMENT ON COLUMN archive.rental_tenant.unit_source IS 'The id there of the unit';
+COMMENT ON COLUMN archive.rental_tenant.lease_source IS 'The id there of the lease, which its other tenants share';
+COMMENT ON COLUMN archive.rental_tenant.move_in IS 'When they moved in';
+COMMENT ON COLUMN archive.rental_tenant.move_out IS 'When they moved, or are to move, out';
+COMMENT ON COLUMN archive.rental_tenant.lease_from IS 'When the lease starts';
+COMMENT ON COLUMN archive.rental_tenant.lease_to IS 'When the lease ends; null when it is month to month';
+COMMENT ON COLUMN archive.rental_tenant.rent IS 'The monthly rent of the lease';
+COMMENT ON COLUMN archive.rental_tenant.deposit IS 'The security deposit held';
+COMMENT ON COLUMN archive.rental_tenant.tags IS 'Their tags there, comma separated';
+
 CREATE TABLE archive.calendar_event (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2624,7 +2775,7 @@ CREATE TABLE archive.ledger_contact (
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX ledger_contact_person_idx ON archive.ledger_contact (person);
-COMMENT ON TABLE archive.ledger_contact IS 'A customer, vendor or employee of books you connected, like QuickBooks. Read only; Archive syncs them
+COMMENT ON TABLE archive.ledger_contact IS 'A customer, vendor or employee of books you connected, like QuickBooks, or a vendor of a property manager''s, like AppFolio''s. Read only; Archive syncs them
 icon: contact-round';
 COMMENT ON COLUMN archive.ledger_contact.kind IS 'customer, vendor or employee';
 COMMENT ON COLUMN archive.ledger_contact.title IS 'The name it goes by there';
@@ -4313,6 +4464,9 @@ BEGIN
         WHEN 'dental_appointment' THEN concat_ws(' · ', (SELECT btrim(concat_ws(' ', p.first_name, p.last_name)) FROM archive.dental_patient p WHERE p.id = (r->>'patient')::uuid), r->>'starts_at')
         WHEN 'dental_procedure' THEN concat_ws(' · ', nullif(r->>'code', ''), nullif(r->>'description', ''), r->>'on_date')
         WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
+        WHEN 'rental_property' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'address')
+        WHEN 'rental_unit' THEN concat_ws(' · ', (SELECT p.title FROM archive.rental_property p WHERE p.id = (r->>'property')::uuid), nullif(r->>'title', ''))
+        WHEN 'rental_tenant' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'company')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
         WHEN 'code_project' THEN concat_ws('/', r->>'organization', r->>'title')
