@@ -283,8 +283,8 @@ export function openFile(id, name = '') {
   canvas.refresh(id);
 }
 
-export function openDocument(id, name, model, footer, fills) {
-  app.canvas = { id, name, doc: true, footer, fills, file: null, model, error: '' };
+export function openDocument(id, name, model, { footer, fills, download } = {}) {
+  app.canvas = { id, name, doc: true, footer, fills, download, file: null, model, error: '' };
 }
 
 export function closeFile() {
@@ -1115,6 +1115,17 @@ export async function downloadFile(file) {
   }
 }
 
+export async function downloadAgreement(row) {
+  try {
+    const { doc } = await call(`/api/agreement/${row.id}`);
+    const bytes = Uint8Array.from(doc.slice(2).match(/../g), (h) => parseInt(h, 16));
+    const href = URL.createObjectURL(new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    Object.assign(document.createElement('a'), { href, download: `${row.name} - ${row.company}.docx` }).click();
+    setTimeout(() => URL.revokeObjectURL(href), 60000);
+  } catch (e) {
+    complain(e, `Couldn’t download ${row.name}`);
+  }
+}
 
 export function workflowById(id) {
   return ws()?.workflows.find((w) => w.id === id);
