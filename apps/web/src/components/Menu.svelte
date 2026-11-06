@@ -20,6 +20,7 @@
     id = uid('select'),
     end = false,
     width = 'md',
+    head = true,
     label,
     onchange
   } = $props();
@@ -152,7 +153,7 @@
 </div>
 
 <MenuPanel bind:panel id={panelId} {label} {width} data-morph {ontoggle} {onkeydown}>
-  {#if !options}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
+  {#if !options && head}<div class="morph-head">{@render trigger?.(props)}</div>{/if}
   <div class="morph-items">
     {#if options}
       {#each options as option (option.value)}
