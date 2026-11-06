@@ -12,7 +12,7 @@
   import Dialog from '../components/Dialog.svelte';
   import Field from '../components/Field.svelte';
   import Input from '../components/Input.svelte';
-  import { app, onboardingSteps, stepDone, signed, atLeast, openDocument, closeFile, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
+  import { app, onboardingSteps, stepDone, signed, atLeast, openDocument, closeFile, downloadAgreement, saveBusiness, signAgreement, startCard, cardLinked } from '../lib/app.svelte.js';
   import { notify } from '../lib/dialogs.svelte.js';
 
   let error = $state('');
@@ -68,7 +68,8 @@
 
   function openReading(kind) {
     reading = signed(kind);
-    openDocument(`read:${kind}`, reading.name, reading.model, signature);
+    const row = reading;
+    openDocument(`read:${kind}`, row.name, row.model, { footer: signature, download: () => downloadAgreement(row) });
   }
 
   const fills = () => ({
@@ -81,7 +82,7 @@
 
   function openSigning(kind) {
     signing = kind;
-    openDocument(`sign:${kind}`, onboardingSteps.find((s) => s.id === kind).title, app.signup.terms[kind], signingRow, fills);
+    openDocument(`sign:${kind}`, onboardingSteps.find((s) => s.id === kind).title, app.signup.terms[kind], { footer: signingRow, fills });
     company = business?.name ?? '';
     signer = '';
     title = '';

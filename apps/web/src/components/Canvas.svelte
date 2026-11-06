@@ -15,7 +15,7 @@
 
   const { id } = app.canvas;
 
-  const { doc, footer, fills } = app.canvas;
+  const { doc, footer, fills, download } = app.canvas;
 
   canvas.use(() => !doc && id);
 
@@ -489,6 +489,7 @@
         {#if file.held}<IconButton icon={Download} label="Download" placement="bottom" onclick={() => downloadFile(file)} />{/if}
         {#if !file.connection}<IconButton icon={Trash2} label="Delete" placement="bottom" onclick={remove} />{/if}
       {/if}
+      {#if download}<IconButton icon={Download} label="Download" placement="bottom" onclick={download} />{/if}
       <span class="close" bind:this={closer}><IconButton icon={X} label="Close" tooltip={false} onclick={closeFile} /></span>
     {/snippet}
   </TopBar>
