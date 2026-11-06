@@ -781,16 +781,34 @@ type SchemaMigration struct {
 	Changes    []SchemaChange `json:"changes"`
 	Drops      []SchemaChange `json:"drops"`
 	Skipped    bool           `json:"skipped,omitempty"`
+	Breaks     []flowBreak    `json:"breaks"`
+	Unfollowed int            `json:"unfollowed"`
 }
 
 type schemaTurnKey struct{}
 
 type schemaTx struct {
-	n    int
-	cats map[string]*Catalog
+	n      int
+	cats   map[string]*Catalog
+	before map[uuid.UUID]flowSnap
+	stop   bool
 }
 
-func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string) (*SchemaMigration, error) {
+func (s *pgStore) ddlKey(ctx context.Context, tx pgx.Tx) (string, func(), error) {
+	pid, err := generated.New(tx).BackendPID(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	b := make([]byte, 32)
+	rand.Read(b)
+	key := hex.EncodeToString(b)
+	if err := generated.New(s.sys).AddDDLKey(ctx, key, pid); err != nil {
+		return "", nil, err
+	}
+	return key, func() { generated.New(s.sys).DeleteDDLKey(context.WithoutCancel(ctx), key) }, nil
+}
+
+func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string, breaks bool) (*SchemaMigration, error) {
 	stmts := storeSplit(src)
 	if err := schemaCheckSQL(stmts); err != nil {
 		return nil, err
@@ -807,17 +825,11 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 			return out, err
 		}
 	}
-	pid, err := generated.New(t.tx).BackendPID(ctx)
+	key, done, err := s.ddlKey(ctx, t.tx)
 	if err != nil {
 		return nil, err
 	}
-	b := make([]byte, 32)
-	rand.Read(b)
-	key := hex.EncodeToString(b)
-	if err := generated.New(s.sys).AddDDLKey(ctx, key, pid); err != nil {
-		return nil, err
-	}
-	defer generated.New(s.sys).DeleteDDLKey(context.WithoutCancel(ctx), key)
+	defer done()
 	sp, err := t.tx.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -825,6 +837,10 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	defer sp.Rollback(context.WithoutCancel(ctx))
 	q := generated.New(sp)
 	if err := q.AdvisoryXactLock(ctx, storeLock); err != nil {
+		return nil, err
+	}
+	seen, err := q.WorkflowSeen(ctx)
+	if err != nil {
 		return nil, err
 	}
 	restore, err := schemaSettings(ctx, sp, "lock_timeout", "search_path", "role")
@@ -872,6 +888,17 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 	cat, err := schemaCatalog(ctx, sp)
 	if err != nil {
 		return nil, err
+	}
+	if t.sch.n == 0 {
+		if err := q.SetLocal(ctx, "search_path", "archive, public"); err != nil {
+			return nil, err
+		}
+		if t.sch.before, err = flowSnapshot(ctx, sp, key, cat); err != nil {
+			return nil, err
+		}
+		if err := q.SetLocal(ctx, "search_path", "public"); err != nil {
+			return nil, err
+		}
 	}
 	derived, err := schemaDerived(ctx, sp, cat)
 	if err != nil {
@@ -928,6 +955,12 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		return nil, err
 	}
 	out.Changes, out.Drops = pgCompare(before.only("public"), after.only("public"))
+	if err := q.SetLocal(ctx, "search_path", "archive, public"); err != nil {
+		return nil, err
+	}
+	if out.Breaks, out.Unfollowed, err = flowBreaks(ctx, sp, key, cat, t.sch.before, seen); err != nil {
+		return nil, err
+	}
 	if confirm == "" {
 		return out, nil
 	}
@@ -938,6 +971,10 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		}
 		return nil, fmt.Errorf("this migration deletes or rewrites data (%s): tell the person what it drops and confirm it only after they agree, in a later turn: %w", strings.Join(names, ", "), ErrForbidden)
 	}
+	if breaks && len(out.Breaks) > 0 && turn != "" && from == turn {
+		return nil, fmt.Errorf("this migration stops %d workflows until they are saved clean: tell the person which and confirm with breaks only after they agree, in a later turn: %w", len(out.Breaks), ErrForbidden)
+	}
+	t.sch.stop = t.sch.stop || breaks
 	sj, _ := json.Marshal(out.Statements)
 	id, err := q.DDLRevision(ctx, generated.DDLRevisionParams{Key: key, Hash: s.hash(), Author: author, Name: name, Statements: sj})
 	if err != nil {

@@ -171,7 +171,12 @@ func (e runCompileErr) text() string {
 }
 
 func runTransform(code string) (string, []runCompileErr) {
-	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts"})
+	res, errs := runBuild(code, api.SourceMapNone)
+	return string(res.Code), errs
+}
+
+func runBuild(code string, sm api.SourceMap) (api.TransformResult, []runCompileErr) {
+	res := api.Transform("(async () => {\n"+code+"\n})()", api.TransformOptions{Loader: api.LoaderTS, Target: api.ES2020, Sourcefile: "script.ts", Sourcemap: sm})
 	var errs []runCompileErr
 	for _, m := range res.Errors {
 		e := runCompileErr{msg: m.Text}
@@ -180,7 +185,7 @@ func runTransform(code string) (string, []runCompileErr) {
 		}
 		errs = append(errs, e)
 	}
-	return string(res.Code), errs
+	return res, errs
 }
 
 func runCompile(code string) (string, error) {
@@ -339,6 +344,11 @@ func (r *runner) run(ctx context.Context) error {
 			return errRunFailed
 		}
 		in = v
+		if o, ok := v.(*goja.Object); ok && r.stamp && o.Get("trigger") != nil && o.Get("trigger").String() == "table" {
+			for _, k := range []string{"created", "updated", "rows"} {
+				o.Set(k, r.strict(o.Get(k), o.Get("table").String()))
+			}
+		}
 	}
 	r.vm.Set("input", in)
 	stop := context.AfterFunc(ctx, func() { r.vm.Interrupt(ctx.Err()) })
@@ -743,15 +753,55 @@ func (r *runner) def(o *goja.Object, name string, f func(ctx context.Context, ca
 		if !runReads[name] || name == "email" || name == "action" {
 			*r.wrote = true
 		}
-		return r.promise(r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) }))
+		v, err := r.call(runReads[name], func(ctx context.Context) (any, error) { return f(ctx, call) })
+		table := ""
+		if s, ok := call.Argument(0).Export().(string); ok && runRows[name] && path.Ext(s) == "" {
+			table = s
+		}
+		return r.settle(v, err, table)
 	})
 }
 
-func (r *runner) promise(v any, err error) goja.Value {
+func (r *runner) promise(v any, err error) goja.Value { return r.settle(v, err, "") }
+
+func (r *runner) strict(v goja.Value, table string) goja.Value {
+	o, ok := v.(*goja.Object)
+	if !ok {
+		return v
+	}
+	trap := &goja.ProxyTrapConfig{Get: func(t *goja.Object, k string, _ goja.Value) goja.Value {
+		if v := t.Get(k); v != nil {
+			return v
+		}
+		if k == "then" || k == "toJSON" {
+			return goja.Undefined()
+		}
+		has := strings.Join(t.Keys(), ", ")
+		if table == runQueryRows {
+			panic(r.jsErr(fmt.Errorf("this query returned no column %s; it has %s", k, has)))
+		}
+		panic(r.jsErr(fmt.Errorf("%s.%s is not a column; it has %s", table, k, has)))
+	}}
+	if o.ClassName() != "Array" {
+		return r.vm.ToValue(r.vm.NewProxy(o, trap))
+	}
+	for i := range int(o.Get("length").ToInteger()) {
+		k := strconv.Itoa(i)
+		if e, ok := o.Get(k).(*goja.Object); ok {
+			o.Set(k, r.vm.NewProxy(e, trap))
+		}
+	}
+	return o
+}
+
+func (r *runner) settle(v any, err error, table string) goja.Value {
 	p, resolve, reject := r.vm.NewPromise()
 	var jv goja.Value
 	if err == nil {
 		jv, err = r.toJS(v)
+	}
+	if err == nil && table != "" {
+		jv = r.strict(jv, table)
 	}
 	if err != nil {
 		reject(r.jsErr(err))
@@ -760,6 +810,10 @@ func (r *runner) promise(v any, err error) goja.Value {
 	}
 	return r.vm.ToValue(p)
 }
+
+const runQueryRows = "archive.query"
+
+var runRows = map[string]bool{"list": true, "get": true, "create": true, "update": true}
 
 var runReads = map[string]bool{"email": true, "action": true, "schema": true, "list": true, "get": true, "search": true, "files": true, "file": true}
 
@@ -812,7 +866,7 @@ func (r *runner) sdk() {
 			params = append(params, runParam(p))
 		}
 		rows, err := a.runQuery(r.ctx, q, params)
-		return r.promise(rows, storeErr(err))
+		return r.settle(rows, storeErr(err), runQueryRows)
 	})
 	r.def(o, "list", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		table, err := r.str(call, 0, "list", "table")
@@ -929,11 +983,12 @@ func (r *runner) sdk() {
 		var opts struct {
 			Confirm string `json:"confirm"`
 			Name    string `json:"name"`
+			Breaks  bool   `json:"breaks"`
 		}
 		if err := r.arg(call, 1, "migrate", "opts", &opts); err != nil {
 			return nil, err
 		}
-		return a.Migrate(ctx, sql, opts.Name, opts.Confirm)
+		return a.Migrate(ctx, sql, opts.Name, opts.Confirm, opts.Breaks)
 	})
 	r.def(o, "files", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		var opts struct {

@@ -21,6 +21,10 @@
  * - Tables, after this SDK, lists the tables and views. Views are read only. Archive sets id, created_at, updated_at.
  *   Set name on every create: it is the title every screen and link shows, and without it a row is Untitled. Fields
  *   without ? are required on create; empty fields read back null.
+ * - Rows from query, list, get, create, update and a table workflow's input are strict: reading a column that is not there
+ *   throws, naming the columns it has, where plain JavaScript would give undefined. An empty column still reads null. Test for
+ *   a column with "note" in row. Spreading, JSON.stringify, Object.keys and passing a row to the SDK work as usual, and you can
+ *   set your own properties on a row; a copy made with spread or JSON is a plain object again.
  * - Writes clean messy input, so pass what you have: "(415) 555-0123", "$1,234.50", "4/3/1990".
  * - JSON: date "2026-10-27"; timestamptz "2026-10-27T09:30:00Z"; uuids and references as id strings; enums as strings.
  *   Secret types read back as stored and cannot be filtered: Card and UsSsn as their number, National "US 123456789", Passport "US X1234567".
@@ -35,6 +39,17 @@
  *   them what it deletes, and stop.
  * - A migration runs with your own access, so a function it reaches (a CHECK, a column DEFAULT, an ALTER COLUMN ... USING,
  *   a domain check, a trigger) cannot write a row or read one your role may not: that throws forbidden with the rule it broke.
+ * - A schema change keeps every saved workflow valid or is refused. The report's breaks names what it would break, with line and
+ *   column, by re-checking each workflow and comparing what its reads return: a column gone, or one that reads as another kind of
+ *   value, like a number becoming a string, so r.amount + 1 would concatenate. The check is when the run ends, so one run can
+ *   migrate and fix them with archive.update("workflow", id, { source }); if breaks remain, the whole run fails and nothing is saved.
+ *   breaks has id only for your own workflows. Someone else's private workflow shows only its name and location: you cannot fix
+ *   it, so stop it instead: archive.migrate(sql, { confirm, breaks: true }) commits and sets broken on each one until its owner
+ *   saves it clean. breaks: true follows the same rule as drops: confirm it only when the people you work for agreed after you
+ *   showed them, and talking with an agent it throws forbidden until a later turn. A workflow that passes rows on whole, by
+ *   returning them or handing them to a helper, counts as reading every column; read the columns by name to depend on fewer.
+ * - unfollowed in the report counts places in saved workflows the check could not follow, such as rows handed to a helper.
+ *   Those reads are only checked when they run, by strict rows.
  * - Keep data with ALTER TABLE ... RENAME and ALTER COLUMN ... TYPE ... USING. An enum value added is usable only from
  *   the next run. To undo a migration, migrate the reverse. Past ones:
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
@@ -77,13 +92,20 @@
  *   to the row's url, which anyone with it can call); null (only when run).
  * - input: cron { trigger, at }; table { trigger, table, created, updated, rows }, 100 rows at most with the next run
  *   following at once; webhook { trigger, method, query, headers, body }; or what you pass archive.run.
- * - A bad save throws invalid and saves nothing, with line and column for a compile error in source. Escape a backtick
+ * - A bad save throws invalid and saves nothing, with line and column in errors for each problem in source: a compile error,
+ *   a table or column that is not there, a required column a create leaves out, an enum value that is not one, or SQL Postgres
+ *   refuses. Each query is parsed and described against the live schema, never executed. So a workflow uses constant table names and
+ *   constant SQL, a string, template or const with values as $1, $2 params, and calls archive.query and the rest directly: built-up SQL,
+ *   a table name from a variable and a stored archive are refused at save. A plain run has none of these limits. The check knows no
+ *   TypeScript types, data, row-level security or what a SQL function's body does. Escape a backtick
  *   or ${ inside a template string. archive.run(name, input) runs it for real inside this run; { error } says if it
  *   failed, undoing only what it wrote. To try one without keeping what it writes, throw afterwards. So: save, run,
  *   read the result, archive.update, run again.
  * - workflow_run keeps the last 100 runs of each, joined on workflow_run.workflow = workflow.id. After a failure a cron
  *   waits for its next time, a table workflow retries the same rows about a minute later, and a webhook caller gets 500.
  *   Its response is otherwise 200 with what it returned.
+ * - A workflow with broken set was stopped by a migration (see Schema) and does not run: a run records broken as its error, and
+ *   a table workflow keeps its place and waits. Fix source and save; a save that passes the checks clears broken.
  * - fetch counts toward the run's {timeout}; responses over 5 MB fail.
  *
  * Files
@@ -133,7 +155,7 @@
  *   of yours there with its connector's upload: archive.action("gdrive.upload", { file, folder, replace }), by source_id.
  */
 declare const archive: {
-    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its rows, or [] when it has none. Writes and DDL throw forbidden. */
+    /** Read with one SQL statement as you, with $1, $2, ... bound to params; returns its strict rows, or [] when it has none. Writes and DDL throw forbidden. In a saved workflow, sql must be constant (see Workflows). */
     query(sql: string, ...params: unknown[]): Promise<Row[]>;
     /** Rows of a table, oldest first, or newest first with desc; where matches exact (cleaned) values, null matching empty; page with after = the last id. */
     list<T extends keyof Tables>(table: T, opts?: { where?: Partial<Tables[T]>; limit?: number; after?: string; desc?: boolean }): Promise<Tables[T][]>;
@@ -153,8 +175,8 @@ declare const archive: {
     schema(): Promise<Table[]>;
     /** Any table or view, Archive's own too, and those of connectors this workspace has not connected; throws not_found, naming the ones there are. */
     schema(name: string): Promise<Table>;
-    /** Dry-run DDL and report what it changes; with the report's confirm, run it as part of this run (see Schema). A name, like 2026_11_house, runs it once: later calls with that name are skipped. */
-    migrate(sql: string, opts?: { confirm?: string; name?: string }): Promise<Migration>;
+    /** Dry-run DDL and report what it changes and which saved workflows it breaks; with the report's confirm, run it as part of this run (see Schema). A name, like 2026_11_house, runs it once: later calls with that name are skipped. breaks: true stops the workflows it breaks instead of refusing. */
+    migrate(sql: string, opts?: { confirm?: string; name?: string; breaks?: boolean }): Promise<Migration>;
     /** Files and folders you can see, yours and what your connections synced, oldest first, with their extracted text; page with after = the last id. */
     files(opts?: { limit?: number; after?: string }): Promise<StoredFile[]>;
     /** One file with its extracted text. */
@@ -320,6 +342,22 @@ interface Migration {
     changes: SchemaChange[];
     /** The changes that delete or rewrite data: dropped tables, columns and type attributes, and columns whose type changed. */
     drops: SchemaChange[];
+    /** The saved workflows this migration breaks, with what breaks and where; at the end of the run any still here refuse it. */
+    breaks: WorkflowBreak[];
+    /** How many places in saved workflows the check could not follow: rows handed to a helper, a key from a variable and the like. */
+    unfollowed: number;
+}
+
+interface WorkflowBreak {
+    /** The workflow's name. */
+    workflow: string;
+    /** Its id, when it is yours to fix. */
+    id?: string;
+    /** Where in its source, when the problem is there; a trigger's problem has none. */
+    line?: number;
+    column?: number;
+    /** What breaks; for someone else's private workflow, only that it does. */
+    message: string;
 }
 
 interface SchemaChange {

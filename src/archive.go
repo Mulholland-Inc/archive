@@ -64,6 +64,9 @@ func (a *Archive) as(ctx context.Context, fn func(context.Context) error) error 
 		if err := fn(ctx); err != nil {
 			return err
 		}
+		if err := a.workflowGuard(ctx); err != nil {
+			return err
+		}
 		if wrote, ok := ctx.Value(runWroteKey{}).(*bool); ok && !*wrote {
 			return nil
 		}
@@ -461,7 +464,7 @@ func (a *Archive) Schema(ctx context.Context, name string) (any, error) {
 	return nil, fmt.Errorf("no table or view %q; there are %s: %w", name, strings.Join(cat.names(), ", "), ErrNotFound)
 }
 
-func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*SchemaMigration, error) {
+func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string, breaks bool) (*SchemaMigration, error) {
 	ac, err := signedIn(ctx)
 	if err != nil {
 		return nil, err
@@ -475,7 +478,7 @@ func (a *Archive) Migrate(ctx context.Context, sql, name, confirm string) (*Sche
 	}
 	var m *SchemaMigration
 	err = a.as(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.Migrate(ctx, sql, name, author, confirm)
+		m, err = a.st.Migrate(ctx, sql, name, author, confirm, breaks)
 		if err == nil && m.Applied {
 			storeAfter(ctx, func() { a.reload(context.WithoutCancel(ctx)) })
 		}

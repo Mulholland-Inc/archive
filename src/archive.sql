@@ -375,6 +375,7 @@ CREATE TABLE archive.workflow (
     access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
     member     uuid REFERENCES archive.member ON DELETE CASCADE,
     "on"       jsonb,
+    broken     text,
     UNIQUE (user_id, name)
 ) INHERITS (archive.object);
 CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
@@ -385,6 +386,7 @@ COMMENT ON COLUMN archive.workflow.source IS 'Its TypeScript, written like a run
 COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run';
 COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, who alone changes, runs or deletes it';
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
+COMMENT ON COLUMN archive.workflow.broken IS 'Why a migration stopped it, with line and column; it does not run until a save passes the checks, which clears this. Read only';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
 CREATE TABLE archive.agent (
@@ -4235,7 +4237,7 @@ CREATE TRIGGER object_name BEFORE INSERT OR UPDATE ON archive.known_org FOR EACH
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.agent FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.turn FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.inbox FOR EACH ROW EXECUTE FUNCTION archive.moved();
-CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, source, "on", trigger, hook, member, access ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
+CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, source, "on", trigger, hook, member, access, broken ON archive.workflow FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR UPDATE OR DELETE ON archive.workflow_run FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF name, provider, account, scopes, error, meta, sync_at, synced_at, revoked, integration, access, items ON archive.connection FOR EACH ROW EXECUTE FUNCTION archive.moved();
 CREATE TRIGGER moved AFTER INSERT OR DELETE OR UPDATE OF hash, name, mime, size, metadata, text, status, error, access, kind, parent, connection, stream, source_id, source, url, drive, owner, owner_name, editor, editor_name, made_at, edited_at ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.moved();
@@ -4263,6 +4265,18 @@ BEGIN
     PERFORM archive.ddl_allowed(k);
     INSERT INTO archive.revision (hash, author, name, statements) VALUES (hash, author, nullif(name, ''), statements) RETURNING id INTO r;
     RETURN r;
+END $$;
+
+CREATE FUNCTION archive.workflow_all(k text) RETURNS TABLE (id uuid, name text, source text, "on" jsonb, broken text) LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM archive.ddl_allowed(k);
+    RETURN QUERY SELECT w.id, w.name, w.source, w."on", w.broken FROM archive.workflow w;
+END $$;
+
+CREATE FUNCTION archive.workflow_stop(k text, why jsonb) RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+BEGIN
+    PERFORM archive.ddl_allowed(k);
+    UPDATE archive.workflow w SET broken = x.value FROM jsonb_each_text(why) x WHERE w.id = x.key::uuid;
 END $$;
 
 CREATE TABLE archive.business (
@@ -4654,6 +4668,15 @@ SELECT archive.ddl(sqlc.arg(key), sqlc.arg(stmt));
 -- name: DDLRevision :one
 SELECT archive.ddl_revision(sqlc.arg(key), sqlc.arg(hash), sqlc.arg(author), sqlc.arg(name), sqlc.arg(statements))::uuid AS id;
 
+-- name: WorkflowAll :many
+SELECT w.id::uuid AS id, w.name::text AS name, w.source::text AS source, w."on"::jsonb AS "on", (w.broken IS NOT NULL)::bool AS broken FROM archive.workflow_all($1) w;
+
+-- name: WorkflowStop :exec
+SELECT archive.workflow_stop(sqlc.arg(key), sqlc.arg(why));
+
+-- name: WorkflowSeen :many
+SELECT id, archive.mine(member)::bool AS mine FROM archive.workflow;
+
 -- name: BackendPID :one
 SELECT pg_backend_pid();
 
@@ -4744,7 +4767,7 @@ RETURNING id;
 
 -- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = sqlc.arg(name), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger),
-    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), updated_at = now()
+    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), broken = NULL, updated_at = now()
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteWorkflow :execrows
@@ -4793,7 +4816,7 @@ SELECT a.id, a.access, sqlc.arg(name), sqlc.arg(sender), sqlc.arg(recipient), sq
 RETURNING id;
 
 -- name: WakeTableWorkflows :execrows
-UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL;
+UPDATE archive.workflow SET next_at = now() WHERE cursor_id IS NOT NULL AND next_at IS NULL AND broken IS NULL;
 
 -- name: Work :many
 SELECT kind::text AS kind, at::timestamptz AS at FROM archive.work WHERE at IS NOT NULL;

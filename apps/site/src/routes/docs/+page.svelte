@@ -311,6 +311,7 @@ icon: receipt'</span>;
 <li>If the run throws or times out later, the migration is undone with everything else.</li>
 <li>Later calls in the run see the change at once, so one run can add a column, fill it with <code>archive.update</code>, then make it <code>NOT NULL</code>.</li>
 <li>Renames and type changes with <code>USING</code> keep the data, as in any Postgres.</li>
+<li>At the end of the run every saved workflow is checked again. The report's <code>breaks</code> names what would break, by line and column; if any remain, the whole run fails, so one run can migrate and fix the workflows together.</li>
 </ul>
 <Code tabs={['run.ts', 'result']}>
 <pre><span class="k">const</span> sql = <span class="s">"ALTER TABLE invoice RENAME COLUMN customer TO client"</span>
@@ -328,6 +329,9 @@ icon: receipt'</span>;
 
 <h3 id="schema-drops">Drops</h3>
 <p>Dropping a table or a column deletes its data, and changing a column's type rewrites it. The dry run lists those in <code>drops</code>, so you see them before you confirm.</p>
+
+<h3 id="schema-breaks">Breaks</h3>
+<p>A schema change keeps every saved workflow valid or is refused: a column it reads is gone, a query no longer parses, a number now reads as a string, or its trigger table is gone. A saved workflow needs constant table names and constant SQL so that this can be checked; a plain run does not. Someone else's private workflow shows only its name and location. <code>archive.migrate(sql, &#123; confirm, breaks: true &#125;)</code> commits anyway and stops the workflows it breaks: each sets <code>broken</code> and does not run until its owner saves it clean.</p>
 
 <h3 id="schema-history">History</h3>
 <p>The <code>archive.revision</code> table holds every migration, with who ran it and its statements; read it with <code>archive.query</code>. To undo one, migrate the reverse. Data that was dropped stays gone.</p>
@@ -525,7 +529,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <table>
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
-<tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw.</td></tr>
+<tr><td><code>query(sql, ...params): Row[]</code></td><td>Reads with one SQL statement as you, with <code>$1</code>, <code>$2</code> bound to params; writes and DDL throw. Rows from reads are strict: reading a column that is not there throws, while an empty one reads <code>null</code>.</td></tr>
 <tr><td><code>list(table, &#123; where?, limit?, after? &#125;): Tables[T][]</code></td><td>Rows oldest first. <code>where</code> matches exact, cleaned values, <code>access</code> included. Page with <code>after</code> set to the last id.</td></tr>
 <tr><td><code>get(table, id): Tables[T]</code></td><td>One row. Throws <code>not_found</code> if it does not exist or you cannot see it.</td></tr>
 <tr><td><code>create(table, data): Tables[T]</code></td><td>Inserts a cleaned, validated row. Set <code>access</code> in <code>data</code> to a group to keep it to that group.</td></tr>
@@ -540,7 +544,7 @@ console.<span class="f">log</span>(<span class="s">`$&#123;unpaid.length&#125; u
 <thead><tr><th>Call</th><th>Does</th></tr></thead>
 <tbody>
 <tr><td><code>schema(name?): Table[] | Table</code></td><td>Every table and view, or one, with its columns, types, comments, references and DDL.</td></tr>
-<tr><td><code>migrate(sql, &#123; confirm? &#125;): Migration</code></td><td>Dry-runs DDL and reports what it changes; with the confirm, runs it as part of the run.</td></tr>
+<tr><td><code>migrate(sql, &#123; confirm?, breaks? &#125;): Migration</code></td><td>Dry-runs DDL and reports what it changes and which saved workflows it breaks; with the confirm, runs it as part of the run.</td></tr>
 <tr><td><code>revisions(&#123; limit? &#125;): Revision[]</code></td><td>Migrations, newest first.</td></tr>
 </tbody>
 </table>
