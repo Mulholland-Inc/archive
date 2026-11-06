@@ -153,6 +153,7 @@ const (
 	CatDental    Category = "Dental"
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
+	CatProperty  Category = "Property"
 	CatSupport   Category = "Support"
 
 	CatCompliance Category = "Compliance"
@@ -478,6 +479,7 @@ type Step struct {
 	Page       Paging
 	Items      Path
 	Soft       []int
+	Words      *Download
 }
 
 func Call[In, Out any](p Plan) *Action {
@@ -619,6 +621,10 @@ func (s Step) once(c *Client, sc map[string]any, e any) (v any, err error) {
 	}
 	v = e
 	switch {
+	case s.Words != nil:
+		if v, _, err = c.download(*s.Words, sc); err != nil {
+			return nil, err
+		}
 	case s.Req.URL != "" || s.Tool != "":
 		if s.Page != nil {
 			v, err = c.every(s.Req, s.Items, s.Page, sc)
@@ -762,6 +768,9 @@ func (c *Connector) compile() error {
 		c.Authorize = func(r *http.Request, cl *Client) {
 			sc := cl.scope()
 			for h, t := range sign {
+				if r.Header.Get(h) != "" {
+					continue
+				}
 				if v := (Reads{Of: t}).read(sc); v != "" {
 					r.Header.Set(h, v)
 				}
@@ -1003,7 +1012,7 @@ func (r Req) check(where string, roots ...string) error {
 func (a *Action) check() error {
 	roots := append(slices.Collect(maps.Keys(a.Input.Properties)), "now", "nonce", "meta", "key")
 	for i, s := range a.plan.Steps {
-		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" {
+		if s.URL == "" && s.Tool == "" && s.Codec == nil && s.In == nil && s.Fail == "" && s.Words == nil {
 			return fmt.Errorf("step %d is nothing to do", i)
 		}
 		if s.URL != "" && s.Each == "" {
@@ -2843,7 +2852,8 @@ var (
 		}
 		return string(b), nil
 	}}
-	Words  = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
+	Basic        = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
+	Words        = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
 	Claims = &Codec{"claims", func(v any) (any, error) {
 		parts := strings.Split(text(v), ".")
 		if len(parts) != 3 {

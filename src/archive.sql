@@ -634,7 +634,7 @@ CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) 
 CREATE INDEX file_pull_idx ON archive.file (retry_at NULLS FIRST) WHERE status = 'pending' AND connection IS NOT NULL;
 CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
-COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint or Dropbox, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
+COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint, Dropbox or Box, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
 icon: folder-open';
 COMMENT ON COLUMN archive.file.hash IS 'The sha256 of its bytes; empty while Archive has none, as for a folder or a file not yet copied';
 COMMENT ON COLUMN archive.file.name IS 'Its name; a Google Doc, Sheet or Slides deck''s ends in .docx, .xlsx or .pptx, as Archive keeps it';
@@ -1917,7 +1917,7 @@ CREATE TABLE archive.work_item (
 ) INHERITS (archive.object);
 CREATE INDEX work_item_assignee_idx ON archive.work_item (assignee);
 CREATE INDEX work_item_due_on_idx ON archive.work_item (due_on);
-COMMENT ON TABLE archive.work_item IS 'A job a practice-management or project tool you connected tracks, like a Karbon work item. Read only; Archive syncs them
+COMMENT ON TABLE archive.work_item IS 'A job a practice-management, project or property-management tool you connected tracks, like a Karbon work item or an AppFolio work order. Read only; Archive syncs them
 icon: briefcase';
 COMMENT ON COLUMN archive.work_item.title IS 'What it is';
 COMMENT ON COLUMN archive.work_item.type IS 'What kind of work it is, like Tax Return or Bookkeeping';
@@ -2114,6 +2114,143 @@ COMMENT ON COLUMN archive.commerce_line.product_source IS 'The id there of what 
 COMMENT ON COLUMN archive.commerce_line.variant IS 'Which of the product, like Large / Blue';
 COMMENT ON COLUMN archive.commerce_line.price IS 'What one cost';
 COMMENT ON COLUMN archive.commerce_line.total IS 'What they cost together, less discounts';
+
+CREATE TABLE archive.commerce_payment (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    kind            text,
+    status          text,
+    amount          archive.money,
+    fee             archive.money,
+    tip             archive.money,
+    refunded        archive.money,
+    method          text,
+    customer        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    customer_name   text,
+    email           archive.email,
+    purchase        uuid REFERENCES archive.commerce_order ON DELETE SET NULL,
+    purchase_source text,
+    reference       text,
+    note            text,
+    url             archive.url,
+    paid_at         timestamptz,
+    edited_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_payment_customer_idx ON archive.commerce_payment (customer);
+CREATE INDEX commerce_payment_purchase_idx ON archive.commerce_payment (purchase);
+CREATE INDEX commerce_payment_paid_at_idx ON archive.commerce_payment (paid_at);
+COMMENT ON TABLE archive.commerce_payment IS 'A payment a payment service you connected took or made, like a Square payment or a PayPal transaction. Read only; Archive syncs them
+icon: banknote';
+COMMENT ON COLUMN archive.commerce_payment.kind IS 'What it is there: payment, for Square, or PayPal''s event code, like T0006 for a checkout payment or T1107 for a refund';
+COMMENT ON COLUMN archive.commerce_payment.status IS 'Where it is, like COMPLETED, PENDING or FAILED, or PayPal''s S, P, V, D or F';
+COMMENT ON COLUMN archive.commerce_payment.amount IS 'What it came to, tip included; less than nothing for money that went out, like a refund';
+COMMENT ON COLUMN archive.commerce_payment.fee IS 'What the service charged for it';
+COMMENT ON COLUMN archive.commerce_payment.tip IS 'The tip in it';
+COMMENT ON COLUMN archive.commerce_payment.refunded IS 'What of it was refunded';
+COMMENT ON COLUMN archive.commerce_payment.method IS 'How it was paid, like CARD VISA 1234, CASH or PayPal''s instrument';
+COMMENT ON COLUMN archive.commerce_payment.customer IS 'references known_person; who paid, by their address';
+COMMENT ON COLUMN archive.commerce_payment.customer_name IS 'Who paid, by name';
+COMMENT ON COLUMN archive.commerce_payment.email IS 'The address of who paid';
+COMMENT ON COLUMN archive.commerce_payment.purchase IS 'references commerce_order; the order it paid for';
+COMMENT ON COLUMN archive.commerce_payment.purchase_source IS 'The id there of the order it paid for';
+COMMENT ON COLUMN archive.commerce_payment.reference IS 'The invoice or other number it was paid against';
+COMMENT ON COLUMN archive.commerce_payment.url IS 'Its receipt';
+COMMENT ON COLUMN archive.commerce_payment.paid_at IS 'When it was made';
+COMMENT ON COLUMN archive.commerce_payment.edited_at IS 'When it last changed there';
+
+CREATE TABLE archive.commerce_invoice (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    number          text,
+    title           text,
+    status          text,
+    customer        uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    customer_name   text,
+    email           archive.email,
+    total           archive.money,
+    paid            archive.money,
+    due             archive.money,
+    issued_on       date,
+    due_on          date,
+    purchase        uuid REFERENCES archive.commerce_order ON DELETE SET NULL,
+    purchase_source text,
+    note            text,
+    url             archive.url,
+    made_at         timestamptz,
+    edited_at       timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_invoice_customer_idx ON archive.commerce_invoice (customer);
+CREATE INDEX commerce_invoice_purchase_idx ON archive.commerce_invoice (purchase);
+CREATE INDEX commerce_invoice_due_on_idx ON archive.commerce_invoice (due_on);
+COMMENT ON TABLE archive.commerce_invoice IS 'An invoice a payment service you connected sent or keeps, like a Square or PayPal invoice. Read only; Archive syncs them
+icon: file-text';
+COMMENT ON COLUMN archive.commerce_invoice.number IS 'Its number, like INV-0042';
+COMMENT ON COLUMN archive.commerce_invoice.title IS 'What it is for';
+COMMENT ON COLUMN archive.commerce_invoice.status IS 'Where it is, like DRAFT, UNPAID, PAID or CANCELED';
+COMMENT ON COLUMN archive.commerce_invoice.customer IS 'references known_person; who it is to, by their address';
+COMMENT ON COLUMN archive.commerce_invoice.customer_name IS 'Who it is to, by name';
+COMMENT ON COLUMN archive.commerce_invoice.email IS 'The address it goes to';
+COMMENT ON COLUMN archive.commerce_invoice.total IS 'What it asks for in all';
+COMMENT ON COLUMN archive.commerce_invoice.paid IS 'What of it was paid';
+COMMENT ON COLUMN archive.commerce_invoice.due IS 'What is left to pay';
+COMMENT ON COLUMN archive.commerce_invoice.issued_on IS 'The day it is dated';
+COMMENT ON COLUMN archive.commerce_invoice.due_on IS 'When it is due';
+COMMENT ON COLUMN archive.commerce_invoice.purchase IS 'references commerce_order; the order it bills';
+COMMENT ON COLUMN archive.commerce_invoice.purchase_source IS 'The id there of the order it bills';
+COMMENT ON COLUMN archive.commerce_invoice.note IS 'What it says to the customer';
+COMMENT ON COLUMN archive.commerce_invoice.url IS 'Where the customer sees and pays it';
+COMMENT ON COLUMN archive.commerce_invoice.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.commerce_invoice.edited_at IS 'When it last changed there';
+
+CREATE TABLE archive.commerce_dispute (
+    id             uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream         text NOT NULL,
+    source_id      text NOT NULL,
+    access         uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    updated_at     timestamptz NOT NULL DEFAULT now(),
+    name           text NOT NULL DEFAULT '',
+    seen_at        timestamptz NOT NULL DEFAULT now(),
+    reason         text,
+    status         text,
+    stage          text,
+    amount         archive.money,
+    payment        uuid REFERENCES archive.commerce_payment ON DELETE SET NULL,
+    payment_source text,
+    respond_by     timestamptz,
+    made_at        timestamptz,
+    edited_at      timestamptz,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX commerce_dispute_payment_idx ON archive.commerce_dispute (payment);
+COMMENT ON TABLE archive.commerce_dispute IS 'A dispute or chargeback a buyer opened over a payment of a payment service you connected, like Square or PayPal. Read only; Archive syncs them
+icon: shield-alert';
+COMMENT ON COLUMN archive.commerce_dispute.reason IS 'Why the buyer disputes it, like NOT_AS_DESCRIBED or UNAUTHORIZED';
+COMMENT ON COLUMN archive.commerce_dispute.status IS 'Where it is, like EVIDENCE_REQUIRED, WAITING_FOR_SELLER_RESPONSE, WON or RESOLVED';
+COMMENT ON COLUMN archive.commerce_dispute.stage IS 'How far it went, like INQUIRY or CHARGEBACK';
+COMMENT ON COLUMN archive.commerce_dispute.amount IS 'What is disputed';
+COMMENT ON COLUMN archive.commerce_dispute.payment IS 'references commerce_payment; the payment disputed';
+COMMENT ON COLUMN archive.commerce_dispute.payment_source IS 'The id there of the payment disputed';
+COMMENT ON COLUMN archive.commerce_dispute.respond_by IS 'When the seller has to answer by';
+COMMENT ON COLUMN archive.commerce_dispute.made_at IS 'When it was opened';
+COMMENT ON COLUMN archive.commerce_dispute.edited_at IS 'When it last changed there';
 
 CREATE TABLE archive.ad_metric (
     id              uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2350,6 +2487,157 @@ COMMENT ON COLUMN archive.dental_payment.patient_source IS 'The id there of the 
 COMMENT ON COLUMN archive.dental_payment.type IS 'How it was paid, by its type there';
 COMMENT ON COLUMN archive.dental_payment.entered_on IS 'When it was entered';
 
+CREATE TABLE archive.rental_property (
+    id            uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection    uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream        text NOT NULL,
+    source_id     text NOT NULL,
+    access        uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at    timestamptz NOT NULL DEFAULT now(),
+    updated_at    timestamptz NOT NULL DEFAULT now(),
+    name          text NOT NULL DEFAULT '',
+    seen_at       timestamptz NOT NULL DEFAULT now(),
+    title         text,
+    address       text,
+    city          text,
+    state         text,
+    zip           text,
+    type          text,
+    units         integer,
+    sqft          numeric,
+    year_built    integer,
+    market_rent   archive.money,
+    owners        text,
+    portfolio     text,
+    manager       text,
+    status        text,
+    managed_from  date,
+    managed_until date,
+    description   text,
+    made_on       date,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+COMMENT ON TABLE archive.rental_property IS 'A property a property manager you connected manages, like one in AppFolio. Read only; Archive syncs them
+icon: building-2';
+COMMENT ON COLUMN archive.rental_property.title IS 'Its name';
+COMMENT ON COLUMN archive.rental_property.address IS 'Its street address';
+COMMENT ON COLUMN archive.rental_property.type IS 'Like Single-Family, Multi-Family, Commercial or Association';
+COMMENT ON COLUMN archive.rental_property.units IS 'How many units it has';
+COMMENT ON COLUMN archive.rental_property.sqft IS 'Its size in square feet';
+COMMENT ON COLUMN archive.rental_property.market_rent IS 'Its market rent, of all its units';
+COMMENT ON COLUMN archive.rental_property.owners IS 'Who owns it, by name';
+COMMENT ON COLUMN archive.rental_property.portfolio IS 'The portfolio it is in';
+COMMENT ON COLUMN archive.rental_property.manager IS 'Its site manager, by name';
+COMMENT ON COLUMN archive.rental_property.status IS 'Active or Hidden there';
+COMMENT ON COLUMN archive.rental_property.managed_from IS 'When its management began';
+COMMENT ON COLUMN archive.rental_property.managed_until IS 'When its management ends';
+COMMENT ON COLUMN archive.rental_property.made_on IS 'When it was added there';
+
+CREATE TABLE archive.rental_unit (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    property        uuid REFERENCES archive.rental_property ON DELETE SET NULL,
+    property_source text,
+    title           text,
+    address         text,
+    city            text,
+    state           text,
+    zip             text,
+    type            text,
+    bedrooms        numeric,
+    bathrooms       numeric,
+    sqft            numeric,
+    market_rent     archive.money,
+    rent_status     text,
+    rent_ready      boolean,
+    status          text,
+    tags            text,
+    description     text,
+    made_on         date,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX rental_unit_property_idx ON archive.rental_unit (property);
+COMMENT ON TABLE archive.rental_unit IS 'A unit of a property a property manager you connected manages, like one in AppFolio. Read only; Archive syncs them
+icon: door-open';
+COMMENT ON COLUMN archive.rental_unit.property IS 'references rental_property; the property it is in';
+COMMENT ON COLUMN archive.rental_unit.property_source IS 'The id there of the property it is in';
+COMMENT ON COLUMN archive.rental_unit.title IS 'Its name, like 4B';
+COMMENT ON COLUMN archive.rental_unit.address IS 'Its street address';
+COMMENT ON COLUMN archive.rental_unit.type IS 'What kind of unit it is there';
+COMMENT ON COLUMN archive.rental_unit.sqft IS 'Its size in square feet';
+COMMENT ON COLUMN archive.rental_unit.market_rent IS 'What it would rent for';
+COMMENT ON COLUMN archive.rental_unit.rent_status IS 'Whether it is let, like Occupied, Vacant-Rented or Vacant-Unrented';
+COMMENT ON COLUMN archive.rental_unit.rent_ready IS 'It is ready to be let';
+COMMENT ON COLUMN archive.rental_unit.status IS 'Active or Hidden there';
+COMMENT ON COLUMN archive.rental_unit.tags IS 'Its tags there, comma separated';
+COMMENT ON COLUMN archive.rental_unit.description IS 'How it is advertised';
+COMMENT ON COLUMN archive.rental_unit.made_on IS 'When it was added there';
+
+CREATE TABLE archive.rental_tenant (
+    id              uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection      uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream          text NOT NULL,
+    source_id       text NOT NULL,
+    access          uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    updated_at      timestamptz NOT NULL DEFAULT now(),
+    name            text NOT NULL DEFAULT '',
+    seen_at         timestamptz NOT NULL DEFAULT now(),
+    first_name      text,
+    last_name       text,
+    company         text,
+    email           archive.email,
+    person          uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    phones          text,
+    status          text,
+    type            text,
+    primary_tenant  boolean,
+    property        uuid REFERENCES archive.rental_property ON DELETE SET NULL,
+    property_source text,
+    unit            uuid REFERENCES archive.rental_unit ON DELETE SET NULL,
+    unit_source     text,
+    lease_source    text,
+    move_in         date,
+    move_out        date,
+    lease_from      date,
+    lease_to        date,
+    rent            archive.money,
+    deposit         archive.money,
+    tags            text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX rental_tenant_person_idx ON archive.rental_tenant (person);
+CREATE INDEX rental_tenant_property_idx ON archive.rental_tenant (property);
+CREATE INDEX rental_tenant_unit_idx ON archive.rental_tenant (unit);
+COMMENT ON TABLE archive.rental_tenant IS 'A tenant of a property manager you connected, current, past, future or on notice, with the lease of their unit, like one in AppFolio. Read only; Archive syncs them
+icon: key-round';
+COMMENT ON COLUMN archive.rental_tenant.company IS 'Their company, for a commercial tenant';
+COMMENT ON COLUMN archive.rental_tenant.email IS 'Their first email address';
+COMMENT ON COLUMN archive.rental_tenant.person IS 'references known_person; who they are, by their email';
+COMMENT ON COLUMN archive.rental_tenant.phones IS 'Their phone numbers, as the system lists them';
+COMMENT ON COLUMN archive.rental_tenant.status IS 'Like Current, Past, Future, Notice or Evict';
+COMMENT ON COLUMN archive.rental_tenant.type IS 'Like Financially Responsible, Occupant or Cosigner';
+COMMENT ON COLUMN archive.rental_tenant.primary_tenant IS 'They are the lease''s primary tenant';
+COMMENT ON COLUMN archive.rental_tenant.property IS 'references rental_property';
+COMMENT ON COLUMN archive.rental_tenant.property_source IS 'The id there of the property';
+COMMENT ON COLUMN archive.rental_tenant.unit IS 'references rental_unit';
+COMMENT ON COLUMN archive.rental_tenant.unit_source IS 'The id there of the unit';
+COMMENT ON COLUMN archive.rental_tenant.lease_source IS 'The id there of the lease, which its other tenants share';
+COMMENT ON COLUMN archive.rental_tenant.move_in IS 'When they moved in';
+COMMENT ON COLUMN archive.rental_tenant.move_out IS 'When they moved, or are to move, out';
+COMMENT ON COLUMN archive.rental_tenant.lease_from IS 'When the lease starts';
+COMMENT ON COLUMN archive.rental_tenant.lease_to IS 'When the lease ends; null when it is month to month';
+COMMENT ON COLUMN archive.rental_tenant.rent IS 'The monthly rent of the lease';
+COMMENT ON COLUMN archive.rental_tenant.deposit IS 'The security deposit held';
+COMMENT ON COLUMN archive.rental_tenant.tags IS 'Their tags there, comma separated';
+
 CREATE TABLE archive.calendar_event (
     id             uuid PRIMARY KEY DEFAULT uuidv7(),
     connection     uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
@@ -2376,12 +2664,15 @@ CREATE TABLE archive.calendar_event (
     url            archive.url,
     meeting_url    archive.url,
     edited_at      timestamptz,
+    summary        text,
+    action_items   text,
+    transcript     text,
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX calendar_event_series_idx ON archive.calendar_event (series);
 CREATE INDEX calendar_event_organizer_idx ON archive.calendar_event (organizer);
 CREATE INDEX calendar_event_starts_at_idx ON archive.calendar_event (starts_at);
-COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar, Outlook''s or your iPhone''s; who is invited is in calendar_attendee. Read only; Archive syncs them
+COMMENT ON TABLE archive.calendar_event IS 'An event of a calendar you connected, like Google Calendar, Outlook''s or your iPhone''s, a booking of a scheduling tool, like Calendly, or a meeting a notetaker recorded, like Fireflies, with its summary and transcript; who is invited or took part is in calendar_attendee. Read only; Archive syncs them
 icon: calendar';
 COMMENT ON COLUMN archive.calendar_event.calendar IS 'The calendar it is on, by name';
 COMMENT ON COLUMN archive.calendar_event.title IS 'Its title';
@@ -2398,6 +2689,9 @@ COMMENT ON COLUMN archive.calendar_event.organizer_name IS 'Who organizes it, by
 COMMENT ON COLUMN archive.calendar_event.url IS 'Where it opens there';
 COMMENT ON COLUMN archive.calendar_event.meeting_url IS 'Where to join it online, like a Meet or Teams link';
 COMMENT ON COLUMN archive.calendar_event.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.calendar_event.summary IS 'What a notetaker that recorded it says it was about, up to 64 KB';
+COMMENT ON COLUMN archive.calendar_event.action_items IS 'What a notetaker that recorded it says is to be done, a line each';
+COMMENT ON COLUMN archive.calendar_event.transcript IS 'What was said, a line each as Speaker: words, up to 512 KB';
 
 CREATE TABLE archive.calendar_attendee (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2420,6 +2714,71 @@ COMMENT ON COLUMN archive.calendar_attendee.event IS 'references calendar_event'
 COMMENT ON COLUMN archive.calendar_attendee.person IS 'references known_person; who, by their address';
 COMMENT ON COLUMN archive.calendar_attendee.role IS 'required, optional or resource, like a room';
 COMMENT ON COLUMN archive.calendar_attendee.response IS 'What they answered: accepted, declined, tentative or none';
+
+CREATE TABLE archive.sign_envelope (
+    id           uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection   uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    stream       text NOT NULL,
+    source_id    text NOT NULL,
+    access       uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    name         text NOT NULL DEFAULT '',
+    seen_at      timestamptz NOT NULL DEFAULT now(),
+    title        text,
+    status       text,
+    sender       uuid REFERENCES archive.known_person ON DELETE SET NULL,
+    sender_name  text,
+    documents    text[],
+    made_at      timestamptz,
+    sent_at      timestamptz,
+    completed_at timestamptz,
+    voided_at    timestamptz,
+    edited_at    timestamptz,
+    text         text,
+    UNIQUE (connection, stream, source_id)
+) INHERITS (archive.object);
+CREATE INDEX sign_envelope_sender_idx ON archive.sign_envelope (sender);
+CREATE INDEX sign_envelope_sent_at_idx ON archive.sign_envelope (sent_at);
+COMMENT ON TABLE archive.sign_envelope IS 'An envelope of an e-signature service you connected, like DocuSign: an agreement sent for signing; who it went to is in sign_recipient. Read only; Archive syncs them
+icon: file-signature';
+COMMENT ON COLUMN archive.sign_envelope.title IS 'Its subject';
+COMMENT ON COLUMN archive.sign_envelope.status IS 'Where it is: created (a draft), sent, delivered, completed, declined or voided';
+COMMENT ON COLUMN archive.sign_envelope.sender IS 'references known_person; who sent it, by their address';
+COMMENT ON COLUMN archive.sign_envelope.sender_name IS 'Who sent it, by name';
+COMMENT ON COLUMN archive.sign_envelope.documents IS 'The names of its documents';
+COMMENT ON COLUMN archive.sign_envelope.made_at IS 'When it was made there';
+COMMENT ON COLUMN archive.sign_envelope.sent_at IS 'When it was sent';
+COMMENT ON COLUMN archive.sign_envelope.completed_at IS 'When everyone had signed';
+COMMENT ON COLUMN archive.sign_envelope.voided_at IS 'When it was voided';
+COMMENT ON COLUMN archive.sign_envelope.edited_at IS 'When it last changed there';
+COMMENT ON COLUMN archive.sign_envelope.text IS 'The words of its documents as signed, up to 64 KB, once it is completed';
+
+CREATE TABLE archive.sign_recipient (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    connection uuid NOT NULL REFERENCES archive.connection ON DELETE CASCADE,
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    name       text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    envelope   uuid NOT NULL REFERENCES archive.sign_envelope ON DELETE CASCADE,
+    person     uuid NOT NULL REFERENCES archive.known_person ON DELETE CASCADE,
+    role       text,
+    status     text,
+    routing    int,
+    signed_at  timestamptz
+) INHERITS (archive.object);
+CREATE INDEX sign_recipient_envelope_idx ON archive.sign_recipient (envelope);
+CREATE INDEX sign_recipient_person_idx ON archive.sign_recipient (person);
+CREATE INDEX sign_recipient_connection_idx ON archive.sign_recipient (connection);
+COMMENT ON TABLE archive.sign_recipient IS 'Someone an envelope went to, and where they are with it. Read only; Archive syncs them
+icon: user-check';
+COMMENT ON COLUMN archive.sign_recipient.envelope IS 'references sign_envelope';
+COMMENT ON COLUMN archive.sign_recipient.person IS 'references known_person; who, by their address';
+COMMENT ON COLUMN archive.sign_recipient.role IS 'signer, cc, or another kind there, like certified delivery or in person signer';
+COMMENT ON COLUMN archive.sign_recipient.status IS 'Where they are: created, sent, delivered, signed, completed or declined';
+COMMENT ON COLUMN archive.sign_recipient.routing IS 'Their place in the order it goes round, from 1';
+COMMENT ON COLUMN archive.sign_recipient.signed_at IS 'When they signed';
 
 CREATE TABLE archive.ledger_account (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
@@ -2481,7 +2840,7 @@ CREATE TABLE archive.ledger_contact (
     UNIQUE (connection, stream, source_id)
 ) INHERITS (archive.object);
 CREATE INDEX ledger_contact_person_idx ON archive.ledger_contact (person);
-COMMENT ON TABLE archive.ledger_contact IS 'A customer, vendor or employee of books you connected, like QuickBooks. Read only; Archive syncs them
+COMMENT ON TABLE archive.ledger_contact IS 'A customer, vendor or employee of books you connected, like QuickBooks, or a vendor of a property manager''s, like AppFolio''s. Read only; Archive syncs them
 icon: contact-round';
 COMMENT ON COLUMN archive.ledger_contact.kind IS 'customer, vendor or employee';
 COMMENT ON COLUMN archive.ledger_contact.title IS 'The name it goes by there';
@@ -4170,6 +4529,9 @@ BEGIN
         WHEN 'dental_appointment' THEN concat_ws(' · ', (SELECT btrim(concat_ws(' ', p.first_name, p.last_name)) FROM archive.dental_patient p WHERE p.id = (r->>'patient')::uuid), r->>'starts_at')
         WHEN 'dental_procedure' THEN concat_ws(' · ', nullif(r->>'code', ''), nullif(r->>'description', ''), r->>'on_date')
         WHEN 'dental_payment' THEN concat_ws(' · ', 'Payment', r->>'paid_on')
+        WHEN 'rental_property' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'address')
+        WHEN 'rental_unit' THEN concat_ws(' · ', (SELECT p.title FROM archive.rental_property p WHERE p.id = (r->>'property')::uuid), nullif(r->>'title', ''))
+        WHEN 'rental_tenant' THEN coalesce(nullif(btrim(concat_ws(' ', nullif(r->>'first_name', ''), nullif(r->>'last_name', ''))), ''), r->>'company')
         WHEN 'ad_metric' THEN concat_ws(' · ', nullif(r->>'campaign_name', ''), r->>'on_date')
         WHEN 'work_item' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'client_name', ''))
         WHEN 'code_project' THEN concat_ws('/', r->>'organization', r->>'title')
@@ -4177,6 +4539,9 @@ BEGIN
         WHEN 'commerce_product' THEN r->>'title'
         WHEN 'commerce_order' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Order'), nullif(r->>'customer_name', ''))
         WHEN 'commerce_line' THEN concat_ws(' · ', nullif(r->>'title', ''), nullif(r->>'variant', ''))
+        WHEN 'commerce_payment' THEN concat_ws(' · ', coalesce(nullif(r->>'customer_name', ''), nullif(r->>'email', ''), 'Payment'), left(r->>'paid_at', 10))
+        WHEN 'commerce_invoice' THEN concat_ws(' · ', coalesce(nullif(r->>'number', ''), 'Invoice'), coalesce(nullif(r->>'customer_name', ''), r->>'email'))
+        WHEN 'commerce_dispute' THEN concat_ws(' · ', 'Dispute', nullif(r->>'reason', ''), left(r->>'made_at', 10))
         WHEN 'marketing_campaign' THEN r->>'title'
         WHEN 'chat_message' THEN coalesce(nullif(left(btrim(r->>'text'), 120), ''), r->>'sender_name')
         WHEN 'crm_company' THEN coalesce(nullif(btrim(r->>'title'), ''), r->>'domain')
@@ -4184,6 +4549,8 @@ BEGIN
         WHEN 'crm_deal' THEN r->>'title'
         WHEN 'calendar_event' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Busy')
         WHEN 'calendar_attendee' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
+        WHEN 'sign_envelope' THEN coalesce(nullif(btrim(r->>'title'), ''), 'Envelope')
+        WHEN 'sign_recipient' THEN coalesce(own, (SELECT p.email FROM archive.known_person p WHERE p.id = (r->>'person')::uuid))
         WHEN 'ledger_account' THEN coalesce(nullif(r->>'full_name', ''), r->>'title')
         WHEN 'ledger_contact' THEN coalesce(nullif(r->>'title', ''), nullif(r->>'company', ''), r->>'email')
         WHEN 'ledger_item' THEN r->>'title'
