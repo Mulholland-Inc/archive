@@ -1,5 +1,3 @@
-// The app's routes are plain paths, like /chat/<id>: the host serves index.html for each (wrangler.jsonc's
-// single-page-application fallback, and Vite's in development).
 
 function parse() {
   const path = location.pathname || '/';
@@ -16,8 +14,6 @@ function sync() {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('popstate', sync);
-  // A click on a link to one of the app's own paths moves there without loading the page again; one with a
-  // modifier, a middle click or a target opens it as the browser would.
   document.addEventListener('click', (event) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const a = event.target.closest?.('a[href]');
@@ -29,8 +25,6 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Preloading: a pointer resting on a link to one of the app's paths, a touch on it or focus on it reads the
-// data its page shows before it is followed, so the page opens with it. What reads it is set by preloadWith.
 let preloader = null;
 let resting = null;
 
@@ -51,7 +45,6 @@ function own(event) {
 }
 
 if (typeof window !== 'undefined') {
-  // A pointer that only passes over a link reads nothing: it has to rest on it for a moment.
   document.addEventListener('pointerover', (event) => {
     const path = own(event);
     clearTimeout(resting);

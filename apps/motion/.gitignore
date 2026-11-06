@@ -1,0 +1,4 @@
+out/
+node_modules/
+.pod.json
+reference/explain.mp4

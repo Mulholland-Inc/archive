@@ -1,7 +1,4 @@
 <script module>
-  const lucide = import.meta.glob('/node_modules/@lucide/svelte/dist/icons/*.svelte', { import: 'default' });
-  const glyph = (name) => (lucide[`/node_modules/@lucide/svelte/dist/icons/${name}.svelte`] ?? lucide['/node_modules/@lucide/svelte/dist/icons/shapes.svelte'])();
-
   const ICONS = {
     arrow: ['0 0 20 20', 'M4 10h12M11 5l5 5-5 5'],
     chevron: ['0 0 10 10', 'M2 3.5 5 6.5 8 3.5'],
@@ -24,12 +21,4 @@
   const icon = $derived(ICONS[name]);
 </script>
 
-{#if icon}
-  <svg class={['icon', icon[2] && 'filled']} viewBox={icon[0]} aria-hidden="true"><path d={icon[1]} /></svg>
-{:else}
-  {#await glyph(name)}
-    <svg class="icon" aria-hidden="true"></svg>
-  {:then Glyph}
-    <Glyph class="icon" aria-hidden="true" />
-  {/await}
-{/if}
+<svg class={['icon', icon[2] && 'filled']} viewBox={icon[0]} aria-hidden="true"><path d={icon[1]} /></svg>

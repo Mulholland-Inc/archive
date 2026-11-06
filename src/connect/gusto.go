@@ -2,32 +2,6 @@ package connect
 
 import "time"
 
-// Gusto, through its hosted MCP server: everything its read tools show of the companies an admin who connects
-// it reaches, their people and their payrolls. Its authorization server publishes a registration endpoint (RFC
-// 7591) and takes PKCE with S256 and a client secret, so Archive registers its own client there like Notion's;
-// Gusto's docs ask that only trusted clients connect, but name no approval. Archive asks for read scopes only,
-// so its actions only read.
-//
-// One sign-in can reach several companies, and every tool but get_token_info acts on the one company_uuid
-// names, or on one employee. get_token_info lists the companies, and names the account by them. Each stream
-// walks what it reads, one listing of them all: each company, or each year of a company's history (a payroll list
-// takes at most a year).
-//
-// None of its tools lists by when a record changed, and nothing it pushes reaches Archive, so a sync lists
-// again, and what a stream remembers keeps that to what can have changed:
-//   - Setup, like departments and pay schedules, and what changes with payrolls alone, time-off balances and
-//     pay periods, is listed a day apart (Every); setup whole, so one gone is deleted.
-//   - People are listed every sync, whole, but an employee whose version is the one read before is the same:
-//     their employment history and work addresses, which take a call each, are read only for one new or
-//     changed. Their terminations come with them.
-//   - Payrolls, pay periods and contractor payments are listed from a year before the company joined Gusto
-//     once, on the first sync, and after that only from three months back to 90 days ahead, as far as Gusto
-//     lists what is coming. Those pages never delete. A processed payroll does not change, as Gusto corrects
-//     one with another, off-cycle, so get_payroll reads each once, when it is first seen processed.
-//
-// Left out are the tools that read one record by its uuid, which the lists already hold, the onboarding and
-// payroll-blocker tools, time records, which only third-party time tracking keeps, and the earnings summary,
-// which payrolls add up to.
 func init() {
 	Register(&Connector{ID: "gusto", Name: "Gusto", Integration: true, MCP: "https://mcp.api.gusto.com", Pace: 500 * time.Millisecond, Busy: ToolBusy,
 		Info: Info{By: "Gusto", Description: "Read the company, its people and its payrolls", Category: CatPayroll, Icon: IconUsers, Scopes: []string{"Read the company, employees, contractors and payrolls"}},
@@ -44,7 +18,6 @@ func init() {
 						"signatory_name": "coalesce(nullif(btrim(data#>>'{primary_signatory,full_name}'), ''), nullif(btrim(concat(data#>>'{primary_signatory,first_name}', ' ', data#>>'{primary_signatory,last_name}')), ''), data#>>'{primary_signatory,business_name}')"},
 					People: map[string]SQL{"admin": "data#>>'{primary_payroll_admin,email}'", "signatory": "data#>>'{primary_signatory,email}'"},
 					EINs:   map[string]SQL{"org": "data->>'ein'"}}},
-			// 20 a page: each new or changed one costs two calls more, which at Gusto's pace must fit in a page's time.
 			{Name: "employees", Parts: gustoStatuses, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Memo: "{version}",
 				Req:  Req{Tool: "list_employees", Need: gustoStatus, Body: Obj{"company_uuid": "{in/company}", "terminated": "{in/terminated}", "include": "all_compensations,all_home_addresses,custom_fields"}},
 				Page: ToolPage{Limit: "per,limit,page_size", Max: 20, Page: "page", After: "cursor,after"},
@@ -55,9 +28,6 @@ func init() {
 				Doc: "Every employee, the terminated too, as list_employees answers with their jobs, every compensation, home address and custom field, and " +
 					"with their employment history and work addresses, which list_employee_employment_history and get_employee_work_addresses answer, " +
 					"read again only when the employee's version changes; 100 a page, listed whole each sync, so one gone is deleted.",
-				// An employee as a worker: their primary job, or else their first, says their title, start and pay, and their last
-				// termination when they left. Their jobs up to that one, compensations, addresses, employment history and custom
-				// fields are rows of their own.
 				To: Map{Table: "payroll_worker",
 					Cols: map[string]SQL{"kind": "'employee'", "name": gustoName, "first_name": "data->>'first_name'", "middle_initial": "data->>'middle_initial'", "last_name": "data->>'last_name'",
 						"preferred_name": "data->>'preferred_first_name'", "email": "archive.sync_email(coalesce(nullif(data->>'work_email', ''), data->>'email'))", "personal_email": "archive.sync_email(data->>'email')",
@@ -116,7 +86,6 @@ func init() {
 						{Table: "payroll_schedule_member", From: "archive.sync_list(data->'employees') e", Cols: map[string]SQL{}, Refs: map[string]SQL{"worker": "e->>'employee_uuid'", "schedule": "e->>'pay_schedule_uuid'"}},
 						{Table: "payroll_schedule_member", From: "archive.sync_list(data->'departments') d", Cols: map[string]SQL{}, Refs: map[string]SQL{"department": "d->>'department_uuid'", "schedule": "d->>'pay_schedule_uuid'"}},
 					}}},
-			// Default ones and a company's own are two lists of one answer.
 			{Name: "earning_types", Every: gustoDaily, Items: "**/{in/kind}", Absent: "**", Key: gustoKey, Req: Req{Tool: "list_earning_types", Body: gustoOf},
 				Parts: &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
 					Under: &Parts{Fixed: []Obj{{"kind": "default"}, {"kind": "custom"}}, ID: "{up/uuid}/{kind}", Vals: Obj{"company": "{up/uuid}", "kind": "{kind}"}}},
@@ -129,7 +98,6 @@ func init() {
 					Cols: map[string]SQL{"name": "data->>'name'", "type": "data->>'type'", "description": "data->>'description'", "options": "coalesce(data->'selection_options', '[]'::jsonb)"}}},
 			{Name: "time_off_requests", Parts: gustoCompanies, Items: "**", Key: gustoKey, Updated: "updated_at", Set: gustoCompany, Page: gustoPage, Req: Req{Tool: "get_time_off_requests", Need: gustoNeed, Body: gustoOf},
 				Doc: "Every time-off request, as get_time_off_requests answers, 100 a page, listed whole each sync, so one gone is deleted.",
-				// Its days, each with its hours, add up to its hours, from the first to the last.
 				To: Map{Table: "payroll_time_off_request",
 					Cols: map[string]SQL{"policy": "data->>'request_type'", "status": "data->>'status'", "employee_note": "data->>'employee_note'", "employer_note": "data->>'employer_note'",
 						"employee_name": "coalesce(nullif(btrim(data#>>'{employee,full_name}'), ''), nullif(btrim(concat(data#>>'{employee,first_name}', ' ', data#>>'{employee,last_name}')), ''), data#>>'{employee,business_name}')",
@@ -145,8 +113,6 @@ func init() {
 					Children: []Kids{{Table: "payroll_time_off_policy", From: "archive.sync_list(data->'balances') p",
 						Cols: map[string]SQL{"name": "p->>'policy_name'", "policy_type": "p->>'policy_type'", "policy_source": "p->>'policy_uuid'", "hours": "archive.sync_num(p->>'balance_hours')",
 							"accrued_hours": "archive.sync_num(p->>'accrued_hours')", "used_hours": "archive.sync_num(p->>'used_hours')", "pending_hours": "archive.sync_num(p->>'pending_hours')"}}}}},
-			// A processed payroll is read with what get_payroll adds, every page of its employee compensations, once: after that
-			// it is the same. Each line of what each employee was paid is a row: a tax is the employee's unless Gusto says it is the employer's.
 			{Name: "payrolls", Gap: time.Second, Parts: gustoYears, Keep: true, Items: "**", Key: []Reads{{Of: "{payroll_uuid;uuid;id}"}}, Set: gustoCompany, Memo: "{processed}",
 				Req:  Req{Tool: "list_payrolls", Body: Obj{"company_uuid": "{in/company}", "start_date": "{in/start}", "end_date": "{in/end}", "include": "taxes,totals", "processing_statuses": "processed,unprocessed", "payroll_types": "regular,off_cycle,external"}},
 				Page: ToolPage{Limit: "per", Max: 25, Page: "page"},
@@ -204,7 +170,6 @@ func init() {
 }
 
 const (
-	// gustoDaily is how far apart setup, which seldom changes, is read.
 	gustoDaily      = 24 * time.Hour
 	gustoRef    SQL = "data->>'company_uuid'"
 	gustoName   SQL = "coalesce(nullif(btrim(data->>'full_name'), ''), nullif(btrim(concat(data->>'first_name', ' ', data->>'last_name')), ''), data->>'business_name')"
@@ -217,21 +182,16 @@ const (
 
 var (
 	gustoNeed       = []string{"company_uuid"}
-	gustoStatus     = []string{"company_uuid", "terminated"} // a tool that took no terminated would list active staff twice, and delete the rest
+	gustoStatus     = []string{"company_uuid", "terminated"}
 	gustoOf         = Obj{"company_uuid": "{in/company}"}
 	gustoSpan       = Obj{"company_uuid": "{in/company}", "start_date": "{in/start}", "end_date": "{in/end}"}
 	gustoKey        = []Reads{{Of: "{uuid;id}"}}
 	gustoCompany    = Obj{"company_uuid": "{company_uuid;in/company}"}
 	gustoPage       = ToolPage{Limit: "per,limit,page_size", Max: 100, Page: "page", After: "cursor,after"}
 	gustoNotCompany = []Test{{At: "resource_type", Is: "company", Off: true}, {At: "uuid", Off: true}}
-	// gustoCompanies are the companies the token reaches, as get_token_info lists them.
-	gustoCompanies = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany, ID: "{uuid}", Vals: Obj{"company": "{uuid}"}}
-	// gustoStatuses are each company twice: as it is, and for those no longer active, whom a list leaves out unless asked for.
-	gustoStatuses = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
+	gustoCompanies  = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany, ID: "{uuid}", Vals: Obj{"company": "{uuid}"}}
+	gustoStatuses   = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
 		Under: &Parts{Fixed: []Obj{{"tag": "active"}, {"tag": "gone", "terminated": true}}, ID: "{up/uuid}/{tag}", Vals: Obj{"company": "{up/uuid}", "terminated": "{terminated}"}}}
-	// gustoYears are each company's years to list, to 90 days ahead, as far as Gusto lists what is coming: from a year before
-	// it joined Gusto, for history brought in with it, ten years back when it does not say, until the stream has listed them
-	// once, and after that the recent months alone.
 	gustoYears = &Parts{Req: Req{Tool: "get_token_info"}, Items: "**/accessible_resources", Skip: gustoNotCompany,
 		Under: &Parts{First: true, Req: Req{Tool: "get_company", Body: Obj{"company_uuid": "{up/uuid}"}},
 			Under: &Parts{Span: &Span{Last: Shift{0, 0, 90}, First: Shift{-10, 0, 0}, From: "{up/join_date}", Back: Shift{-1, 0, 0}, Then: Shift{0, -3, -90}, Step: Shift{1, 0, 0}},

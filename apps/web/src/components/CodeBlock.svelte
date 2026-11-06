@@ -1,13 +1,13 @@
 <script>
   import { Copy, Check } from '@lucide/svelte';
   import Icon from './Icon.svelte';
-  import { highlighted } from '../lib/syntax.js';
 
-  // full shows all of it, with no scrolling inside; size body sets it at the page's text size, not code's.
-  let { code = '', lang = 'text', full = false, size = 'code' } = $props();
+  let { code = '', lang = 'text', label = lang, full = false, size = 'code' } = $props();
   let copied = $state(false);
-  // Blank lines before the first line and after the last are left out of the view, not the copy.
-  const html = $derived(highlighted(code.replace(/^(\s*\n)+/, '').trimEnd(), lang));
+  let syntax = $state(null);
+  import('../lib/syntax.js').then((m) => (syntax = m));
+  const shown = $derived(code.replace(/^(\s*\n)+/, '').trimEnd());
+  const html = $derived(syntax ? syntax.highlighted(shown, lang) : shown.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`));
 
   async function copy() {
     try {
@@ -20,7 +20,7 @@
 
 <figure class="code">
   <figcaption>
-    <span>{lang}</span>
+    <span>{label}</span>
     <button type="button" class="copy" onclick={copy} aria-label="Copy code">
       <Icon icon={copied ? Check : Copy} size="sm" />
       <span>{copied ? 'Copied' : 'Copy'}</span>
@@ -52,7 +52,7 @@
   }
 
   figcaption > span {
-    padding: var(--space-1-5);
+    padding: var(--space-1-5) var(--space-2-5);
   }
 
   .copy {
@@ -96,7 +96,6 @@
     font: inherit;
   }
 
-  /* highlight.js's classes, in Archive's colours. */
   code :global(.hljs-comment) {
     color: var(--color-text-tertiary);
     font-style: italic;

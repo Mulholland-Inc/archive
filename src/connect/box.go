@@ -12,7 +12,7 @@ import (
 // unpublished apps has its admin enable the app by its client id, in the Admin Console's Platform Apps Manager,
 // before its people can connect. Box replaces the refresh token on every refresh, and it lasts 60 days unused.
 //
-// It syncs every file and folder the account can see, its own and those shared with it, into drive_file, by
+// It syncs every file and folder the account can see, its own and those shared with it, into file, with its bytes, by
 // type/id, as a file and a folder may share an id. Box lists a folder one level at a time and its events say what
 // changed account-wide, not by folder, so each sync walks the folders from the top and lists each whole, 1,000 a
 // page, which deletes what is gone; a file whose etag has not changed is not read again. It pushes nothing: a Box
@@ -46,14 +46,7 @@ func init() {
 				Enum:  map[string][]string{"type": {"file", "folder"}},
 				Steps: []Step{{Req: Req{URL: "/{type|file}s/{id}", Query: Q{"fields": boxFields + ",path_collection,modified_by,description"}}}},
 			}),
-			"export": Call[boxFile, boxText](Plan{
-				Doc: "A file's words: a PDF, Word, Excel, PowerPoint or text file's up to 25 MB. Returns { id, name, text }",
-				Steps: []Step{
-					{As: "f", Req: Req{URL: "/files/{id}?fields=id,name,size"}},
-					{As: "text", Words: &Download{Req: Req{URL: "/files/{f/id}/content"}, Name: "{f/name}", Size: "f/size"}},
-				},
-				Out: Obj{"id": "{f/id}", "name": "{f/name}", "text": "{text|}"},
-			}),
+			"export": Func("A file's words: a PDF, Word, Excel, PowerPoint or text file's up to 25 MB. Returns { id, name, text }", boxExport),
 			"create": Call[boxNew, map[string]any](Plan{
 				Doc: "Make a file with text content, or a folder, in a folder or at the top: { type, id, name, size, modified_at, parent, owned_by }",
 				Steps: []Step{
@@ -90,26 +83,27 @@ func init() {
 			Items: "entries", Key: []Reads{{Of: "{type}/{id}"}}, Updated: "modified_at", Page: boxPage, Memo: "{etag}",
 			// A web link is no file.
 			Skip:    []Test{{At: "type", Is: "web_link"}},
-			Hydrate: []Hydrate{Download{If: Test{At: "type", Is: "file"}, Req: Req{URL: "/files/{id}/content"}, Name: "{name}", Size: "size", As: "text", Par: 4}},
-			Doc: "Every file and folder the account can see, its own and those shared with it, but those in the trash: its name, size, folder, " +
-				"owner, who changed it last and when, and the words of a PDF, Word, Excel, PowerPoint or text file up to 25 MB, cut at 64 KB; other " +
-				"content stays in Box. Each sync walks the folders from the top and lists each whole, 1,000 a page, by type/id, which deletes what " +
-				"is gone; a file whose etag has not changed is not read again.",
+			Content: []Content{{If: Test{At: "type", Is: "file"}, Req: Req{URL: "/files/{source/id}/content"}, Size: "size"}},
+			Doc: "Every file and folder the account can see, its own and those shared with it, but those in the trash: its name, folder, " +
+				"owner, who changed it last and when, and a copy of its bytes up to 1 GB, with its words. Each sync walks the folders from the top " +
+				"and lists each whole, 1,000 a page, by type/id, which deletes what is gone; a file whose etag has not changed is not read again.",
 			// A thing's folder is its parent, which is no row at the top.
-			To: Map{Table: "drive_file",
-				Cols: map[string]SQL{"kind": "CASE WHEN data->>'type' = 'folder' THEN 'folder' ELSE 'file' END", "title": "data->>'name'", "size": "archive.sync_num(data->>'size')",
-					"url": "'https://app.box.com/' || (data->>'type') || '/' || (data->>'id')", "drive": "'Box'",
+			To: Map{Table: "file",
+				Cols: map[string]SQL{"kind": "CASE WHEN data->>'type' = 'folder' THEN 'folder' ELSE 'file' END", "name": "data->>'name'", "drive": "'Box'",
+					"mime":    "CASE WHEN data->>'type' = 'folder' THEN 'inode/directory' ELSE 'application/octet-stream' END",
+					"version": "coalesce(data->>'sha1', data->>'etag')", "url": "'https://app.box.com/' || (data->>'type') || '/' || (data->>'id')",
+					"source":     "jsonb_build_object('id', data->>'id', 'type', data->>'type', 'size', data->>'size')",
 					"owner_name": "data#>>'{owned_by,name}'", "editor_name": "data#>>'{modified_by,name}'",
-					"made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'modified_at')", "text": "data->>'text'"},
+					"made_at": "archive.sync_at(data->>'created_at')", "edited_at": "archive.sync_at(data->>'modified_at')"},
 				People: map[string]SQL{"owner": "data#>>'{owned_by,login}'", "editor": "data#>>'{modified_by,login}'"},
-				Refs:   map[string]SQL{"folder": "'folder/' || nullif(data#>>'{parent,id}', '0')"}}}},
+				Refs:   map[string]SQL{"parent": "'folder/' || nullif(data#>>'{parent,id}', '0')"}}}},
 	})
 }
 
 const (
 	boxFields = "type,id,name,size,modified_at,parent,owned_by"
 	// boxSync is what the files stream reads of a file or folder.
-	boxSync = "type,id,etag,name,size,parent,created_at,modified_at,owned_by,modified_by"
+	boxSync = "type,id,etag,sha1,name,size,parent,created_at,modified_at,owned_by,modified_by"
 )
 
 var (
@@ -121,6 +115,19 @@ var (
 		Also: []*Parts{{Fixed: []Obj{{"id": "0"}}}}}
 	boxWalk = Q{"fields": "type,id", "limit": "1000", "usemarker": "true", "marker": "{page}"}
 )
+
+// boxExport reads the words of a file by its id.
+func boxExport(c *Client, in boxFile) (boxText, error) {
+	sc := map[string]any{"id": in.ID}
+	if _, err := runSteps(c, []Step{{As: "f", Req: Req{URL: "/files/{id}?fields=id,name,size"}}}, sc); err != nil {
+		return boxText{}, err
+	}
+	words, _, err := c.download(Download{Req: Req{URL: "/files/{f/id}/content"}, Name: "{f/name}", Size: "f/size"}, sc)
+	if err != nil {
+		return boxText{}, err
+	}
+	return boxText{ID: text(pick(sc, "f/id")), Name: text(pick(sc, "f/name")), Text: words}, nil
+}
 
 // boxUpload sends {content} to path on Box's upload host as the form Box takes, with attributes, a JSON template.
 func boxUpload(path, attributes string) Req {

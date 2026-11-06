@@ -1,36 +1,50 @@
--- The main database is the one DATABASE_URL names. It holds what every workspace shares and nothing of any one
--- of them: the workspaces and their data keys, the people who sign in and their tokens, when each workspace's
--- work is due, and what connectors' providers push to. Every workspace is a database of its own, archive_<id>,
--- made from archive.sql. Like archive.sql, this is applied to the main database as it is, by diff, at startup
--- (Hub.migrate), and after it come the sqlc queries of the Hub.
 CREATE SCHEMA IF NOT EXISTS archive;
 
--- A migration of the main database, by the hash of this file; the newest says what it is now.
 CREATE TABLE archive.main_revision (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     hash       text NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- What a workspace is for, which picks the icons the web app offers it.
 CREATE TYPE archive.workspace_type AS ENUM ('personal', 'family', 'business');
 
--- icon and color are how the web app shows the workspace: one of its icons, and one of its 8 tints by index;
--- null is the default for its type.
 CREATE TABLE archive.workspace (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     name       text NOT NULL,
     key        bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     type       archive.workspace_type NOT NULL DEFAULT 'personal',
-    icon       text CONSTRAINT workspace_icon CHECK (icon IN ('robot', 'chest', 'safe', 'bookcase', 'pinecone', 'cottage', 'castle',
-        'townhouse', 'farmhouse', 'oak', 'pine', 'baobab', 'skyscraper', 'capitol', 'pyramid', 'ledger', 'cabinet', 'bank', 'warehouse', 'factory')),
-    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 7)
+    icon       text,
+    color      smallint CONSTRAINT workspace_color CHECK (color BETWEEN 0 AND 31),
+    sent       integer NOT NULL DEFAULT 0,
+    sent_on    date,
+    slug       text NOT NULL UNIQUE CONSTRAINT workspace_slug CHECK (slug ~ '^[a-z0-9]{1,24}$')
 );
 
--- A person who signs in, and the workspaces they are a member of. admin says they run this Archive: they make
--- and delete workspaces and name other admins, whichever workspaces they are in. The first person added to a
--- new install is one.
+CREATE FUNCTION archive.workspace_base(name text) RETURNS text LANGUAGE sql IMMUTABLE SET search_path = pg_catalog AS $$
+    SELECT coalesce(nullif(regexp_replace(lower(regexp_replace(normalize(name, NFD), '[\u0300-\u036f]', '', 'g')), '[^a-z0-9]', '', 'g'), ''), 'workspace');
+$$;
+
+CREATE FUNCTION archive.workspace_slug() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+DECLARE
+    base text := archive.workspace_base(NEW.name);
+    n integer := 1;
+BEGIN
+    IF TG_OP = 'UPDATE' AND base = archive.workspace_base(OLD.name) THEN
+        NEW.slug := OLD.slug;
+        RETURN NEW;
+    END IF;
+    NEW.slug := left(base, 24);
+    WHILE NOT pg_try_advisory_xact_lock(hashtext('workspace slug ' || NEW.slug))
+        OR EXISTS (SELECT FROM archive.workspace w WHERE w.slug = NEW.slug AND w.id <> NEW.id) LOOP
+        n := n + 1;
+        NEW.slug := left(base, 24 - length(n::text)) || n;
+    END LOOP;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER slug BEFORE INSERT OR UPDATE ON archive.workspace FOR EACH ROW EXECUTE FUNCTION archive.workspace_slug();
+
 CREATE TABLE archive."user" (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     email      text NOT NULL UNIQUE,
@@ -38,14 +52,15 @@ CREATE TABLE archive."user" (
     workspaces uuid[] NOT NULL DEFAULT '{}',
     signin     jsonb NOT NULL DEFAULT '{}',
     created_at timestamptz NOT NULL DEFAULT now(),
-    admin      boolean NOT NULL DEFAULT false
+    admin      boolean NOT NULL DEFAULT false,
+    unread     uuid[] NOT NULL DEFAULT '{}',
+    totp       bytea,
+    totp_step  bigint NOT NULL DEFAULT 0,
+    totp_fails integer NOT NULL DEFAULT 0,
+    totp_until timestamptz
 );
 CREATE INDEX user_workspaces_idx ON archive."user" USING gin (workspaces);
 
--- An MCP client, like Claude or ChatGPT, that registered itself with this Archive's authorization server (mcp.go)
--- so its people can let it into one of their workspaces. Anyone may register one, as MCP's authorization spec
--- has it: name is only what the client calls itself, and redirect_uris the only places a code of it goes. secret
--- is the hash of a confidential client's secret; a public client has none and proves itself with PKCE alone.
 CREATE TABLE archive.mcp_client (
     id            uuid PRIMARY KEY DEFAULT uuidv7(),
     name          text NOT NULL,
@@ -54,10 +69,6 @@ CREATE TABLE archive.mcp_client (
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 
--- A token is a sign-in's session, an API token (kind api) or an MCP client's (kind mcp), each by its secret's
--- hash. An MCP token is one grant: a person let the client into one workspace, as them. It is named for the
--- client, and has a refresh token, by its hash, that lapses at refresh_expires_at unless used; each refresh
--- gives the grant a new access token and a new refresh token, so revoking the grant ends both.
 CREATE TABLE archive.token (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL REFERENCES archive."user" ON DELETE CASCADE,
@@ -66,7 +77,6 @@ CREATE TABLE archive.token (
     name       text NOT NULL DEFAULT '',
     role       text UNIQUE,
     hash       text NOT NULL UNIQUE,
-    -- An API token's secret, sealed with the server's key, so its owner can copy it again; null for others.
     sealed     bytea,
     expires_at timestamptz,
     created_at timestamptz NOT NULL DEFAULT now(),
@@ -76,9 +86,6 @@ CREATE TABLE archive.token (
 );
 CREATE INDEX token_user_idx ON archive.token (user_id);
 
--- An authorization code, by its hash: who let which client into which workspace, for which redirect_uri and
--- PKCE challenge (S256). It is good once, for a minute; token is the token it became, which a second use of
--- the code revokes, as OAuth asks.
 CREATE TABLE archive.mcp_code (
     hash         text PRIMARY KEY,
     client       uuid NOT NULL REFERENCES archive.mcp_client ON DELETE CASCADE,
@@ -95,24 +102,17 @@ CREATE TABLE archive.due (
     workspace uuid NOT NULL REFERENCES archive.workspace ON DELETE CASCADE,
     kind      text NOT NULL,
     at        timestamptz NOT NULL,
+    lease     timestamptz,
+    again     boolean NOT NULL DEFAULT false,
     PRIMARY KEY (workspace, kind)
 );
 
--- An OAuth client Archive registered for itself at an MCP connector's authorization server (connect/connect.go):
--- one per connector, for every workspace, since the redirect URI is the server's. client is the
--- connect.Registration, its secret with it, sealed with ARCHIVE_SECRET_KEY. Only Go reads it.
 CREATE TABLE archive.oauth_client (
     provider   text PRIMARY KEY,
     client     bytea NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
--- A watch is something a connector's provider pushes for a connection's account (connect/sync.go): a Gmail
--- users.watch, a Drive channel, a Graph subscription, an Asana webhook, or the key a push of the app's own
--- webhook names it by, like a QuickBooks realmId. key is what a push names it by, resource what the provider
--- calls it, secret what its pushes prove themselves with, sealed with ARCHIVE_SECRET_KEY, and expires_at when
--- it lapses unless a sync renews it. Kept here for every workspace, since a push says only the key; only Go
--- reads it.
 CREATE TABLE archive.watch (
     provider   text NOT NULL,
     key        text NOT NULL,
@@ -126,6 +126,12 @@ CREATE TABLE archive.watch (
 );
 CREATE INDEX watch_connection_idx ON archive.watch (connection);
 
+CREATE TABLE archive.terms (
+    kind       text PRIMARY KEY CONSTRAINT terms_kind CHECK (kind IN ('msa', 'baa')),
+    doc        bytea NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- name: MainRevision :one
 SELECT coalesce((SELECT hash FROM archive.main_revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text;
 
@@ -138,30 +144,18 @@ SELECT * FROM archive."user" WHERE email = $1;
 -- name: UserByID :one
 SELECT * FROM archive."user" WHERE id = $1;
 
+-- name: UsersWorkspaces :many
+SELECT id, workspaces FROM archive."user" WHERE id = ANY(sqlc.arg(ids)::uuid[]);
+
 -- name: UserByOIDC :one
 SELECT * FROM archive."user" WHERE signin->'oidc' @> sqlc.arg(link)::jsonb;
-
--- name: FirstUser :one
-SELECT * FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(workspace)::uuid] ORDER BY created_at, id LIMIT 1;
 
 -- name: FirstAdmin :one
 SELECT * FROM archive."user" WHERE admin ORDER BY created_at, id LIMIT 1;
 
--- name: Admins :many
-SELECT * FROM archive."user" WHERE admin ORDER BY email;
-
--- The first person a new install adds becomes its admin: they are the first member of a workspace while there
--- is none.
 -- name: AdminIfNone :exec
 UPDATE archive."user" u SET admin = true WHERE u.id = $1 AND NOT EXISTS (SELECT FROM archive."user" x WHERE x.admin);
 
--- An admin is named by their email, and stops being one unless they are the last.
--- name: SetAdmin :one
-UPDATE archive."user" u SET admin = sqlc.arg(admin)::bool
-WHERE u.email = sqlc.arg(email)::text AND (sqlc.arg(admin)::bool OR EXISTS (SELECT FROM archive."user" x WHERE x.admin AND x.id <> u.id))
-RETURNING *;
-
--- A new install: no one and no workspace yet.
 -- name: NoUsers :one
 SELECT (NOT EXISTS (SELECT FROM archive."user") AND NOT EXISTS (SELECT FROM archive.workspace))::bool;
 
@@ -171,13 +165,19 @@ SELECT id, email, name FROM archive."user" WHERE workspaces @> ARRAY[sqlc.arg(wo
 -- name: UserWorkspaces :many
 SELECT w.* FROM archive.workspace w JOIN archive."user" u ON w.id = ANY(u.workspaces) WHERE u.id = $1 ORDER BY array_position(u.workspaces, w.id);
 
+-- name: MarkUnread :exec
+UPDATE archive."user" SET unread = array_append(array_remove(unread, sqlc.arg(workspace)::uuid), sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+
+-- name: ClearUnread :exec
+UPDATE archive."user" SET unread = array_remove(unread, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+
 -- name: JoinWorkspace :one
 INSERT INTO archive."user" (email, name, workspaces) VALUES (sqlc.arg(email), sqlc.arg(name), ARRAY[sqlc.arg(workspace)::uuid])
 ON CONFLICT (email) DO UPDATE SET workspaces = archive."user".workspaces || EXCLUDED.workspaces WHERE NOT archive."user".workspaces @> EXCLUDED.workspaces
 RETURNING *;
 
 -- name: LeaveWorkspace :exec
-UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
+UPDATE archive."user" SET workspaces = array_remove(workspaces, sqlc.arg(workspace)::uuid), unread = array_remove(unread, sqlc.arg(workspace)::uuid) WHERE id = sqlc.arg(id);
 
 -- name: SetSignin :exec
 UPDATE archive."user" SET signin = $2 WHERE id = $1;
@@ -196,22 +196,55 @@ WHERE t.hash = $1 AND t.kind = ANY(sqlc.arg(kinds)::text[]) AND (t.expires_at IS
 INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'session', $2, now() + interval '30 days');
 
 -- name: SignOut :exec
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'session';
+DELETE FROM archive.token WHERE hash = $1 AND kind IN ('session', 'totp');
+
+-- name: CreateTotpToken :exec
+WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'totp' AND x.expires_at < now())
+INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'totp', $2, now() + interval '5 minutes');
+
+-- name: TotpSession :execrows
+WITH gone AS (DELETE FROM archive.token x WHERE x.hash = sqlc.arg(pending) AND x.kind = 'totp' AND x.expires_at > now() RETURNING x.user_id)
+INSERT INTO archive.token (user_id, kind, hash, expires_at) SELECT gone.user_id, 'session', sqlc.arg(hash), now() + interval '30 days' FROM gone;
+
+-- name: TotpTry :one
+UPDATE archive."user" SET
+    totp_fails = CASE WHEN totp_until > now() THEN totp_fails + 1 ELSE 1 END,
+    totp_until = CASE WHEN totp_until > now() THEN totp_until ELSE now() + interval '15 minutes' END
+WHERE id = $1 AND totp IS NOT NULL AND (totp_until IS NULL OR totp_until <= now() OR totp_fails < 5)
+RETURNING totp;
+
+-- name: TotpUse :execrows
+UPDATE archive."user" SET totp_step = sqlc.arg(step), totp_fails = 0, totp_until = NULL WHERE id = sqlc.arg(id) AND totp_step < sqlc.arg(step);
+
+-- name: EnableTotp :one
+WITH linked AS (
+    UPDATE archive."user" u SET totp = sqlc.arg(totp), totp_step = sqlc.arg(step), totp_fails = 0, totp_until = NULL
+    WHERE u.id = sqlc.arg(id) AND u.totp IS NULL RETURNING u.id
+), gone AS (
+    DELETE FROM archive.token x USING linked WHERE x.user_id = linked.id AND x.kind = 'session' AND x.hash <> sqlc.arg(keep)
+)
+SELECT count(*) FROM linked;
+
+-- name: DisableTotp :execrows
+UPDATE archive."user" SET totp = NULL, totp_step = 0, totp_fails = 0, totp_until = NULL WHERE id = sqlc.arg(id) AND totp_step < sqlc.arg(step);
 
 -- name: CreateToken :one
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;
 
--- name: TokenSealed :one
-SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind = 'api' AND sealed IS NOT NULL;
+-- name: KeyWorkspace :one
+SELECT workspace FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api';
 
--- Your API tokens and MCP grants in a workspace; a grant lapses when its refresh token does.
+-- name: TokenSealed :one
+SELECT sealed FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api' AND sealed IS NOT NULL AND (NOT sqlc.arg(scoped)::bool OR workspace = sqlc.arg(workspace));
+
 -- name: Tokens :many
-SELECT id, name, (role IS NOT NULL)::bool AS viewer, expires_at, refresh_expires_at, created_at, (kind = 'mcp')::bool AS app
-FROM archive.token
-WHERE user_id = $1 AND workspace = $2 AND kind IN ('api', 'mcp') ORDER BY id;
+SELECT t.id, t.name, (t.role IS NOT NULL)::bool AS viewer, t.expires_at, t.refresh_expires_at, t.created_at, (t.kind = 'mcp')::bool AS app,
+    coalesce(w.id::text, '')::text AS workspace, coalesce(w.name, '')::text AS workspace_name
+FROM archive.token t LEFT JOIN archive.workspace w ON w.id = t.workspace
+WHERE t.user_id = $1 AND t.kind IN ('api', 'mcp') AND (NOT sqlc.arg(scoped)::bool OR t.workspace = sqlc.arg(workspace)) ORDER BY t.id;
 
 -- name: RevokeToken :one
-DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND workspace = $3 AND kind IN ('api', 'mcp') RETURNING coalesce(role, '')::text;
+DELETE FROM archive.token WHERE id = $1 AND user_id = $2 AND kind IN ('api', 'mcp') AND (workspace = sqlc.arg(workspace) OR (NOT sqlc.arg(scoped)::bool AND role IS NULL)) RETURNING coalesce(role, '')::text;
 
 -- name: CreateMCPClient :one
 INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at;
@@ -219,33 +252,28 @@ INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3)
 -- name: MCPClient :one
 SELECT * FROM archive.mcp_client WHERE id = $1;
 
--- A new code; codes that lapsed a while ago go, while a used one is kept long enough to catch its reuse.
 -- name: CreateMCPCode :exec
 WITH old AS (DELETE FROM archive.mcp_code c WHERE c.expires_at < now() - interval '1 hour')
 INSERT INTO archive.mcp_code (hash, client, user_id, workspace, redirect_uri, challenge, expires_at)
 VALUES (sqlc.arg(hash), sqlc.arg(client), sqlc.arg(user_id), sqlc.arg(workspace), sqlc.arg(redirect_uri), sqlc.arg(challenge), now() + interval '1 minute');
 
--- A code is used once, by naming the token it becomes: a code used before, or lapsed, is no row.
 -- name: UseMCPCode :one
 UPDATE archive.mcp_code SET token = sqlc.arg(token) WHERE hash = sqlc.arg(hash) AND token IS NULL AND expires_at > now() RETURNING *;
 
 -- name: UsedMCPCode :one
 SELECT token FROM archive.mcp_code WHERE hash = $1 AND token IS NOT NULL;
 
--- A grant's first tokens; grants whose refresh token lapsed go.
 -- name: CreateMCPToken :exec
 WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'mcp' AND x.refresh_expires_at < now())
 INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, expires_at, client, refresh, refresh_expires_at)
 VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(workspace), 'mcp', sqlc.arg(name), sqlc.arg(hash), sqlc.arg(expires_at),
     sqlc.arg(client), sqlc.arg(refresh), sqlc.arg(refresh_expires_at));
 
--- A refresh turns the grant's refresh token into a new access token and a new refresh token, once.
 -- name: RefreshMCPToken :one
 UPDATE archive.token SET hash = sqlc.arg(hash), expires_at = sqlc.arg(expires_at), refresh = sqlc.arg(next), refresh_expires_at = sqlc.arg(refresh_expires_at)
 WHERE refresh = sqlc.arg(refresh) AND client = sqlc.arg(client) AND kind = 'mcp' AND refresh_expires_at > now()
 RETURNING id, workspace;
 
--- Revoking either of a grant's tokens, by its client, ends the grant.
 -- name: RevokeMCPToken :one
 DELETE FROM archive.token WHERE kind = 'mcp' AND client = $1 AND (hash = $2 OR refresh = $2) RETURNING id, workspace;
 
@@ -255,11 +283,18 @@ DELETE FROM archive.token WHERE id = $1 AND kind = 'mcp' RETURNING workspace;
 -- name: DeleteWorkspaceTokens :many
 DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 RETURNING coalesce(role, '')::text;
 
--- name: FirstWorkspace :one
-SELECT * FROM archive.workspace ORDER BY created_at, id LIMIT 1;
-
 -- name: WorkspaceByID :one
 SELECT * FROM archive.workspace WHERE id = $1;
+
+-- name: WorkspaceBySlug :one
+SELECT * FROM archive.workspace WHERE slug = $1;
+
+-- name: CountEmail :one
+UPDATE archive.workspace SET sent = CASE WHEN sent_on = (now() AT TIME ZONE 'UTC')::date THEN sent + 1 ELSE 1 END, sent_on = (now() AT TIME ZONE 'UTC')::date
+WHERE id = sqlc.arg(id) AND (sent_on IS DISTINCT FROM (now() AT TIME ZONE 'UTC')::date OR sent < sqlc.arg(cap)::integer) RETURNING sent;
+
+-- name: UncountEmail :exec
+UPDATE archive.workspace SET sent = greatest(sent - 1, 0) WHERE id = $1;
 
 -- name: AllWorkspaces :many
 SELECT * FROM archive.workspace ORDER BY created_at, id;
@@ -282,11 +317,13 @@ UPDATE archive.workspace SET name = coalesce(sqlc.narg(name), name), type = coal
 -- name: SoonDue :one
 WITH was AS (SELECT x.at FROM archive.due x WHERE x.workspace = sqlc.arg(workspace) AND x.kind = sqlc.arg(kind))
 INSERT INTO archive.due (workspace, kind, at) VALUES (sqlc.arg(workspace), sqlc.arg(kind), sqlc.arg(at))
-ON CONFLICT (workspace, kind) DO UPDATE SET at = least(archive.due.at, EXCLUDED.at)
+ON CONFLICT (workspace, kind) DO UPDATE SET
+    at = CASE WHEN archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease THEN archive.due.at ELSE least(archive.due.at, EXCLUDED.at) END,
+    again = archive.due.again OR (archive.due.at > now() AND archive.due.at IS NOT DISTINCT FROM archive.due.lease)
 RETURNING at, (at IS DISTINCT FROM (SELECT was.at FROM was))::bool AS changed;
 
 -- name: ClaimDueFor :one
-UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz
+UPDATE archive.due d SET at = sqlc.arg(lease)::timestamptz, lease = sqlc.arg(lease)::timestamptz, again = false
 WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at <= now()
 RETURNING d.at;
 
@@ -297,12 +334,16 @@ SELECT at FROM archive.due WHERE workspace = $1 AND kind = $2;
 SELECT workspace, kind, at FROM archive.due;
 
 -- name: SetDue :execrows
-UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz FROM archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+UPDATE archive.due d SET at = sqlc.arg(next)::timestamptz, lease = NULL FROM archive.workspace w
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND NOT d.again;
 
--- name: ClearDue :exec
+-- name: ClearDue :execrows
 DELETE FROM archive.due d USING archive.workspace w
-WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz;
+WHERE w.id = d.workspace AND w.id = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND NOT d.again;
+
+-- name: AgainDue :execrows
+UPDATE archive.due d SET again = false
+WHERE d.workspace = sqlc.arg(id) AND d.kind = sqlc.arg(kind) AND d.at = sqlc.arg(claimed)::timestamptz AND d.again;
 
 -- name: OAuthClient :one
 SELECT client FROM archive.oauth_client WHERE provider = $1;
@@ -329,9 +370,14 @@ VALUES (sqlc.arg(provider), sqlc.arg(key), sqlc.arg(workspace), sqlc.arg(connect
 ON CONFLICT (provider, key, connection) DO UPDATE SET resource = EXCLUDED.resource, secret = coalesce(EXCLUDED.secret, archive.watch.secret),
     expires_at = EXCLUDED.expires_at;
 
--- A handshake's secret, kept by the key in the URL only it was sent: the first one wins.
 -- name: KeepWatchSecret :execrows
 INSERT INTO archive.watch (provider, key, workspace, connection, secret) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING;
 
 -- name: DropWatches :exec
 DELETE FROM archive.watch WHERE connection = sqlc.arg(connection) AND NOT key = ANY(sqlc.arg(keep)::text[]);
+
+-- name: Terms :many
+SELECT kind, doc FROM archive.terms;
+
+-- name: TermsOf :one
+SELECT doc FROM archive.terms WHERE kind = $1;

@@ -54,13 +54,8 @@ func init() {
 				Doc:   "One envelope by id, with its recipients and where each is, and its documents: { envelopeId, emailSubject, status, sender, recipients, envelopeDocuments, ... }",
 				Steps: []Step{{Req: Req{URL: "/envelopes/{id}", Query: Q{"include": "recipients,documents"}}}},
 			}),
-			"document": Call[dsDoc, dsText](Plan{
-				Doc: "The words of an envelope's documents, all of them together or one by its documentId from get, as they stand: signed once it is completed. " +
-					"Returns { id, text }",
-				Steps: []Step{{As: "text", Words: &Download{Req: Req{URL: "/envelopes/{id}/documents/{document|combined}", Query: Q{"certificate": "false"}},
-					Name: "document.pdf", Mime: "application/pdf"}}},
-				Out: Obj{"id": "{id}", "text": "{text|}"},
-			}),
+			"document": Func("The words of an envelope's documents, all of them together or one by its documentId from get, as they stand: signed once it is completed. "+
+				"Returns { id, text }", dsDocument),
 			"create": Call[dsNew, dsMade](Plan{
 				Doc: "Draft an envelope of a document, as HTML or as a file in base64, for signers and people copied, which goes to no one until send; " +
 					"with send it goes now. With no fields placed, each signer places their own signature. Returns { envelopeId, status, statusDateTime }",
@@ -113,6 +108,20 @@ func init() {
 						"signed_at": "archive.sync_at(r->>'signedDateTime')"},
 					People: map[string]SQL{"person": "r->>'email'"}}}}}},
 	})
+}
+
+// dsDocument reads the words of an envelope's documents, or of one of them.
+func dsDocument(c *Client, in dsDoc) (dsText, error) {
+	sc := map[string]any{"id": in.ID}
+	if in.Document != "" {
+		sc["document"] = in.Document
+	}
+	words, _, err := c.download(Download{Req: Req{URL: "/envelopes/{id}/documents/{document|combined}", Query: Q{"certificate": "false"}},
+		Name: "document.pdf", Mime: "application/pdf"}, sc)
+	if err != nil {
+		return dsText{}, err
+	}
+	return dsText{ID: in.ID, Text: words}, nil
 }
 
 type (

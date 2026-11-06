@@ -33,20 +33,19 @@ import (
 )
 
 type Hub struct {
-	key   []byte
-	aead  cipher.AEAD
-	pg    *pgx.ConnConfig
-	main  *pgxpool.Pool
-	blobs blobStore
-	hints Hints
-	app   string
-	api   string
-	// mcpURL is MCP's own host, mcp.<domain>, and the issuer of its OAuth (mcp.go); the API's in development.
-	mcpURL string
-	tasks  *hubTasks
-	live   *liveHub
-	// connect are the connectors this server has an OAuth client for (connection.go).
-	connect connect.Providers
+	migrating bool
+	key       []byte
+	aead      cipher.AEAD
+	pg        *pgx.ConnConfig
+	main      *pgxpool.Pool
+	blobs     blobStore
+	hints     Hints
+	app       string
+	api       string
+	mcpURL    string
+	tasks     *hubTasks
+	live      *liveHub
+	connect   connect.Providers
 
 	mu   sync.Mutex
 	open map[string]*hubEntry
@@ -69,7 +68,6 @@ type hubTasks struct {
 	verify *oidc.IDTokenVerifier
 }
 
-// hubTask is a Cloud Tasks task as its REST API takes it.
 type hubTask struct {
 	Name         string    `json:"name"`
 	ScheduleTime time.Time `json:"scheduleTime"`
@@ -96,18 +94,17 @@ func gcpMetadata() *gcpToken {
 	return &gcpToken{meta: "http://" + coreEnv("GCE_METADATA_HOST", "metadata.google.internal")}
 }
 
-// Workspace is a workspace as its people see it. Type is personal, family or business; Icon is one of the web
-// app's icons and Color one of its 8 tints, by index; null is the default for the type.
 type Workspace struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Type      string    `json:"type"`
 	Icon      *string   `json:"icon"`
 	Color     *int16    `json:"color"`
+	Slug      string    `json:"slug"`
 	CreatedAt time.Time `json:"created_at,omitzero"`
+	Unread    bool      `json:"unread,omitempty"`
 }
 
-// WorkspaceLook is what may change of a workspace besides its name; a field left out stays as it is.
 type WorkspaceLook struct {
 	Type  *string `json:"type"`
 	Icon  *string `json:"icon"`
@@ -135,8 +132,31 @@ func withArchive(ctx context.Context, a *Archive) context.Context {
 	return context.WithValue(ctx, archiveKey{}, a)
 }
 
+var secretEnvs = map[string]string{}
+
+func secretsLoad() error {
+	raw := strings.TrimSpace(os.Getenv("ARCHIVE_ENV"))
+	if raw == "" {
+		return nil
+	}
+	if json.Unmarshal([]byte(raw), &secretEnvs) != nil {
+		return errors.New("ARCHIVE_ENV: want a JSON object of secret names and their values")
+	}
+	return nil
+}
+
+func secretEnv(name string) string {
+	if v, ok := secretEnvs[name]; ok {
+		return v
+	}
+	return os.Getenv(name)
+}
+
 func Open(ctx context.Context) (*Hub, error) {
-	return openHub(ctx, os.Getenv("DATABASE_URL"), "./data")
+	if err := secretsLoad(); err != nil {
+		return nil, err
+	}
+	return openHub(ctx, secretEnv("DATABASE_URL"), "./data")
 }
 
 func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
@@ -163,24 +183,17 @@ func openHub(ctx context.Context, dsn, dir string) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("DATABASE_URL: %w", err)
 	}
-	conns, err := connect.Load(os.Getenv)
+	conns, err := connect.Load(secretEnv)
 	if err != nil {
-		return nil, err
-	}
-	if err := syncCheck(); err != nil {
 		return nil, err
 	}
 	h := &Hub{key: key, aead: aead, pg: pg, blobs: blobs, hints: coreHints("en-US"), tasks: tasks, connect: conns, open: map[string]*hubEntry{}}
 	if err := h.urls("8080"); err != nil {
 		return nil, err
 	}
-	h.live = newLive(h.api, h.localApp())
+	h.live = newLive(h.api, key)
 	if h.main, err = storePool(ctx, pg, storeSysConns, nil, nil); err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
-	}
-	if err := h.migrate(ctx); err != nil {
-		h.Close()
-		return nil, fmt.Errorf("main database: %w", err)
 	}
 	return h, nil
 }
@@ -203,12 +216,30 @@ func (h *Hub) urls(port string) error {
 	return nil
 }
 
-// mainLock is the lock a process holds on the main database while it brings it to main.sql, so processes that
-// start at once do it one at a time.
 const mainLock = 7274
 
-// migrate brings the main database to main.sql at startup, before any workspace opens. A new install, with no
-// one and no workspace yet, starts with one workspace, whose first member becomes the admin.
+func (h *Hub) migrateAll(ctx context.Context) error {
+	h.migrating = true
+	if err := h.migrate(ctx); err != nil {
+		return fmt.Errorf("main database: %w", err)
+	}
+	rows, err := h.q().AllWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, row := range rows {
+		a, err := h.load(ctx, row.ID.String())
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		errs = append(errs, a.recount(ctx))
+		a.Close()
+	}
+	return errors.Join(errs...)
+}
+
 func (h *Hub) migrate(ctx context.Context) error {
 	conn, err := h.main.Acquire(ctx)
 	if err != nil {
@@ -241,8 +272,6 @@ func (h *Hub) migrate(ctx context.Context) error {
 	return err
 }
 
-// mainMigrate brings the main database to want, main.sql's snapshot, in tx, and stamps it with main.sql's hash.
-// It runs nothing that would delete data, and says what instead.
 func mainMigrate(ctx context.Context, tx pgx.Tx, want pgSchema) error {
 	lost, err := pgMigrate(ctx, tx, want)
 	if err != nil {
@@ -276,7 +305,6 @@ func (h *Hub) Close() {
 	if h.main != nil {
 		h.main.Close()
 	}
-	// What the stores committed is held in memory; send it last, so closing is not held up by it.
 	h.live.settle(liveSettle)
 }
 
@@ -300,15 +328,19 @@ func (h *Hub) unwrap(row generated.ArchiveWorkspace) ([]byte, error) {
 	return k, nil
 }
 
-// database is the name of a workspace's database, on the main database's server. The main database is no
-// workspace's.
 func (h *Hub) database(id string) string { return "archive_" + id }
 
 func (h *Hub) openArchive(ctx context.Context, row generated.ArchiveWorkspace, key []byte) (*Archive, error) {
 	id := row.ID.String()
 	cfg := h.pg.Copy()
 	cfg.Database = h.database(id)
-	st, err := OpenStore(ctx, cfg, id, authPassword(key), func(table, rid string) { h.live.moved(id, liveChange{Table: table, ID: rid}) })
+	st, err := OpenStore(ctx, cfg, id, authPassword(key), h.migrating, func(table, rid string) {
+		if table == "archive.push" {
+			h.pushed(row.ID, rid)
+			return
+		}
+		h.live.moved(id, liveChange{Table: table, ID: rid})
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -344,6 +376,9 @@ func (h *Hub) acquire(ctx context.Context, short string) (*Archive, func(), erro
 		}
 		close(e.ready)
 		h.mu.Unlock()
+		if err == nil && !h.migrating && ctx.Value(hubOpeningKey{}) == nil {
+			go h.opening(a.ws.ID)
+		}
 	} else {
 		e.users++
 		if e.idle != nil {
@@ -405,7 +440,6 @@ func (h *Hub) load(ctx context.Context, short string) (*Archive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("workspace %s: %w", short, err)
 	}
-	a.afterOpen(ctx)
 	return a, nil
 }
 
@@ -419,35 +453,62 @@ func (h *Hub) forget(short string) {
 	}
 }
 
-func (a *Archive) afterOpen(ctx context.Context) {
-	err := a.st.System(ctx, func(ctx context.Context) error {
-		return a.st.db(ctx).ResetProcessing(ctx)
-	})
-	err = errors.Join(err, a.syncMembers(ctx, false))
-	for _, kind := range []string{"workflow", "file", "sync"} {
-		next, nerr := a.nextDue(ctx, kind)
-		if nerr == nil && next != nil {
-			nerr = a.soon(ctx, kind, *next)
-		}
-		err = errors.Join(err, nerr)
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "archive: workspace %s: %v\n", a.ws.ID, err)
+type hubOpeningKey struct{}
+
+func (h *Hub) opening(ws uuid.UUID) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.wake(ctx, ws, "open", time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing its opening: %v\n", ws, err)
 	}
 }
 
+func (h *Hub) opened(ctx context.Context, ws uuid.UUID) error {
+	a, release, err := h.acquire(context.WithValue(ctx, hubOpeningKey{}, true), ws.String())
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer release()
+	err = a.syncMembers(ctx, false)
+	var work []generated.WorkRow
+	werr := a.st.System(ctx, func(ctx context.Context) (err error) {
+		work, err = a.st.db(ctx).Work(ctx)
+		return err
+	})
+	err = errors.Join(err, werr)
+	for _, w := range work {
+		err = errors.Join(err, a.soon(ctx, w.Kind, w.At))
+	}
+	return err
+}
+
 func (a *Archive) soon(ctx context.Context, kind string, at time.Time) error {
+	return a.hub.soon(ctx, a.ws.ID, kind, at)
+}
+
+func (h *Hub) soon(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
 	ctx = context.WithoutCancel(ctx)
-	r, err := a.hub.q().SoonDue(ctx, a.ws.ID, kind, at)
+	r, err := h.q().SoonDue(ctx, ws, kind, at)
 	switch {
 	case err != nil:
 		return err
 	case r.Changed:
-		return a.hub.wake(ctx, a.ws.ID, kind, r.At)
+		return h.wake(ctx, ws, kind, r.At)
 	case time.Since(r.At) > workflowRetry:
-		return a.hub.wake(ctx, a.ws.ID, kind, time.Now())
+		return h.wake(ctx, ws, kind, time.Now())
 	}
 	return nil
+}
+
+func (h *Hub) pushed(ws uuid.UUID, kind string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := h.soon(ctx, ws, kind, time.Now()); err != nil {
+		fmt.Fprintf(os.Stderr, "archive: workspace %s: queueing %s: %v\n", ws, kind, err)
+	}
 }
 
 func hubTasksOpen() (*hubTasks, error) {
@@ -477,11 +538,6 @@ func hubTasksOpen() (*hubTasks, error) {
 	return t, nil
 }
 
-// wake queues a task that does ws's work of kind at at. A task's name dedupes it: Cloud Tasks takes one name
-// once, and refuses it for an hour after its task ran. Most wakes are named for when they were asked for too,
-// so a wake for a time a task already woke for is a new task, not refused and lost; repeats within a second
-// are one. A claimed wake, the one a task queues for when another task's claim runs out, is named for that
-// time alone, which only that claim has, so tasks that found the work claimed queue one between them.
 func (h *Hub) wake(ctx context.Context, ws uuid.UUID, kind string, at time.Time) error {
 	return h.queue(ctx, ws, kind, at, time.Now().Unix())
 }
@@ -594,8 +650,6 @@ func (t *gcpToken) access(ctx context.Context) (string, error) {
 
 func (h *Hub) taskCaller(r *http.Request) error { return h.googleCaller(r, "/tasks") }
 
-// googleCaller checks that r is a call Google signed for Archive's tasks account, with an OIDC token whose
-// audience is the API's path: Cloud Tasks' calls of /tasks, and Pub/Sub's pushes to /push/<connector>.
 func (h *Hub) googleCaller(r *http.Request, path string) error {
 	t := h.tasks
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -648,18 +702,23 @@ func (h *Hub) tasksHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind, ok := strings.CutSuffix(body.Work, "s")
-	if !ok || kind != "workflow" && kind != "file" && kind != "sync" {
-		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files or syncs: %w", httpErrBadRequest))
+	if !ok || kind != "workflow" && kind != "file" && kind != "sync" && kind != "pull" && kind != "blob" && kind != "open" {
+		httpWrite(w, 0, nil, fmt.Errorf("work: want workflows, files, syncs, pulls, blobs or opens: %w", httpErrBadRequest))
 		return
 	}
+	start := time.Now()
 	err := h.work(r.Context(), body.Workspace, kind)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "archive: workspace %s %s: %v\n", body.Workspace, body.Work, err)
 	}
+	fmt.Fprintf(os.Stderr, "archive: tasks kind=%s workspace=%s ms=%d\n", kind, body.Workspace, time.Since(start).Milliseconds())
 	httpWrite(w, http.StatusNoContent, nil, err)
 }
 
 func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
+	if kind == "open" {
+		return h.opened(ctx, ws)
+	}
 	q := h.q()
 	lease := runTimeout + workflowRetry
 	switch {
@@ -667,6 +726,8 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 		lease += browseTimeout
 	case kind == "sync":
 		lease = syncBudget + syncRetry
+	case kind == "pull":
+		lease = pullBudget + pullTime + time.Minute
 	}
 	at, err := q.ClaimDueFor(ctx, time.Now().Add(lease), ws, kind)
 	if err == nil {
@@ -675,7 +736,7 @@ func (h *Hub) work(ctx context.Context, ws uuid.UUID, kind string) error {
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	if at, err = q.DueAt(ctx, ws, kind); err == nil && at.After(time.Now()) {
+	if at, err = q.DueAt(ctx, ws, kind); err == nil {
 		return h.wakeClaimed(ctx, ws, kind, at)
 	} else if errors.Is(err, pgx.ErrNoRows) {
 		return nil
@@ -701,28 +762,17 @@ func (h *Hub) wakeAll(ctx context.Context) error {
 
 func (a *Archive) nextDue(ctx context.Context, kind string) (*time.Time, error) {
 	var next *time.Time
-	return next, a.st.System(ctx, func(ctx context.Context) error {
-		q := a.st.db(ctx)
-		if kind == "file" {
-			pending, err := q.HasPendingFiles(ctx)
-			if pending {
-				t := time.Now().Add(hubFileDelay)
-				next = &t
-			}
-			return err
+	err := a.st.System(ctx, func(ctx context.Context) error {
+		t, err := a.st.db(ctx).WorkAt(ctx, kind)
+		if err == nil {
+			next = &t
 		}
-		n, err := q.NextWorkflowAt(ctx)
-		if kind == "sync" {
-			var t time.Time
-			t, err = q.NextSyncAt(ctx, time.Now().Add(syncLeaseCheck))
-			n = &t
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		next = n
 		return err
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	return next, err
 }
 
 func (a *Archive) scheduleWorkflows(ctx context.Context) error {
@@ -737,7 +787,8 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 	bg := context.WithoutCancel(ctx)
 	a, release, err := h.acquire(ctx, ws.String())
 	if errors.Is(err, ErrNotFound) {
-		return h.q().ClearDue(bg, ws, kind, claimed)
+		_, err = h.q().ClearDue(bg, ws, kind, claimed)
+		return err
 	}
 	if err != nil {
 		return err
@@ -754,6 +805,10 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 		case "sync":
 			ok, err = a.syncNext(ctx)
 			ok = ok && time.Since(start) < syncBudget
+		case "pull":
+			a.pullAll(ctx)
+		case "blob":
+			ok, err = a.blobNext(ctx)
 		}
 		if err != nil && ctx.Err() == nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s %ss: %v\n", ws, kind, err)
@@ -762,18 +817,30 @@ func (h *Hub) due(ctx context.Context, ws uuid.UUID, kind string, claimed time.T
 			break
 		}
 	}
-	next, err := a.nextDue(bg, kind)
-	if err != nil {
-		return err
+	for {
+		next, err := a.nextDue(bg, kind)
+		if err != nil {
+			return err
+		}
+		var n int64
+		if next == nil {
+			n, err = h.q().ClearDue(bg, ws, kind, claimed)
+		} else {
+			n, err = h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: ws, Kind: kind, Claimed: claimed})
+		}
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			if next == nil {
+				return nil
+			}
+			return h.wake(bg, ws, kind, *next)
+		}
+		if n, err = h.q().AgainDue(bg, ws, kind, claimed); err != nil || n == 0 {
+			return err
+		}
 	}
-	if next == nil {
-		return h.q().ClearDue(bg, ws, kind, claimed)
-	}
-	n, err := h.q().SetDue(bg, generated.SetDueParams{Next: *next, ID: ws, Kind: kind, Claimed: claimed})
-	if err != nil || n == 0 {
-		return err
-	}
-	return h.wake(bg, ws, kind, *next)
 }
 
 func (h *Hub) secret(r *http.Request) (string, error) {
@@ -790,9 +857,6 @@ func (h *Hub) secret(r *http.Request) (string, error) {
 	return "", fmt.Errorf("sign in or send a bearer token: %w", ErrUnauthorized)
 }
 
-// authenticate enters the workspace secret is a token for, of one of kinds: by default the API's, a session or
-// an API token. MCP takes API tokens and MCP clients' (Hub.mcp), and an MCP client's is for MCP alone, the
-// resource it was issued for.
 func (h *Hub) authenticate(ctx context.Context, secret, want string, kinds ...string) (*Archive, *Actor, func(), error) {
 	if len(kinds) == 0 {
 		kinds = []string{"api", "session"}
@@ -829,11 +893,10 @@ func localHost(host string) bool {
 	return host == "localhost" || ip != nil && ip.IsLoopback()
 }
 
-// localUser signs a request from this machine in as the first admin, while the web app is on localhost.
 func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, func(), error) {
 	u, err := h.q().FirstAdmin(ctx)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil, nil, fmt.Errorf("no users yet; add the first owner with archive user add <email>: %w", ErrUnauthorized)
+		return nil, nil, nil, fmt.Errorf("no users yet: %w", ErrUnauthorized)
 	}
 	if err != nil {
 		return nil, nil, nil, err
@@ -847,6 +910,9 @@ func (h *Hub) localUser(ctx context.Context, want string) (*Archive, *Actor, fun
 
 func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want string) (*Archive, *Actor, func(), error) {
 	short := cmp.Or(t.Workspace, want)
+	if short == "" && t.Kind == "api" && len(t.Workspaces) > 1 {
+		return nil, nil, nil, h.pickWorkspace(ctx, t.UserID)
+	}
 	if short == "" && len(t.Workspaces) > 0 {
 		short = t.Workspaces[0]
 	}
@@ -860,19 +926,20 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	stamp, err := generated.New(a.st.sys).Revision(ctx)
-	if err == nil && stamp != a.Catalog().stamp {
+	m, err := generated.New(a.st.sys).MemberEntry(ctx, t.Email)
+	if errors.Is(err, pgx.ErrNoRows) {
+		err = fmt.Errorf("you are not in this workspace: %w", ErrForbidden)
+	}
+	if err == nil && m.Revision != a.Catalog().stamp {
 		err = a.reload(ctx)
 	}
 	if err != nil {
 		release()
 		return nil, nil, nil, err
 	}
-	ac, err := a.userActor(ctx, &User{ID: t.UserID, Email: t.Email, Name: t.UserName})
-	if err != nil {
-		release()
-		return nil, nil, nil, err
-	}
+	role := a.roleID("u", m.ID)
+	ac := &Actor{UserID: t.UserID, Email: t.Email, Name: t.UserName, Role: role, UserRole: role, member: m.ID, entry: m}
+	ac.scoped = t.Workspace != ""
 	if t.Kind != "session" {
 		ac.TokenName = t.Name
 	}
@@ -880,6 +947,18 @@ func (h *Hub) enter(ctx context.Context, t generated.AuthenticateRow, want strin
 		ac.Role, ac.TokenID = cmp.Or(t.Role, ac.Role), t.ID
 	}
 	return a, ac, release, nil
+}
+
+func (h *Hub) pickWorkspace(ctx context.Context, user uuid.UUID) error {
+	rows, err := h.q().UserWorkspaces(ctx, user)
+	if err != nil {
+		return err
+	}
+	names := make([]string, len(rows))
+	for i, w := range rows {
+		names[i] = fmt.Sprintf("%s (%s)", w.Name, w.ID)
+	}
+	return fmt.Errorf("this key works in several workspaces, so send Archive-Workspace with the id of one: %s: %w", strings.Join(names, ", "), httpErrBadRequest)
 }
 
 func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
@@ -899,7 +978,8 @@ func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 			return
 		}
 		defer release()
-		next(a).ServeHTTP(w, r.WithContext(withArchive(WithActor(r.Context(), ac), a)))
+		ctx := context.WithValue(WithActor(r.Context(), ac), clientKey{}, clientOf(r))
+		next(a).ServeHTTP(w, r.WithContext(withArchive(ctx, a)))
 	})
 }
 
@@ -919,9 +999,6 @@ func (h *Hub) inWorkspace(f func(a *Archive, w http.ResponseWriter, r *http.Requ
 	}
 }
 
-// mcp serves MCP to a bearer token: an API token, or an MCP client's from OAuth (mcp.go), which acts in the one
-// workspace it was granted for. Archive-Workspace, if a client sends it, must be that workspace. It takes no
-// session, by cookie or as a bearer, so no sign-in to the web app ever reaches it.
 func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 	scheme, tok, _ := strings.Cut(r.Header.Get("Authorization"), " ")
 	err := fmt.Errorf("send Authorization: Bearer <token>, from OAuth or an API token: %w", ErrUnauthorized)
@@ -951,8 +1028,6 @@ func (h *Hub) mcp(w http.ResponseWriter, r *http.Request) {
 				}
 				return a.mcps[ac.member]
 			},
-				// Stateless: no Mcp-Session-Id, so any instance answers any request and a redeploy drops nothing.
-				// run needs nothing from the client mid-call, so plain JSON replies are enough.
 				&mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, PropagateRequestCancellation: true}))
 	}
 	hd := a.mcph
@@ -974,14 +1049,12 @@ func (a *Archive) workspaceAdmin(ctx context.Context) (*Actor, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !a.owner(ctx, ac.UserRole) {
-		return nil, fmt.Errorf("only owners of this workspace change it: %w", ErrForbidden)
+	if !a.has(ctx, ac.UserRole, a.prefix+"_engineer") {
+		return nil, fmt.Errorf("only engineers and the owner change this workspace: %w", ErrForbidden)
 	}
 	return ac, nil
 }
 
-// admin says whether whoever asks is an admin of this Archive, by their user in the main database, in whichever
-// workspace they ask from. A read-only token is never one.
 func (h *Hub) admin(ctx context.Context) error {
 	ac, err := authUser(ctx)
 	if err != nil {
@@ -994,57 +1067,8 @@ func (h *Hub) admin(ctx context.Context) error {
 	return err
 }
 
-// Admins are the people who run this Archive.
-func (h *Hub) Admins(ctx context.Context) ([]User, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := h.q().Admins(ctx)
-	out := []User{}
-	for _, r := range rows {
-		out = append(out, User(r))
-	}
-	return out, err
-}
-
-// SetAdmin makes the person with the email an admin, or no longer one; the last admin stays one.
-func (h *Hub) SetAdmin(ctx context.Context, email string, admin bool) (*User, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	email, err := authEmail(email)
-	if err != nil {
-		return nil, err
-	}
-	r, err := h.q().SetAdmin(ctx, admin, email)
-	if errors.Is(err, pgx.ErrNoRows) {
-		if _, err := h.q().UserByEmail(ctx, email); err != nil {
-			return nil, fmt.Errorf("user %s: %w", email, ErrNotFound)
-		}
-		return nil, fmt.Errorf("%s is the last admin of this Archive: %w", email, ErrConflict)
-	}
-	if err != nil {
-		return nil, err
-	}
-	u := User(r)
-	h.liveUser(ctx, u.ID)
-	return &u, nil
-}
-
 func workspaceOut(r generated.ArchiveWorkspace) Workspace {
-	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, CreatedAt: r.CreatedAt}
-}
-
-func (h *Hub) Workspaces(ctx context.Context) ([]Workspace, error) {
-	if err := h.admin(ctx); err != nil {
-		return nil, err
-	}
-	rows, err := h.q().AllWorkspaces(ctx)
-	out := []Workspace{}
-	for _, r := range rows {
-		out = append(out, workspaceOut(r))
-	}
-	return out, err
+	return Workspace{ID: r.ID.String(), Name: r.Name, Type: string(r.Type), Icon: r.Icon, Color: r.Color, Slug: r.Slug, CreatedAt: r.CreatedAt}
 }
 
 func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (*Workspace, error) {
@@ -1063,7 +1087,8 @@ func (h *Hub) AddWorkspace(ctx context.Context, name, owner string, look Workspa
 }
 
 func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
-	if err := h.admin(ctx); err != nil {
+	ac, err := authUser(ctx)
+	if err != nil {
 		return err
 	}
 	ws, err := uuid.Parse(id)
@@ -1072,6 +1097,21 @@ func (h *Hub) DeleteWorkspace(ctx context.Context, id string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("workspace %q: %w", id, ErrNotFound)
+	}
+	if ac.TokenID != uuid.Nil && archiveFrom(ctx).ws.ID != ws {
+		return fmt.Errorf("a token only deletes its own workspace: %w", ErrForbidden)
+	}
+	a, release, err := h.acquire(ctx, id)
+	if err != nil {
+		return err
+	}
+	m, err := a.memberOf(ctx, ac.Email)
+	release()
+	if err != nil {
+		return err
+	}
+	if m.Role != "owner" {
+		return fmt.Errorf("only this workspace's owner deletes it: %w", ErrForbidden)
 	}
 	tell := h.liveMembers(ctx, ws)
 	h.forget(id)
@@ -1105,7 +1145,8 @@ func workspaceName(name string) (string, error) {
 	return name, nil
 }
 
-// typ is the look's type, once the look is valid. The icons are archive.workspace's to check.
+var workspaceIcons = []string{"aframe", "apartment", "beachhouse", "bungalow", "tent", "caravan", "cottage", "shed", "houseboat", "hut", "igloo", "logcabin", "stilts", "tipi", "treehouse", "castle", "duplex", "farmhouse", "lighthouse", "manor", "pagoda", "palace", "rowhouse", "townhouse", "windmill", "church", "daycare", "school", "farm", "greenhouse", "accounting", "architect", "bank", "datacentre", "insurance", "lawfirm", "marketing", "office", "realestate", "recruiter", "server", "skyscraper", "software", "exchange", "dental", "hospital", "clinic", "pharmacy", "vet", "bakery", "bar", "brewery", "butcher", "cafe", "diner", "fishmonger", "foodtruck", "grocery", "market", "pizzeria", "restaurant", "winery", "bookshop", "boutique", "florist", "shop", "hardware", "jeweller", "barbershop", "gym", "salon", "spa", "yoga", "gallery", "cinema", "hotel", "library", "museum", "music", "photo", "stadium", "theatre", "capitol", "courthouse", "nonprofit", "townhall", "university", "garage", "dealership", "carwash", "petrol", "construction", "factory", "silo", "depot", "mine", "warehouse", "workshop", "hangar", "airtower", "bridge", "port", "station", "oilwell", "power", "solar", "telecom", "watertower", "windfarm"}
+
 func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
 	ve := &ValidationError{Type: "workspace"}
 	var out *generated.ArchiveWorkspaceType
@@ -1117,19 +1158,13 @@ func (l WorkspaceLook) typ() (*generated.ArchiveWorkspaceType, error) {
 			ve.Errors = append(ve.Errors, FieldError{Path: "type", Message: "want personal, family or business"})
 		}
 	}
-	if l.Color != nil && (*l.Color < 0 || *l.Color > 7) {
-		ve.Errors = append(ve.Errors, FieldError{Path: "color", Message: "want a tint from 0 to 7"})
+	if l.Icon != nil && !slices.Contains(workspaceIcons, *l.Icon) {
+		ve.Errors = append(ve.Errors, FieldError{Path: "icon", Message: "want one of " + strings.Join(workspaceIcons, ", ")})
+	}
+	if l.Color != nil && (*l.Color < 0 || *l.Color > 31) {
+		ve.Errors = append(ve.Errors, FieldError{Path: "color", Message: "want a tint from 0 to 31"})
 	}
 	return out, ve.err()
-}
-
-// workspaceErr says which field archive.workspace's checks refused.
-func workspaceErr(err error) error {
-	var pe *pgconn.PgError
-	if errors.As(err, &pe) && pe.Code == "23514" && pe.ConstraintName == "workspace_icon" {
-		return &ValidationError{Type: "workspace", Errors: []FieldError{{Path: "icon", Message: "want one of the web app's icons, like robot, chest or cottage"}}}
-	}
-	return storeErr(err)
 }
 
 func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look WorkspaceLook) (generated.ArchiveWorkspace, error) {
@@ -1146,7 +1181,6 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 	if typ == nil {
 		typ = new(generated.ArchiveWorkspaceTypePersonal)
 	}
-	// A new install's first workspace has no owner yet: the first archive user add is.
 	if owner != "" {
 		if owner, err = authEmail(owner); err != nil {
 			return row, err
@@ -1161,7 +1195,7 @@ func (h *Hub) createWorkspace(ctx context.Context, name, owner string, look Work
 		return row, fmt.Errorf("workspace %s already exists: %w", short, ErrConflict)
 	}
 	if err != nil {
-		return row, workspaceErr(err)
+		return row, storeErr(err)
 	}
 	ctx = context.WithoutCancel(ctx)
 	fail := func(err error) (generated.ArchiveWorkspace, error) {
@@ -1211,7 +1245,6 @@ func (a *Archive) Info(ctx context.Context) (*Workspace, error) {
 	return &w, nil
 }
 
-// SetInfo renames the workspace and changes its look, what is given of them, all in one write.
 func (a *Archive) SetInfo(ctx context.Context, name *string, look WorkspaceLook) (*Workspace, error) {
 	if _, err := a.workspaceAdmin(ctx); err != nil {
 		return nil, err
@@ -1229,7 +1262,7 @@ func (a *Archive) SetInfo(ctx context.Context, name *string, look WorkspaceLook)
 			return nil, err
 		}
 		if err := a.hub.q().UpdateWorkspace(ctx, generated.UpdateWorkspaceParams{ID: a.ws.ID, Name: name, Type: typ, Icon: look.Icon, Color: look.Color}); err != nil {
-			return nil, workspaceErr(err)
+			return nil, storeErr(err)
 		}
 		a.moved(ctx, "archive.workspace", a.ws.ID.String())
 		a.hub.liveMembers(ctx, a.ws.ID)()
@@ -1268,13 +1301,14 @@ func (x prefixBlobs) open(ctx context.Context, key string, size int64) (io.ReadS
 	return x.b.open(ctx, x.p+key, size)
 }
 
+func (x prefixBlobs) move(ctx context.Context, from, to string) error {
+	return x.b.move(ctx, x.p+from, x.p+to)
+}
+
 func (x prefixBlobs) remove(ctx context.Context, key string) error { return x.b.remove(ctx, x.p+key) }
 
 func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *http.Request) (int, any, error))) {
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
-	authed("GET /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(archiveFrom(r.Context()).Info(r.Context()))
-	})
 	authed("PATCH /auth/workspace", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
 			Name *string `json:"name"`
@@ -1284,9 +1318,6 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 			return 0, nil, err
 		}
 		return ok(archiveFrom(r.Context()).SetInfo(r.Context(), body.Name, body.WorkspaceLook))
-	})
-	authed("GET /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
-		return ok(h.Workspaces(r.Context()))
 	})
 	authed("POST /auth/workspaces", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		var body struct {
@@ -1303,4 +1334,367 @@ func (h *Hub) workspaceRoutes(authed func(string, func(http.ResponseWriter, *htt
 	authed("DELETE /auth/workspaces/{id}", func(w http.ResponseWriter, r *http.Request) (int, any, error) {
 		return http.StatusNoContent, nil, h.DeleteWorkspace(r.Context(), r.PathValue("id"))
 	})
+}
+
+func (a *Archive) groupID(ctx context.Context, s string, make bool) (*uuid.UUID, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	if id, err := uuid.Parse(s); err == nil {
+		return &id, nil
+	}
+	id, err := a.st.db(ctx).GroupByName(ctx, s)
+	if errors.Is(err, pgx.ErrNoRows) && make {
+		err = a.st.Q(ctx).QueryRow(ctx, `INSERT INTO archive."group" (name) VALUES ($1) RETURNING id`, s).Scan(&id)
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &ValidationError{Type: "group", Errors: []FieldError{{Path: "access", Message: fmt.Sprintf(`no group %q; make it with archive.create("group", { name: %q })`, s, s)}}}
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+func (a *Archive) groupNames(ctx context.Context, tb *Table, in map[string]any) error {
+	if s, ok := in["access"].(string); ok && tb.col("access") != nil {
+		id, err := a.groupID(ctx, s, false)
+		if ve := (*ValidationError)(nil); errors.As(err, &ve) {
+			ve.Type = tb.Name
+		}
+		if err != nil {
+			return err
+		}
+		if id == nil {
+			in["access"] = nil
+		} else {
+			in["access"] = id.String()
+		}
+	}
+	if tb.Schema != "archive" || tb.Name != "member" {
+		return nil
+	}
+	s, ok := in["group"].(string)
+	if !ok {
+		return nil
+	}
+	id, err := a.groupID(ctx, s, true)
+	if err != nil {
+		var ve *ValidationError
+		if errors.As(err, &ve) {
+			ve.Type, ve.Errors[0].Path = "member", "group"
+		}
+		return err
+	}
+	in["group"] = nil
+	if id != nil {
+		in["group"] = id.String()
+	}
+	return nil
+}
+
+type clientKey struct{}
+
+type client struct{ ip, agent string }
+
+func clientOf(r *http.Request) client {
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	if f := r.Header.Get("X-Forwarded-For"); f != "" {
+		ip = strings.TrimSpace(f[strings.LastIndex(f, ",")+1:])
+	}
+	return client{ip: ip, agent: r.UserAgent()}
+}
+
+func (a *Archive) ownerInPerson(ctx context.Context, what string) (*Actor, error) {
+	ac, err := authUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if ac.TokenID != uuid.Nil || ctx.Value(runWroteKey{}) != nil {
+		return nil, fmt.Errorf("the owner %s in the app, not a token or a run: %w", what, ErrForbidden)
+	}
+	m, err := a.memberOf(ctx, ac.Email)
+	if err != nil {
+		return nil, err
+	}
+	if m.Role != "owner" {
+		return nil, fmt.Errorf("only the owner %s: %w", what, ErrForbidden)
+	}
+	return ac, nil
+}
+
+func (a *Archive) businessName(ctx context.Context) (string, error) {
+	var name string
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		name, err = a.st.db(ctx).BusinessName(ctx)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", fmt.Errorf("fill in the business details first: %w", ErrConflict)
+	}
+	return name, err
+}
+
+func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map[string]any, error) {
+	ac, err := a.ownerInPerson(ctx, "signs an agreement")
+	if err != nil {
+		return nil, err
+	}
+	kind, _ := data["kind"].(string)
+	title := ""
+	switch kind {
+	case "msa":
+		title = "Master services agreement and data processing addendum"
+	case "baa":
+		title = "Business associate agreement"
+	default:
+		return nil, &ValidationError{Type: "agreement", Errors: []FieldError{{Path: "kind", Message: "want msa or baa"}}}
+	}
+	if a.ws.Type != generated.ArchiveWorkspaceTypeBusiness {
+		return nil, fmt.Errorf("only a business workspace signs agreements: %w", ErrForbidden)
+	}
+	doc, err := a.hub.q().TermsOf(ctx, kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("there is no %s text to sign yet: %w", kind, ErrConflict)
+	}
+	if err != nil {
+		return nil, err
+	}
+	verr := &ValidationError{Type: "agreement"}
+	in := map[string]string{}
+	for _, k := range []string{"company", "signer", "title"} {
+		s, _ := data[k].(string)
+		if in[k] = strings.TrimSpace(s); in[k] == "" {
+			verr.Errors = append(verr.Errors, FieldError{Path: k, Message: "required"})
+		}
+	}
+	if len(verr.Errors) > 0 {
+		return nil, verr
+	}
+	c, _ := ctx.Value(clientKey{}).(client)
+	m, err := OfficeRead(doc, "agreement.docx")
+	if err != nil {
+		return nil, err
+	}
+	var text strings.Builder
+	for _, p := range m.Paragraphs {
+		text.WriteString(p.Text)
+	}
+	var ops []OfficeOp
+	for _, f := range [][2]string{{"company", in["company"]}, {"signer", in["signer"]}, {"title", in["title"]}, {"email", ac.Email},
+		{"date", time.Now().UTC().Format("January 2, 2006")}} {
+		if find := "{{" + f[0] + "}}"; strings.Contains(text.String(), find) {
+			ops = append(ops, OfficeOp{Op: "replace_text", Find: find, Replace: f[1], All: true})
+		}
+	}
+	if doc, err = OfficeEdit(doc, "agreement.docx", ops); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(doc)
+	return map[string]any{"name": title, "kind": kind, "doc": `\x` + hex.EncodeToString(doc), "hash": hex.EncodeToString(sum[:]), "company": in["company"], "signer": in["signer"], "title": in["title"],
+		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
+}
+
+func (a *Archive) signup(ctx context.Context, signed func(r map[string]any) error) (map[string]any, error) {
+	out := map[string]any{"agreement": []map[string]any{}, "business": []map[string]any{}, "billing": []map[string]any{}}
+	if a.ws.Type != generated.ArchiveWorkspaceTypeBusiness {
+		return out, nil
+	}
+	return out, a.as(ctx, func(ctx context.Context) error {
+		for typ := range out {
+			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)
+			if err != nil {
+				return err
+			}
+			if typ == "agreement" {
+				for _, r := range rows {
+					if err := signed(r); err != nil {
+						return err
+					}
+					delete(r, "doc")
+				}
+			}
+			out[typ] = rows
+		}
+		return nil
+	})
+}
+
+func (a *Archive) onboarding(ctx context.Context) (any, error) {
+	models, terms := map[string]*OfficeModel{}, map[string]*OfficeModel{}
+	if a.ws.Type == generated.ArchiveWorkspaceTypeBusiness {
+		rows, err := a.hub.q().Terms(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			if terms[r.Kind], err = OfficeView(r.Doc, "agreement.docx"); err != nil {
+				return nil, err
+			}
+		}
+	}
+	out, err := a.signup(ctx, func(r map[string]any) error {
+		s, _ := r["doc"].(string)
+		doc, err := hex.DecodeString(strings.TrimPrefix(s, `\x`))
+		if err != nil {
+			return err
+		}
+		kind, _ := r["kind"].(string)
+		models[kind], err = OfficeView(doc, "agreement.docx")
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	out["terms"], out["models"] = terms, models
+	return out, nil
+}
+
+type stripeAPI struct{ base, secret, publishable string }
+
+func stripeEnv() (*stripeAPI, error) {
+	raw := strings.TrimSpace(secretEnv("ARCHIVE_STRIPE"))
+	if raw == "" {
+		return nil, fmt.Errorf("this server does not link cards: ARCHIVE_STRIPE is not set: %w", ErrForbidden)
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil || u.Query().Get("publishable") == "" {
+		return nil, errors.New("ARCHIVE_STRIPE: want https://<secret key>@api.stripe.com?publishable=<publishable key>")
+	}
+	return &stripeAPI{base: u.Scheme + "://" + u.Host, secret: u.User.Username(), publishable: u.Query().Get("publishable")}, nil
+}
+
+func (s *stripeAPI) call(ctx context.Context, method, path string, form url.Values, once string, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, s.base+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(s.secret, "")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if once != "" {
+		req.Header.Set("Idempotency-Key", once)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("stripe: %w", err)
+	}
+	defer res.Body.Close()
+	b, err := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("stripe: %w", err)
+	}
+	if res.StatusCode >= 300 {
+		var e struct {
+			Error struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		json.Unmarshal(b, &e)
+		return fmt.Errorf("stripe: %s", cmp.Or(e.Error.Message, res.Status))
+	}
+	return json.Unmarshal(b, out)
+}
+
+func (a *Archive) billingCustomer(ctx context.Context) (string, error) {
+	var customer string
+	err := a.sys(ctx, func(ctx context.Context) (err error) {
+		customer, err = a.st.db(ctx).BillingCustomer(ctx)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return customer, err
+}
+
+func (a *Archive) billingSave(ctx context.Context, _ uuid.UUID, data map[string]any) (map[string]any, error) {
+	if id, ok := data["setup_intent"].(string); ok {
+		return a.cardLinked(ctx, id)
+	}
+	return a.cardStart(ctx)
+}
+
+func (a *Archive) cardStart(ctx context.Context) (map[string]any, error) {
+	ac, err := a.ownerInPerson(ctx, "links a card")
+	if err != nil {
+		return nil, err
+	}
+	company, err := a.businessName(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s, err := stripeEnv()
+	if err != nil {
+		return nil, err
+	}
+	customer, err := a.billingCustomer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if customer == "" {
+		var c struct {
+			ID string `json:"id"`
+		}
+		form := url.Values{"name": {company}, "email": {ac.Email}, "metadata[workspace]": {a.ws.ID.String()}}
+		if err := s.call(ctx, http.MethodPost, "/v1/customers", form, "archive-customer-"+a.ws.ID.String(), &c); err != nil {
+			return nil, err
+		}
+		customer = c.ID
+		if err := a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).AddBilling(ctx, customer) }); err != nil {
+			return nil, err
+		}
+	}
+	var si struct {
+		Secret string `json:"client_secret"`
+	}
+	form := url.Values{"customer": {customer}, "payment_method_types[]": {"card"}, "usage": {"off_session"}, "metadata[workspace]": {a.ws.ID.String()}}
+	if err := s.call(ctx, http.MethodPost, "/v1/setup_intents", form, "", &si); err != nil {
+		return nil, err
+	}
+	return map[string]any{"secret": si.Secret, "key": s.publishable}, nil
+}
+
+func (a *Archive) cardLinked(ctx context.Context, id string) (map[string]any, error) {
+	if _, err := a.ownerInPerson(ctx, "links a card"); err != nil {
+		return nil, err
+	}
+	s, err := stripeEnv()
+	if err != nil {
+		return nil, err
+	}
+	customer, err := a.billingCustomer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var si struct {
+		Status   string `json:"status"`
+		Customer string `json:"customer"`
+		Method   struct {
+			ID   string `json:"id"`
+			Card struct {
+				Brand string `json:"brand"`
+				Last4 string `json:"last4"`
+			} `json:"card"`
+		} `json:"payment_method"`
+	}
+	if err := s.call(ctx, http.MethodGet, "/v1/setup_intents/"+url.PathEscape(id)+"?expand[]=payment_method", nil, "", &si); err != nil {
+		return nil, err
+	}
+	if customer == "" || si.Customer != customer {
+		return nil, fmt.Errorf("setup_intent %q is not this workspace's: %w", id, ErrForbidden)
+	}
+	if si.Status != "succeeded" {
+		return nil, fmt.Errorf("the card is not linked yet, its setup is %s: %w", si.Status, ErrConflict)
+	}
+	form := url.Values{"invoice_settings[default_payment_method]": {si.Method.ID}}
+	var done struct{}
+	if err := s.call(ctx, http.MethodPost, "/v1/customers/"+url.PathEscape(customer), form, "", &done); err != nil {
+		return nil, err
+	}
+	card := si.Method.Card.Brand + " " + si.Method.Card.Last4
+	err = a.sys(ctx, func(ctx context.Context) error { return a.st.db(ctx).LinkCard(ctx, card) })
+	return map[string]any{"card": card}, err
 }

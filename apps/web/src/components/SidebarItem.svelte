@@ -2,23 +2,21 @@
   import { getContext } from 'svelte';
   import Icon from './Icon.svelte';
   import Tooltip from './Tooltip.svelte';
-  import Kbd from './Kbd.svelte';
   import InlineEdit from './InlineEdit.svelte';
   import { contextmenu } from '../lib/contextmenu.svelte.js';
 
-  let { href, icon, label, active = false, onclick, shortcut, accent = false, leading, before, actions, badge, items, onrename, editing = $bindable(false) } = $props();
+  let { href, icon, label, active = false, onclick, accent = false, leading, badge, tall = false, detail, dot = false, ondouble, items, onrename, editing = $bindable(false) } = $props();
 
   const sidebar = getContext('sidebar');
   const collapsed = $derived(sidebar?.collapsed ?? false);
 </script>
 
 {#snippet row()}
-  <div class={['item', { active, collapsed, accent, hasActions: actions }]} {@attach items && !editing && contextmenu(items)}>
-    {#if before && !collapsed}<span class="before">{@render before()}</span>{/if}
+  <div class={['item', { active, collapsed, accent, tall }]} {@attach items && !editing && contextmenu(items)}>
     {#if editing && onrename}
       <InlineEdit value={label} label={`Rename ${label}`} onsave={(title) => { editing = false; onrename(title); }} oncancel={() => (editing = false)} />
     {:else if href}
-      <a class="hit" {href} aria-current={active ? 'page' : undefined} aria-label={collapsed ? label : undefined} ondblclick={onrename ? (event) => { event.preventDefault(); editing = true; } : undefined}>
+      <a class="hit" {href} aria-current={active ? 'page' : undefined} aria-label={collapsed ? label : undefined} ondblclick={ondouble ? (event) => { event.preventDefault(); ondouble(); } : onrename ? (event) => { event.preventDefault(); editing = true; } : undefined}>
         {@render content()}
       </a>
     {:else}
@@ -26,7 +24,6 @@
         {@render content()}
       </button>
     {/if}
-    {#if actions && !collapsed && !editing}<span class="actions">{@render actions()}</span>{/if}
   </div>
 {/snippet}
 
@@ -36,9 +33,16 @@
   {:else if icon}
     <span class="glyph"><Icon {icon} size="md" /></span>
   {/if}
-  <span class="label">{label}</span>
+  {#if tall}
+    <span class="text">
+      <span class="label">{label}</span>
+      {#if detail}<span class="detail">{detail}</span>{/if}
+    </span>
+  {:else}
+    <span class="label">{label}</span>
+  {/if}
   {#if badge && !collapsed}<span class="badge">{badge}</span>{/if}
-  {#if shortcut && !collapsed}<span class="kbd"><Kbd keys={shortcut} subtle /></span>{/if}
+  {#if dot}<i class="dot" role="img" aria-label="New message"></i>{/if}
 {/snippet}
 
 {#if collapsed}
@@ -89,14 +93,49 @@
     white-space: nowrap;
   }
 
-  .before {
-    display: inline-flex;
-    flex: none;
-    padding-inline-start: var(--space-1);
+  .tall .hit {
+    height: auto;
+    padding: var(--space-1) var(--space-1-5);
   }
 
-  .before + .hit {
-    padding-inline-start: var(--space-1);
+  .tall .glyph {
+    width: auto;
+    height: auto;
+  }
+
+  .text {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+    line-height: var(--leading-snug);
+  }
+
+  .tall .label {
+    flex: none;
+    color: var(--color-text);
+  }
+
+  .detail {
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+  }
+
+  .dot {
+    flex: none;
+    width: var(--space-2);
+    height: var(--space-2);
+    border-radius: var(--radius-full);
+    background: var(--led-blue);
+  }
+
+  .collapsed .dot {
+    position: absolute;
+    inset-block-start: var(--space-0-5);
+    inset-inline-end: var(--space-0-5);
+    box-shadow: 0 0 0 var(--space-0-5) var(--color-sidebar);
   }
 
   .glyph {
@@ -135,70 +174,10 @@
     opacity: 0;
   }
 
-  .item {
-    --row-fill: transparent;
-  }
-
-  .item:hover,
-  .item:focus-within {
-    --row-fill: var(--color-fill);
-  }
-
-  .active,
-  .active:hover {
-    --row-fill: var(--color-fill-strong);
-  }
-
-  .actions {
-    position: absolute;
-    inset-block: 0;
-    inset-inline-end: 0;
-    display: inline-flex;
-    align-items: center;
-    padding-inline: var(--space-0-5);
-    border-start-end-radius: inherit;
-    border-end-end-radius: inherit;
-    background: linear-gradient(var(--row-fill), var(--row-fill)), var(--color-sidebar);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--duration-fast) var(--ease-out);
-  }
-
-  .actions::before {
-    content: '';
-    position: absolute;
-    inset-block: 0;
-    inset-inline-end: 100%;
-    width: var(--space-6);
-    background: inherit;
-    mask-image: var(--fade-end);
-  }
-
-  .item:hover .actions,
-  .item:focus-within .actions,
-  .actions:has(:global([aria-expanded='true'])) {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  @media (hover: none) {
-    .actions {
-      display: none;
-    }
-  }
-
   .badge {
     color: var(--color-text-tertiary);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
   }
 
-  .kbd {
-    opacity: 0;
-    transition: opacity var(--duration-fast) var(--ease-out);
-  }
-
-  .item:hover .kbd {
-    opacity: 1;
-  }
 </style>

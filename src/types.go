@@ -191,20 +191,24 @@ var semChecks = map[string]func(v any) error{
 	}),
 	"ssn_ranges": semStrCheck("not a valid SSN", semSSN),
 	"national": func(v any) error {
-		m, _ := v.(map[string]any)
-		c, sc := semS(m, "country"), semS(m, "scheme")
-		n, ok := semNationals[c]
-		if !ok || n.scheme != sc {
-			return fmt.Errorf("no national id scheme %q for %q", sc, c)
+		s, _ := v.(string)
+		c, n, _ := strings.Cut(s, " ")
+		id, ok := semNationals[c]
+		if !ok {
+			return fmt.Errorf("no national id scheme for %q", c)
 		}
-		if !n.check(semS(m, "value")) {
-			return fmt.Errorf("invalid %s", sc)
+		if !id.check(n) {
+			return fmt.Errorf("invalid %s", id.scheme)
 		}
 		return nil
 	},
 	"passport": func(v any) error {
-		m, _ := v.(map[string]any)
-		if !semPassportRe.MatchString(semS(m, "number")) {
+		s, _ := v.(string)
+		c, n, _ := strings.Cut(s, " ")
+		if k, err := semCountry(c); err != nil || k != c || len(c) != 2 {
+			return fmt.Errorf("no issuing country %q", c)
+		}
+		if !semPassportRe.MatchString(n) {
 			return errors.New("number must be 6-9 letters or digits")
 		}
 		return nil
@@ -285,22 +289,6 @@ var semChecks = map[string]func(v any) error{
 	}),
 }
 
-var semMasks = map[string]func(v any) string{
-	"card": func(v any) string {
-		m := v.(map[string]any)
-		return m["brand"].(string) + " **** " + m["last4"].(string)
-	},
-	"mask_ssn": func(v any) string { return "***-**-" + v.(string)[5:] },
-	"national": func(v any) string {
-		m := v.(map[string]any)
-		return m["country"].(string) + " " + m["scheme"].(string) + " " + semMask(m["value"].(string), 4)
-	},
-	"passport": func(v any) string {
-		m := v.(map[string]any)
-		return m["country"].(string) + " " + semMask(m["number"].(string), 3)
-	},
-}
-
 func semStrCheck(msg string, ok func(string) bool) func(any) error {
 	return func(v any) error {
 		if s, _ := v.(string); !ok(s) {
@@ -345,14 +333,6 @@ func semMust(s string, err error) string {
 	return s
 }
 
-func semPlain(v any) string {
-	if s, ok := v.(string); ok {
-		return s
-	}
-	b, _ := json.Marshal(v)
-	return string(b)
-}
-
 func semNumStr(v any) (string, bool) {
 	switch x := v.(type) {
 	case float64:
@@ -389,13 +369,6 @@ func semAllDigits(s string) bool {
 		}
 	}
 	return s != ""
-}
-
-func semMask(s string, keep int) string {
-	if len(s) <= keep {
-		return strings.Repeat("*", len(s))
-	}
-	return strings.Repeat("*", len(s)-keep) + s[len(s)-keep:]
 }
 
 func semTag(h Hints) (tag language.Tag, hinted bool) {
@@ -1214,32 +1187,37 @@ var semNationals = map[string]struct {
 	}},
 }
 
-func semCountryValue(in any, h Hints, keys ...string) (country, value string, conf float64, err error) {
-	conf = 1
-	switch x := in.(type) {
-	case map[string]any:
-		country, value = semFirst(x, "country", "issuing_country"), semFirst(x, keys...)
-	case string:
-		country, value, conf = semHintCountry(h), x, 0.8
+func semCountryValue(in any, h Hints, keys ...string) ([]Candidate, error) {
+	if m, ok := in.(map[string]any); ok {
+		c, err := semCountry(semFirst(m, "country", "issuing_country"))
+		if err != nil {
+			return nil, err
+		}
+		return []Candidate{{Value: c + " " + semClean(semFirst(m, keys...)), Confidence: 1}}, nil
 	}
-	country, err = semCountry(country)
-	return country, semClean(value), conf, err
+	s, _ := in.(string)
+	var out []Candidate
+	if p, rest, ok := strings.Cut(s, " "); ok && len(p) == 2 {
+		if c, err := semCountry(p); err == nil {
+			out = append(out, Candidate{Value: c + " " + semClean(rest), Confidence: 1})
+		}
+	}
+	c, err := semCountry(semHintCountry(h))
+	if err != nil && len(out) == 0 {
+		return nil, err
+	}
+	if err == nil {
+		out = append(out, Candidate{Value: c + " " + semClean(s), Confidence: 0.8})
+	}
+	return out, nil
 }
 
 func semParseNational(in any, h Hints) ([]Candidate, error) {
-	c, val, conf, err := semCountryValue(in, h, "value", "number")
-	if err != nil {
-		return nil, err
-	}
-	return []Candidate{{Value: map[string]any{"country": c, "scheme": semNationals[c].scheme, "value": val}, Confidence: conf}}, nil
+	return semCountryValue(in, h, "value", "number")
 }
 
 func semParsePassport(in any, h Hints) ([]Candidate, error) {
-	c, n, conf, err := semCountryValue(in, h, "number")
-	if err != nil {
-		return nil, err
-	}
-	return []Candidate{{Value: map[string]any{"country": c, "number": n}, Confidence: conf}}, nil
+	return semCountryValue(in, h, "number")
 }
 
 var semIDNA = idna.New(idna.MapForLookup(), idna.BidiRule(), idna.VerifyDNSLength(true), idna.StrictDomainName(true))
@@ -1566,23 +1544,22 @@ func semLocale(s string) (string, error) {
 type semUnit struct {
 	base           string
 	factor, offset float64
-	disp           string
 }
 
 var semUnits = map[string]semUnit{
-	"m": {"m", 1, 0, "m"}, "km": {"m", 1e3, 0, "km"}, "cm": {"m", 1e-2, 0, "cm"}, "mm": {"m", 1e-3, 0, "mm"}, "um": {"m", 1e-6, 0, "µm"}, "nm": {"m", 1e-9, 0, "nm"},
-	"[in_i]": {"m", 0.0254, 0, "in"}, "[ft_i]": {"m", 0.3048, 0, "ft"}, "[yd_i]": {"m", 0.9144, 0, "yd"}, "[mi_i]": {"m", 1609.344, 0, "mi"}, "[nmi_i]": {"m", 1852, 0, "nmi"},
-	"kg": {"kg", 1, 0, "kg"}, "g": {"kg", 1e-3, 0, "g"}, "mg": {"kg", 1e-6, 0, "mg"}, "ug": {"kg", 1e-9, 0, "µg"}, "t": {"kg", 1e3, 0, "t"},
-	"[lb_av]": {"kg", 0.45359237, 0, "lb"}, "[oz_av]": {"kg", 0.028349523125, 0, "oz"}, "[stone_av]": {"kg", 6.35029318, 0, "st"},
-	"m2": {"m2", 1, 0, "m²"}, "cm2": {"m2", 1e-4, 0, "cm²"}, "km2": {"m2", 1e6, 0, "km²"}, "har": {"m2", 1e4, 0, "ha"},
-	"m3": {"m3", 1, 0, "m³"}, "cm3": {"m3", 1e-6, 0, "cm³"}, "L": {"m3", 1e-3, 0, "L"}, "dL": {"m3", 1e-4, 0, "dL"}, "cL": {"m3", 1e-5, 0, "cL"}, "mL": {"m3", 1e-6, 0, "mL"},
-	"[gal_us]": {"m3", 0.003785411784, 0, "gal"}, "[qt_us]": {"m3", 0.000946352946, 0, "qt"}, "[pt_us]": {"m3", 0.000473176473, 0, "pt"}, "[foz_us]": {"m3", 2.95735295625e-5, 0, "fl oz"}, "[gal_br]": {"m3", 0.00454609, 0, "gal (UK)"},
-	"K": {"K", 1, 0, "K"}, "Cel": {"K", 1, 273.15, "°C"}, "[degF]": {"K", 5.0 / 9, 459.67 * 5 / 9, "°F"},
-	"s": {"s", 1, 0, "s"}, "ms": {"s", 1e-3, 0, "ms"}, "min": {"s", 60, 0, "min"}, "h": {"s", 3600, 0, "h"}, "d": {"s", 86400, 0, "d"}, "wk": {"s", 604800, 0, "wk"},
-	"J": {"J", 1, 0, "J"}, "kJ": {"J", 1e3, 0, "kJ"}, "MJ": {"J", 1e6, 0, "MJ"}, "cal": {"J", 4.184, 0, "cal"}, "kcal": {"J", 4184, 0, "kcal"}, "W.h": {"J", 3600, 0, "Wh"}, "kW.h": {"J", 3.6e6, 0, "kWh"},
-	"W": {"W", 1, 0, "W"}, "kW": {"W", 1e3, 0, "kW"}, "MW": {"W", 1e6, 0, "MW"},
-	"Pa": {"Pa", 1, 0, "Pa"}, "kPa": {"Pa", 1e3, 0, "kPa"}, "bar": {"Pa", 1e5, 0, "bar"}, "mbar": {"Pa", 100, 0, "mbar"}, "[psi]": {"Pa", 6894.757293168, 0, "psi"},
-	"m/s": {"m/s", 1, 0, "m/s"}, "km/h": {"m/s", 1 / 3.6, 0, "km/h"}, "[mi_i]/h": {"m/s", 0.44704, 0, "mph"},
+	"m": {"m", 1, 0}, "km": {"m", 1e3, 0}, "cm": {"m", 1e-2, 0}, "mm": {"m", 1e-3, 0}, "um": {"m", 1e-6, 0}, "nm": {"m", 1e-9, 0},
+	"[in_i]": {"m", 0.0254, 0}, "[ft_i]": {"m", 0.3048, 0}, "[yd_i]": {"m", 0.9144, 0}, "[mi_i]": {"m", 1609.344, 0}, "[nmi_i]": {"m", 1852, 0},
+	"kg": {"kg", 1, 0}, "g": {"kg", 1e-3, 0}, "mg": {"kg", 1e-6, 0}, "ug": {"kg", 1e-9, 0}, "t": {"kg", 1e3, 0},
+	"[lb_av]": {"kg", 0.45359237, 0}, "[oz_av]": {"kg", 0.028349523125, 0}, "[stone_av]": {"kg", 6.35029318, 0},
+	"m2": {"m2", 1, 0}, "cm2": {"m2", 1e-4, 0}, "km2": {"m2", 1e6, 0}, "har": {"m2", 1e4, 0},
+	"m3": {"m3", 1, 0}, "cm3": {"m3", 1e-6, 0}, "L": {"m3", 1e-3, 0}, "dL": {"m3", 1e-4, 0}, "cL": {"m3", 1e-5, 0}, "mL": {"m3", 1e-6, 0},
+	"[gal_us]": {"m3", 0.003785411784, 0}, "[qt_us]": {"m3", 0.000946352946, 0}, "[pt_us]": {"m3", 0.000473176473, 0}, "[foz_us]": {"m3", 2.95735295625e-5, 0}, "[gal_br]": {"m3", 0.00454609, 0},
+	"K": {"K", 1, 0}, "Cel": {"K", 1, 273.15}, "[degF]": {"K", 5.0 / 9, 459.67 * 5 / 9},
+	"s": {"s", 1, 0}, "ms": {"s", 1e-3, 0}, "min": {"s", 60, 0}, "h": {"s", 3600, 0}, "d": {"s", 86400, 0}, "wk": {"s", 604800, 0},
+	"J": {"J", 1, 0}, "kJ": {"J", 1e3, 0}, "MJ": {"J", 1e6, 0}, "cal": {"J", 4.184, 0}, "kcal": {"J", 4184, 0}, "W.h": {"J", 3600, 0}, "kW.h": {"J", 3.6e6, 0},
+	"W": {"W", 1, 0}, "kW": {"W", 1e3, 0}, "MW": {"W", 1e6, 0},
+	"Pa": {"Pa", 1, 0}, "kPa": {"Pa", 1e3, 0}, "bar": {"Pa", 1e5, 0}, "mbar": {"Pa", 100, 0}, "[psi]": {"Pa", 6894.757293168, 0},
+	"m/s": {"m/s", 1, 0}, "km/h": {"m/s", 1 / 3.6, 0}, "[mi_i]/h": {"m/s", 0.44704, 0},
 }
 
 var semUnitAliases = map[string]string{
@@ -1667,7 +1644,6 @@ type semType struct {
 	Normalize []string
 	Parse     string
 	Check     string
-	Mask      string
 	Secret    bool
 }
 
@@ -1696,14 +1672,14 @@ var semLib = map[string]semType{
 	"currency":   {Parse: "currency", Check: "currency"},
 	"percentage": {Parse: "percentage"},
 	"bic":        {Normalize: []string{"strip_separators", "upper", "bic"}},
-	"card":       {Parse: "card", Mask: "card", Secret: true},
+	"card":       {Parse: "card", Secret: true},
 	"us_routing": {Normalize: []string{"strip_separators"}, Check: "aba"},
 	"lei":        {Normalize: []string{"strip_separators", "upper"}, Check: "lei"},
 	"isin":       {Normalize: []string{"strip_separators", "upper"}, Check: "isin"},
 	"us_ein":     {Normalize: []string{"strip_separators", "ein_dash"}},
-	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Mask: "mask_ssn", Secret: true},
-	"national":   {Parse: "national", Check: "national", Mask: "national", Secret: true},
-	"passport":   {Parse: "passport", Check: "passport", Mask: "passport", Secret: true},
+	"us_ssn":     {Normalize: []string{"strip_separators"}, Check: "ssn_ranges", Secret: true},
+	"national":   {Parse: "national", Check: "national", Secret: true},
+	"passport":   {Parse: "passport", Check: "passport", Secret: true},
 	"email":      {Normalize: []string{"mail_address", "lower_domain"}},
 	"phone":      {Parse: "phone", Check: "phone"},
 	"address":    {Parse: "address", Check: "address"},
