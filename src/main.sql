@@ -124,6 +124,12 @@ CREATE TABLE archive.watch (
 );
 CREATE INDEX watch_connection_idx ON archive.watch (connection);
 
+CREATE TABLE archive.terms (
+    kind       text PRIMARY KEY CONSTRAINT terms_kind CHECK (kind IN ('msa', 'baa')),
+    body       text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 -- name: MainRevision :one
 SELECT coalesce((SELECT hash FROM archive.main_revision ORDER BY created_at DESC, id DESC LIMIT 1), '')::text;
 
@@ -358,3 +364,9 @@ INSERT INTO archive.watch (provider, key, workspace, connection, secret) VALUES 
 
 -- name: DropWatches :exec
 DELETE FROM archive.watch WHERE connection = sqlc.arg(connection) AND NOT key = ANY(sqlc.arg(keep)::text[]);
+
+-- name: Terms :many
+SELECT kind, body FROM archive.terms;
+
+-- name: TermsOf :one
+SELECT body FROM archive.terms WHERE kind = $1;

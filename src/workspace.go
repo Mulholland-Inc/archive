@@ -7,7 +7,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1360,12 +1359,6 @@ func (a *Archive) groupNames(ctx context.Context, tb *Table, in map[string]any) 
 	return nil
 }
 
-//go:embed msa.md
-var msaText string
-
-//go:embed dpa.md
-var dpaText string
-
 type clientKey struct{}
 
 type client struct{ ip, agent string }
@@ -1414,17 +1407,24 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 		return nil, err
 	}
 	kind, _ := data["kind"].(string)
-	title, body := "", ""
+	title := ""
 	switch kind {
 	case "msa":
-		title, body = "Master services agreement", msaText
-	case "dpa":
-		title, body = "Data processing agreement", dpaText
+		title = "Master services agreement and data processing addendum"
+	case "baa":
+		title = "Business associate agreement"
 	default:
-		return nil, &ValidationError{Type: "agreement", Errors: []FieldError{{Path: "kind", Message: "want msa or dpa"}}}
+		return nil, &ValidationError{Type: "agreement", Errors: []FieldError{{Path: "kind", Message: "want msa or baa"}}}
 	}
-	if strings.TrimSpace(body) == "" {
-		return nil, fmt.Errorf("src/%s.md has no text yet, so there is nothing to sign: %w", kind, ErrConflict)
+	if a.ws.Type != generated.ArchiveWorkspaceTypeBusiness {
+		return nil, fmt.Errorf("only a business workspace signs agreements: %w", ErrForbidden)
+	}
+	body, err := a.hub.q().TermsOf(ctx, kind)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("there is no %s text to sign yet: %w", kind, ErrConflict)
+	}
+	if err != nil {
+		return nil, err
 	}
 	verr := &ValidationError{Type: "agreement"}
 	in := map[string]string{}
@@ -1438,13 +1438,26 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 		return nil, verr
 	}
 	c, _ := ctx.Value(clientKey{}).(client)
+	body = strings.NewReplacer("[EFFECTIVE DATE]", time.Now().UTC().Format("January 2, 2006"),
+		"[INSERT CUSTOMER NAME]", in["company"], "[CUSTOMER NAME]", in["company"],
+		"[name, title, and email to be completed]", in["signer"]+", "+in["title"]+", "+ac.Email).Replace(body)
 	sum := sha256.Sum256([]byte(body))
 	return map[string]any{"name": title, "kind": kind, "body": body, "hash": hex.EncodeToString(sum[:]), "company": in["company"], "signer": in["signer"], "title": in["title"],
 		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
 }
 
 func (a *Archive) onboarding(ctx context.Context) (any, error) {
-	out := map[string]any{"terms": map[string]string{"msa": msaText, "dpa": dpaText}}
+	terms := map[string]string{}
+	if a.ws.Type == generated.ArchiveWorkspaceTypeBusiness {
+		rows, err := a.hub.q().Terms(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			terms[r.Kind] = r.Body
+		}
+	}
+	out := map[string]any{"terms": terms}
 	err := a.as(ctx, func(ctx context.Context) error {
 		for _, typ := range []string{"agreement", "business", "billing"} {
 			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)

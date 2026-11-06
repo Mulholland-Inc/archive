@@ -48,13 +48,13 @@
   const actions = {
     business: openBusiness,
     msa: () => openSigning('msa'),
-    dpa: () => openSigning('dpa'),
+    baa: () => openSigning('baa'),
     card: openCard
   };
 
   const ready = (id) => {
     if (!owner) return false;
-    if (id === 'msa' || id === 'dpa') return Boolean(app.signup.terms[id]?.trim());
+    if (id === 'msa' || id === 'baa') return Boolean(app.signup.terms[id]?.trim());
     return id === 'business' || Boolean(business);
   };
 
@@ -149,7 +149,7 @@
   function detail(step) {
     if (step.id === 'business' && business) return business.name;
     if (step.id === 'card' && stepDone('card')) return app.signup.billing[0].name;
-    const row = (step.id === 'msa' || step.id === 'dpa') && signed(step.id);
+    const row = (step.id === 'msa' || step.id === 'baa') && signed(step.id);
     return row ? `Signed by ${row.signer} on ${when(row.created_at)}` : step.body;
   }
 </script>
@@ -206,7 +206,7 @@
             </div>
             {#if !checked}
               <Button size="sm" variant={step === next ? 'primary' : 'secondary'} disabled={!ready(step.id)} onclick={actions[step.id]}>{step.action}</Button>
-            {:else if step.id === 'msa' || step.id === 'dpa'}
+            {:else if step.id === 'msa' || step.id === 'baa'}
               <Button size="sm" variant="secondary" onclick={() => openReading(step.id)}>View</Button>
             {:else}
               <Button size="sm" variant="secondary" disabled={!ready(step.id)} onclick={actions[step.id]}>{step.id === 'card' ? 'Change' : 'Edit'}</Button>
