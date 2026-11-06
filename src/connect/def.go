@@ -2852,8 +2852,8 @@ var (
 		}
 		return string(b), nil
 	}}
-	Basic        = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
-	Words        = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
+	Basic  = &Codec{"basic", func(v any) (any, error) { return "Basic " + base64.StdEncoding.EncodeToString([]byte(text(v))), nil }}
+	Words  = &Codec{"words", func(v any) (any, error) { return HTMLText(text(v)), nil }}
 	Claims = &Codec{"claims", func(v any) (any, error) {
 		parts := strings.Split(text(v), ".")
 		if len(parts) != 3 {
