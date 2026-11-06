@@ -100,8 +100,8 @@ func init() {
 				Doc: "Each meeting's cloud recording, by the uuid of the time it met: its topic, size, link, and the words of its transcript, " +
 					"with who spoke when, cut at 64 KB; the video stays in Zoom. Two years of months, a month at a time and every month whole " +
 					"each sync, 300 a page, so one deleted there is deleted; a recording that has not changed is not read again.",
-				To: Map{Table: "drive_file",
-					Cols: map[string]SQL{"kind": "'file'", "title": "data->>'topic'", "drive": "'Zoom recordings'", "size": "archive.sync_num(data->>'total_size')",
+				To: Map{Table: "file",
+					Cols: map[string]SQL{"kind": "'file'", "name": "data->>'topic'", "drive": "'Zoom recordings'", "size": "archive.sync_num(data->>'total_size')",
 						"url": "data->>'share_url'", "made_at": "archive.sync_at(data->>'start_time')",
 						"text": `archive.sync_clip((SELECT f->>'text' FROM archive.sync_list(data->'recording_files') f WHERE f->>'file_type' = 'TRANSCRIPT' AND nullif(f->>'text', '') IS NOT NULL LIMIT 1), 65536)`}}},
 			{Name: "summaries", Gap: time.Second, Parts: zoomMonths, Items: "summaries", Absent: "page_size", ID: "meeting_uuid", Updated: "summary_last_modified_time",
@@ -111,8 +111,8 @@ func init() {
 				Hydrate: []Hydrate{Fetch{Req: Req{URL: "/meetings/{meeting_uuid}/meeting_summary"}, As: "summary", Par: 4, Soft: true}},
 				Doc: "AI Companion's summary of each meeting you host, by the uuid of the time it met: its title, its text in Markdown, cut at " +
 					"64 KB, and who last edited it. Read as recordings are, by month, and one whose summary changed is read again.",
-				To: Map{Table: "drive_file",
-					Cols: map[string]SQL{"kind": "'file'", "title": "coalesce(nullif(data#>>'{summary,summary_title}', ''), data->>'meeting_topic')", "drive": "'Zoom summaries'",
+				To: Map{Table: "file",
+					Cols: map[string]SQL{"kind": "'file'", "name": "coalesce(nullif(data#>>'{summary,summary_title}', ''), data->>'meeting_topic')", "drive": "'Zoom summaries'",
 						"mime": "'text/markdown'", "url": "data#>>'{summary,summary_doc_url}'", "made_at": "archive.sync_at(data->>'summary_created_time')",
 						"edited_at": "archive.sync_at(data->>'summary_last_modified_time')", "owner_name": "data->>'meeting_host_email'",
 						"text": "archive.sync_clip(coalesce(nullif(data#>>'{summary,summary_content}', ''), data#>>'{summary,summary_overview}'), 65536)"},
