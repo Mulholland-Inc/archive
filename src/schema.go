@@ -1831,12 +1831,14 @@ const (
 )
 
 var pgDropped = map[string]bool{
-	"table archive.record":         true,
-	"table archive.drive_file":     true,
-	"table archive.chat":           true,
-	"table archive.secret":         true,
-	"column archive.agent.avatar":  true,
-	"column archive.member.groups": true,
+	"column archive.terms.body":     true,
+	"column archive.agreement.body": true,
+	"table archive.record":          true,
+	"table archive.drive_file":      true,
+	"table archive.chat":            true,
+	"table archive.secret":          true,
+	"column archive.agent.avatar":   true,
+	"column archive.member.groups":  true,
 }
 
 func pgPlan(live, want pgSchema) (stmts, lost []string, err error) {

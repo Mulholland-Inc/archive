@@ -1419,7 +1419,7 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 	if a.ws.Type != generated.ArchiveWorkspaceTypeBusiness {
 		return nil, fmt.Errorf("only a business workspace signs agreements: %w", ErrForbidden)
 	}
-	body, err := a.hub.q().TermsOf(ctx, kind)
+	doc, err := a.hub.q().TermsOf(ctx, kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("there is no %s text to sign yet: %w", kind, ErrConflict)
 	}
@@ -1438,23 +1438,40 @@ func (a *Archive) agreementCreate(ctx context.Context, data map[string]any) (map
 		return nil, verr
 	}
 	c, _ := ctx.Value(clientKey{}).(client)
-	body = strings.NewReplacer("[EFFECTIVE DATE]", time.Now().UTC().Format("January 2, 2006"),
-		"[INSERT CUSTOMER NAME]", in["company"], "[CUSTOMER NAME]", in["company"],
-		"[name, title, and email to be completed]", in["signer"]+", "+in["title"]+", "+ac.Email).Replace(body)
-	sum := sha256.Sum256([]byte(body))
-	return map[string]any{"name": title, "kind": kind, "body": body, "hash": hex.EncodeToString(sum[:]), "company": in["company"], "signer": in["signer"], "title": in["title"],
+	m, err := OfficeRead(doc, "agreement.docx")
+	if err != nil {
+		return nil, err
+	}
+	var text strings.Builder
+	for _, p := range m.Paragraphs {
+		text.WriteString(p.Text)
+	}
+	var ops []OfficeOp
+	for _, f := range [][2]string{{"company", in["company"]}, {"signer", in["signer"]}, {"title", in["title"]}, {"email", ac.Email},
+		{"date", time.Now().UTC().Format("January 2, 2006")}} {
+		if find := "{{" + f[0] + "}}"; strings.Contains(text.String(), find) {
+			ops = append(ops, OfficeOp{Op: "replace_text", Find: find, Replace: f[1], All: true})
+		}
+	}
+	if doc, err = OfficeEdit(doc, "agreement.docx", ops); err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(doc)
+	return map[string]any{"name": title, "kind": kind, "doc": `\x` + hex.EncodeToString(doc), "hash": hex.EncodeToString(sum[:]), "company": in["company"], "signer": in["signer"], "title": in["title"],
 		"email": ac.Email, "ip": c.ip, "agent": c.agent}, nil
 }
 
 func (a *Archive) onboarding(ctx context.Context) (any, error) {
-	terms := map[string]string{}
+	terms := map[string]*OfficeModel{}
 	if a.ws.Type == generated.ArchiveWorkspaceTypeBusiness {
 		rows, err := a.hub.q().Terms(ctx)
 		if err != nil {
 			return nil, err
 		}
 		for _, r := range rows {
-			terms[r.Kind] = r.Body
+			if terms[r.Kind], err = OfficeView(r.Doc, "agreement.docx"); err != nil {
+				return nil, err
+			}
 		}
 	}
 	out := map[string]any{"terms": terms}
@@ -1463,6 +1480,19 @@ func (a *Archive) onboarding(ctx context.Context) (any, error) {
 			rows, err := a.List(ctx, typ, nil, 100, uuid.Nil, false)
 			if err != nil {
 				return err
+			}
+			if typ == "agreement" {
+				for _, r := range rows {
+					s, _ := r["doc"].(string)
+					doc, err := hex.DecodeString(strings.TrimPrefix(s, `\x`))
+					if err != nil {
+						return err
+					}
+					if r["model"], err = OfficeView(doc, "agreement.docx"); err != nil {
+						return err
+					}
+					delete(r, "doc")
+				}
 			}
 			out[typ] = rows
 		}

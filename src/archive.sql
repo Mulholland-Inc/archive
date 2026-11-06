@@ -4738,7 +4738,7 @@ CREATE TABLE archive.agreement (
     updated_at timestamptz NOT NULL DEFAULT now(),
     access     uuid,
     kind       text NOT NULL CONSTRAINT agreement_kind CHECK (kind IN ('msa', 'baa')),
-    body       text NOT NULL,
+    doc        bytea NOT NULL,
     hash       text NOT NULL,
     company    text NOT NULL,
     signer     text NOT NULL,
@@ -4751,8 +4751,8 @@ CREATE TABLE archive.agreement (
 COMMENT ON TABLE archive.agreement IS 'An agreement this workspace signed: the exact text, who signed it and from where. Only the owner signs, in the app; a signed row never changes.
 icon: file-signature';
 COMMENT ON COLUMN archive.agreement.kind IS 'msa, which includes the DPA, or baa';
-COMMENT ON COLUMN archive.agreement.body IS 'The exact text they signed';
-COMMENT ON COLUMN archive.agreement.hash IS 'SHA-256 of the text';
+COMMENT ON COLUMN archive.agreement.doc IS 'The exact Word file they signed, with their details filled in';
+COMMENT ON COLUMN archive.agreement.hash IS 'SHA-256 of the file';
 COMMENT ON COLUMN archive.agreement.company IS 'The legal name they signed for';
 COMMENT ON COLUMN archive.agreement.signer IS 'The name they typed';
 COMMENT ON COLUMN archive.agreement.title IS 'Their title at the company';
