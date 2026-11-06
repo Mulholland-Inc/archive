@@ -80,6 +80,9 @@ type Connector struct {
 	Listen      *Listen
 	Sync        []*Sync
 	Let         []Step
+	LetFor      time.Duration
+	Cert        string
+	CertKey     string
 	Errors      *Errors
 	Answer      *Codec
 	Busy        []string
@@ -598,6 +601,8 @@ type Client struct {
 	apiOnce sync.Once
 	apiURL  string
 	apiErr  error
+	letMu   sync.Mutex
+	let     map[string]any
 	mcpSeen *seen
 	Files   Yours
 	Store   func(name string, b []byte) (string, error)

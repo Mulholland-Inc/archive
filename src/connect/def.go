@@ -154,6 +154,7 @@ const (
 	CatProjects  Category = "Projects"
 	CatPayroll   Category = "Payroll"
 	CatProperty  Category = "Property"
+	CatSupport   Category = "Support"
 
 	CatCompliance Category = "Compliance"
 	CatData       Category = "Data"
@@ -760,9 +761,11 @@ func (c *Connector) compile() error {
 	if c.Sign != nil || c.Pin != nil {
 		sign, pin := c.Sign, c.Pin
 		c.Authorize = func(r *http.Request, cl *Client) {
+			sc := cl.scope()
 			for h, t := range sign {
-				v, _ := fillStr(t, cl.scope())
-				r.Header.Set(h, text(v))
+				if v := (Reads{Of: t}).read(sc); v != "" {
+					r.Header.Set(h, v)
+				}
 			}
 			if pin != nil {
 				q := r.URL.Query()
@@ -779,6 +782,14 @@ func (c *Connector) compile() error {
 			return errors.New("a connector signs with Sign or Basic, not both")
 		}
 		c.Authorize = func(r *http.Request, cl *Client) { r.SetBasicAuth(cl.keys[b[0]], cl.keys[b[1]]) }
+	}
+	if (c.Cert == "") != (c.CertKey == "") {
+		return errors.New("a certificate needs its private key, and a key its certificate")
+	}
+	for _, k := range []string{c.Cert, c.CertKey} {
+		if k != "" && !slices.ContainsFunc(c.Keys, func(x Key) bool { return x.Name == k }) {
+			return fmt.Errorf("its certificate's %s is none of its Keys", k)
+		}
 	}
 	if w := c.Who; w != nil {
 		if w.Tool != "" {
@@ -2228,17 +2239,84 @@ func (c *Client) scope() map[string]any {
 	for k := range c.p.opts {
 		opts[k] = c.p.opts.Get(k)
 	}
-	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts}
+	c.letMu.Lock()
+	found := c.let
+	c.letMu.Unlock()
+	return map[string]any{"client": map[string]any{"id": id, "secret": secret}, "token": c.Token(), "key": keys, "meta": meta, "option": opts, "let": found}
 }
 
 func (c *Client) api() (string, error) {
 	c.apiOnce.Do(func() {
 		sc := c.scope()
-		if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr == nil {
-			c.apiURL, c.apiErr = expand(c.p.API, sc)
+		found, ok := lets.get(c)
+		if !ok {
+			if _, c.apiErr = runSteps(c, c.p.Let, sc); c.apiErr != nil {
+				return
+			}
+			found = map[string]any{}
+			for _, s := range c.p.Let {
+				if root, _, _ := strings.Cut(s.As, "/"); root != "" {
+					found[root] = sc[root]
+				}
+			}
+			lets.put(c, found)
 		}
+		maps.Copy(sc, found)
+		c.letMu.Lock()
+		c.let = found
+		c.letMu.Unlock()
+		c.apiURL, c.apiErr = expand(c.p.API, sc)
 	})
 	return c.apiURL, c.apiErr
+}
+
+var lets = &letCache{m: map[string]letKept{}}
+
+type (
+	letCache struct {
+		sync.Mutex
+		m map[string]letKept
+	}
+	letKept struct {
+		found map[string]any
+		until time.Time
+	}
+)
+
+func (*letCache) of(c *Client) string {
+	b, _ := json.Marshal([]any{c.p.ID, c.keys, c.Meta, c.Token()})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func (l *letCache) get(c *Client) (map[string]any, bool) {
+	if c.p.LetFor <= 0 {
+		return nil, false
+	}
+	l.Lock()
+	defer l.Unlock()
+	k, ok := l.m[l.of(c)]
+	return k.found, ok && time.Now().Before(k.until)
+}
+
+func (l *letCache) put(c *Client, found map[string]any) {
+	if c.p.LetFor <= 0 {
+		return
+	}
+	l.Lock()
+	defer l.Unlock()
+	now := time.Now()
+	maps.DeleteFunc(l.m, func(_ string, k letKept) bool { return now.After(k.until) })
+	l.m[l.of(c)] = letKept{found, now.Add(c.p.LetFor)}
+}
+
+func (l *letCache) forget(c *Client) {
+	if c.p.LetFor <= 0 {
+		return
+	}
+	l.Lock()
+	defer l.Unlock()
+	delete(l.m, l.of(c))
 }
 
 func (c *Client) req(r Req, sc map[string]any) (any, error) {
@@ -2301,6 +2379,9 @@ func (c *Client) http1(r Req, sc map[string]any) (any, error) {
 	}
 	var raw []byte
 	if err := c.Send(string(cmp.Or(r.Method, GET)), u, hdr, body, &raw); err != nil {
+		if f := (*Refusal)(nil); errors.As(err, &f) && f.Status == http.StatusUnauthorized {
+			lets.forget(c)
+		}
 		return nil, err
 	}
 	if r.Text {
