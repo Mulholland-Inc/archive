@@ -115,7 +115,7 @@ async function connect(request, env, url) {
   if (request.headers.get('Upgrade') !== 'websocket') return new Response('want a WebSocket', { status: 426 });
   const api = apiOrigin(url, env);
   const origin = request.headers.get('Origin');
-  if (origin && origin !== api.replace('//api.', '//app.') && origin !== env.APP_ORIGIN) {
+  if (origin && origin !== env.APP_ORIGIN && !URL.parse(origin)?.hostname.endsWith(new URL(api).hostname.replace(/^api\./, '.'))) {
     return new Response('this origin may not listen', { status: 403 });
   }
   const t = await ticketOf(url.searchParams.get('ticket') || '', env);

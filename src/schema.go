@@ -44,6 +44,8 @@ type Table struct {
 	Force       bool      `json:"force,omitempty"`
 	Invoker     bool      `json:"security_invoker,omitempty"`
 	Policy      bool      `json:"policy,omitempty"`
+	Guest       []string  `json:"guest,omitempty"`
+	Restrictive bool      `json:"restrictive,omitempty"`
 	Object      bool      `json:"object,omitempty"`
 	Partitioned bool      `json:"partitioned,omitempty"`
 	Columns     []*Column `json:"columns"`
@@ -327,6 +329,32 @@ func (t *Table) ident() string { return pgIdent(t.Schema, t.Name) }
 
 func (t *Table) rowSQL() string { return "to_jsonb(t) - " + t.hidden() }
 
+func (t *Table) rowAs(ctx context.Context) string {
+	if ac := ActorFrom(ctx); ac == nil || ac.entry.Role != "guest" {
+		return t.rowSQL()
+	}
+	cols := []string{}
+	for _, c := range t.Guest {
+		if col := t.col(c); col != nil && col.Type != "tsvector" && !slices.Contains(t.internal, c) {
+			cols = append(cols, "t."+pgIdent(c))
+		}
+	}
+	return "(SELECT to_jsonb(s) FROM (SELECT " + strings.Join(cols, ", ") + ") s)"
+}
+
+func (c *Catalog) forGuest() map[string]*Table {
+	out := map[string]*Table{}
+	for name, t := range c.Tables {
+		if len(t.Guest) == 0 || t.Schema != "public" {
+			continue
+		}
+		g := *t
+		g.Columns = slices.DeleteFunc(slices.Clone(t.Columns), func(col *Column) bool { return !slices.Contains(t.Guest, col.Name) })
+		out[name] = &g
+	}
+	return out
+}
+
 func (c *Catalog) Check() error {
 	ve := &ValidationError{Type: "schema"}
 	bad := func(path, msg string) { ve.Errors = append(ve.Errors, FieldError{Path: path, Message: msg}) }
@@ -378,6 +406,9 @@ func (c *Catalog) Check() error {
 			if !ok {
 				bad(name+"."+w.name, w.msg)
 			}
+		}
+		if len(t.Guest) > 0 && !t.Restrictive {
+			bad(name, "a guest may read this table, so it needs a restrictive policy that says which rows: CREATE POLICY guest ON "+name+" AS RESTRICTIVE USING (archive.scope() IS NULL OR <its column> = archive.scope())")
 		}
 		if !t.RLS || !t.Force || !t.Policy {
 			bad(name, "want ENABLE and FORCE ROW LEVEL SECURITY and exactly one policy, which Archive adds when a table has none: CREATE POLICY access ON "+name+" USING ("+schemaAccess+") WITH CHECK ("+schemaAccess+")")
@@ -925,7 +956,7 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 		return schemaCatalog(ctx, sp)
 	}
 	for i, st := range stmts {
-		if err := run(fmt.Sprintf("statement %d", i+1), st); err != nil {
+		if err := run(fmt.Sprintf("statement %d", i+1), s.schemaGuest(st)); err != nil {
 			return nil, err
 		}
 		if schemaCreateTableRe.MatchString(schemaBare(st)) {
@@ -1005,7 +1036,16 @@ func (s *pgStore) Migrate(ctx context.Context, src, name, author, confirm string
 var (
 	schemaStmtRe   = regexp.MustCompile(`(?is)^(CREATE\s+(OR\s+REPLACE\s+)?(UNIQUE\s+)?(TABLE|VIEW|INDEX|TYPE|DOMAIN|FUNCTION|TRIGGER|SEQUENCE|POLICY)|(ALTER|DROP)\s+(TABLE|VIEW|INDEX|TYPE|DOMAIN|FUNCTION|TRIGGER|SEQUENCE|POLICY)|COMMENT\s+ON)\s`)
 	schemaBannedRe = regexp.MustCompile(`(?is)\bOWNER\s+TO\b|\bSET\s+SCHEMA\b|^CREATE\s+TABLE\s+[^(]*\bAS\s`)
+	schemaGrantRe  = regexp.MustCompile(`(?is)^((?:GRANT|REVOKE)\s+(?:SELECT|INSERT|UPDATE|DELETE)(?:\s*\([^()]*\))?(?:\s*,\s*(?:SELECT|INSERT|UPDATE|DELETE)(?:\s*\([^()]*\))?)*\s+ON\s+(?:TABLE\s+)?(?:public\.)?(?:"(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)\s+(?:TO|FROM)\s+)guest\s*$`)
 )
+
+func (s *pgStore) schemaGuest(st string) string {
+	bare := schemaBare(st)
+	if m := schemaGrantRe.FindStringSubmatch(bare); m != nil {
+		return m[1] + pgIdent(s.prefix+"_guest")
+	}
+	return st
+}
 
 func schemaCheckSQL(stmts []string) error {
 	ve := &ValidationError{Type: "schema"}
@@ -1016,8 +1056,9 @@ func schemaCheckSQL(stmts []string) error {
 		st = schemaBare(st)
 		path := fmt.Sprintf("sql[%d]", i)
 		switch {
+		case schemaGrantRe.MatchString(st):
 		case !schemaStmtRe.MatchString(st):
-			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "want CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER, SEQUENCE or POLICY, or COMMENT ON; change rows with archive.create, archive.update and archive.delete between migrations"})
+			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "want CREATE, ALTER or DROP of a TABLE, VIEW, INDEX, TYPE, DOMAIN, FUNCTION, TRIGGER, SEQUENCE or POLICY, COMMENT ON, or GRANT or REVOKE of SELECT, INSERT, UPDATE or DELETE on one of your tables TO or FROM guest; change rows with archive.create, archive.update and archive.delete between migrations"})
 		case strings.HasPrefix(strings.ToUpper(st), "COMMENT"):
 		case schemaBannedRe.MatchString(st):
 			ve.Errors = append(ve.Errors, FieldError{Path: path, Message: "OWNER TO, SET SCHEMA and CREATE TABLE ... AS are not allowed"})
@@ -1116,14 +1157,14 @@ func schemaFunctions(ctx context.Context, q generated.DBTX) error {
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         JOIN pg_catalog.pg_language l ON l.oid = p.prolang
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'archive')
-        AND (p.prosecdef OR l.lanname NOT IN ('sql', 'plpgsql')) LIMIT 1`).Scan(&name)
+        AND (l.lanname NOT IN ('sql', 'plpgsql') OR p.prosecdef AND NOT EXISTS (SELECT FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')) LIMIT 1`).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("function %s: functions are LANGUAGE sql or plpgsql, without SECURITY DEFINER: %w", name, ErrForbidden)
+	return fmt.Errorf("function %s: functions are LANGUAGE sql or plpgsql, and SECURITY DEFINER needs SET search_path: %w", name, ErrForbidden)
 }
 
 func schemaSetSearch(table string, cols []string) string {
@@ -1172,7 +1213,7 @@ const schemaAccess = "access IS NULL OR access = ANY((SELECT archive.groups())::
 func schemaDerive(ctx context.Context, tx pgx.Tx, cat *Catalog, derived map[string]bool, prefix string, cols bool) ([]string, error) {
 	policed := map[string]bool{}
 	rows, err := tx.Query(ctx, `SELECT c.relname::text FROM pg_catalog.pg_class c WHERE c.relnamespace = 'public'::regnamespace
-        AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid)`)
+        AND c.relkind IN ('r', 'p') AND EXISTS (SELECT FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive)`)
 	if err != nil {
 		return nil, err
 	}
@@ -1453,6 +1494,7 @@ BEGIN
     GRANT CREATE ON SCHEMA archive TO "{p}_base";
     GRANT CREATE, USAGE ON SCHEMA public TO "{p}_manager";
     GRANT REFERENCES ON archive."group" TO "{p}_manager";
+    GRANT SELECT ON archive."group", archive.connection TO "{p}_guest";
     IF (SELECT c.relowner FROM pg_catalog.pg_class c WHERE c.oid = 'archive.object'::regclass) = sys::regrole THEN
         ALTER TABLE archive.object OWNER TO "{p}_base";
     END IF;

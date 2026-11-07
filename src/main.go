@@ -231,6 +231,9 @@ func httpHandler(a *Archive) http.Handler {
 	ok := func(v any, err error) (int, any, error) { return http.StatusOK, v, err }
 
 	handle("POST /api/run", func(r *http.Request) (int, any, error) {
+		if ac := ActorFrom(r.Context()); ac != nil && ac.entry.Role == "guest" {
+			return 0, nil, fmt.Errorf("a guest runs workflows, not code: %w", ErrForbidden)
+		}
 		var body struct {
 			Code string `json:"code"`
 		}
@@ -241,6 +244,15 @@ func httpHandler(a *Archive) http.Handler {
 			return 0, nil, fmt.Errorf("code: want the TypeScript to run: %w", httpErrBadRequest)
 		}
 		return ok(a.Run(context.WithValue(r.Context(), runFreshKey{}, true), body.Code))
+	})
+	handle("POST /api/run/{name}", func(r *http.Request) (int, any, error) {
+		var input any
+		if r.ContentLength != 0 {
+			if err := httpDecode(r, &input); err != nil {
+				return 0, nil, err
+			}
+		}
+		return ok(a.workflowCall(r.Context(), r.PathValue("name"), input))
 	})
 	handle("GET /api/boot", func(r *http.Request) (int, any, error) {
 		return ok(a.boot(r.Context(), r.URL.Query().Get("only")))

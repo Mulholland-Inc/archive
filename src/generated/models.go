@@ -176,6 +176,8 @@ type ArchiveWorkflow struct {
 	On json.RawMessage
 	// Why a migration stopped it, with line and column; it does not run until a save changes its source and passes the checks, which clears this. Read only
 	Broken *string
+	// references group; who else may run it, as whoever saved it: that group and managers and up. Null for only you. A run has them as caller
+	Runs *uuid.UUID
 }
 
 // A run of one of your workflows, newest kept: the last 100 of each. Read only; Archive records them
