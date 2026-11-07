@@ -17,7 +17,7 @@ concurrency:
 jobs:
   apply:
     if: ${{ vars.GCP_TERRAFORM_SERVICE_ACCOUNT != '' }}
-    runs-on: marzy-devbox
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/terraform/gcp

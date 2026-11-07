@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   image:
-    runs-on: marzy-devbox
+    runs-on: ubuntu-latest
     env:
       DEPLOY: ${{ github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
     steps:
@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
-          cache: false
+          cache-dependency-path: src/go.sum
 
       - working-directory: src
         run: |
@@ -75,7 +75,7 @@ jobs:
 
   app:
     if: ${{ github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != '' }}
-    runs-on: marzy-devbox
+    runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: apps/web
