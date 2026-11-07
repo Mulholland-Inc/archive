@@ -38,10 +38,12 @@
   let row = $state(null);
   let missing = $state(false);
   let from = $state([]);
+  const known = $derived(Boolean(view));
+  const gone = $derived(missing || (!view && Boolean(ws().catalog)));
 
   $effect(() => {
     const [v, r] = [vid, id];
-    if (!view) return;
+    if (!known) return;
     row = null;
     missing = false;
     from = [];
@@ -64,7 +66,7 @@
   <TopBar>
     {#snippet leading()}
       <MobileMenu />
-      <Breadcrumbs inset items={[{ label: view?.name ?? 'View', href: `/view/${vid}` }, { label: name || 'Not found' }]} />
+      <Breadcrumbs inset items={[{ label: view?.name ?? 'View', href: `/view/${vid}` }, { label: name || (gone ? 'Not found' : '') }]} />
     {/snippet}
     {#snippet trailing()}{#if row}<DetailsButton />{/if}{/snippet}
   </TopBar>
@@ -119,6 +121,6 @@
 {:else}
   {@render topbar()}
   <Page center>
-    {#if missing || (!view && ws().catalog)}<EmptyState icon={Table2} title="Row not found" />{/if}
+    {#if gone}<EmptyState icon={Table2} title="Row not found" />{/if}
   </Page>
 {/if}
