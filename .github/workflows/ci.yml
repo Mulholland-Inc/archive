@@ -17,14 +17,14 @@ jobs:
   test:
     name: test
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
+    runs-on: marzy-devbox
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: src/go.mod
-          cache-dependency-path: src/go.sum
+          cache: false
       - run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
         working-directory: src
       - run: test -z "$(gofmt -l .)"
@@ -40,7 +40,7 @@ jobs:
   web:
     name: web
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'marzy-devbox' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
