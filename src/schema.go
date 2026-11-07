@@ -1941,10 +1941,6 @@ const (
 )
 
 var pgDropped = map[string]bool{
-	"column archive.member.scope":   true,
-	"column archive.workflow.runs":  true,
-	"column archive.file.scope":     true,
-	"table archive.mail_only":       true,
 	"column archive.terms.body":     true,
 	"column archive.agreement.body": true,
 	"table archive.record":          true,

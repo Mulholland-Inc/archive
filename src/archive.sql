@@ -256,7 +256,7 @@ CREATE TABLE archive.composite_use (
 );
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
 
-CREATE TYPE archive.level AS ENUM ('guest', 'viewer', 'editor', 'manager', 'engineer', 'owner');
+CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'manager', 'engineer', 'owner');
 COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
 
 CREATE TABLE archive.member (
