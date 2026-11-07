@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"cmp"
 	"context"
@@ -147,6 +148,15 @@ func (a *Archive) fileUpdate(ctx context.Context, id uuid.UUID, data map[string]
 		switch k {
 		case "parent", "access":
 			out[k] = data[k]
+		case "scope":
+			lvl, _, err := a.level(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if !mayManage(lvl) {
+				return nil, fmt.Errorf("only managers, engineers and the owner set which guest a file belongs to: %w", ErrForbidden)
+			}
+			out[k] = data[k]
 		case "name":
 			name, _ := data[k].(string)
 			if name = fileBase(name); name == "" {
@@ -155,7 +165,7 @@ func (a *Archive) fileUpdate(ctx context.Context, id uuid.UUID, data map[string]
 			out[k] = name
 		case "edits":
 		default:
-			return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "of a file, only name, parent, access and edits change"}}}
+			return nil, &ValidationError{Type: "file", Errors: []FieldError{{Path: k, Message: "of a file, only name, parent, access, scope and edits change"}}}
 		}
 	}
 	if err := a.fileMine(ctx, id, "change"); err != nil {
@@ -538,6 +548,63 @@ func (a *Archive) fileUpload(r *http.Request) (*File, error) {
 	}
 }
 
+func (a *Archive) fileZip(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
+	ctx := r.Context()
+	root, err := a.GetFile(ctx, id)
+	if err == nil && root.Kind != "folder" {
+		err = fmt.Errorf("%s is not a folder: %w", root.Name, httpErrBadRequest)
+	}
+	if err != nil {
+		httpWrite(w, 0, nil, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": root.Name + ".zip"}))
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	var walk func(parent uuid.UUID, at string) error
+	walk = func(parent uuid.UUID, at string) error {
+		var kids []generated.FileChildrenRow
+		if err := a.as(ctx, func(ctx context.Context) (err error) {
+			kids, err = a.st.db(ctx).FileChildren(ctx, &parent)
+			return err
+		}); err != nil {
+			return err
+		}
+		for _, k := range kids {
+			if k.Kind == "folder" {
+				if err := walk(k.ID, at+k.Name+"/"); err != nil {
+					return err
+				}
+				continue
+			}
+			if k.Hash == "" {
+				continue
+			}
+			rc, err := a.blobs.open(ctx, blobKey(k.Hash), k.Size)
+			if err != nil {
+				return err
+			}
+			f, err := zw.CreateHeader(&zip.FileHeader{Name: at + k.Name, Method: zip.Store, Modified: k.CreatedAt})
+			if err == nil {
+				_, err = io.Copy(f, rc)
+			}
+			rc.Close()
+			if err != nil {
+				return err
+			}
+			if fl, ok := w.(http.Flusher); ok {
+				zw.Flush()
+				fl.Flush()
+			}
+		}
+		return nil
+	}
+	if err := walk(root.ID, ""); err != nil {
+		panic(http.ErrAbortHandler)
+	}
+}
+
 func (a *Archive) filePart(w http.ResponseWriter, r *http.Request) {
 	id, err := httpID(r)
 	if err != nil {
@@ -600,8 +667,10 @@ func (a *Archive) filePart(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", cmp.Or(mime.TypeByExtension(path.Ext(name)), "application/octet-stream"))
 		w.Header().Set("Content-Security-Policy", "sandbox")
 		w.Write(pic)
+	case part == "zip":
+		a.fileZip(w, r, id)
 	default:
-		httpWrite(w, 0, nil, fmt.Errorf("file part %q: want content, text, thumbnail, model, link or media/...: %w", part, ErrNotFound))
+		httpWrite(w, 0, nil, fmt.Errorf("file part %q: want content, text, thumbnail, model, link, zip or media/...: %w", part, ErrNotFound))
 	}
 }
 

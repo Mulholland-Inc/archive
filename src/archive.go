@@ -168,10 +168,10 @@ func (a *Archive) List(ctx context.Context, typ string, where map[string]any, li
 		if err := a.pgCheck(ctx, tb, norm); err != nil {
 			return nil, err
 		}
-		q := `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
+		q := `SELECT ` + tb.rowAs(ctx) + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE t.id > $2`
 		order := " ORDER BY t.id LIMIT $3"
 		if desc {
-			q = `SELECT ` + tb.rowSQL() + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE ($2 = '00000000-0000-0000-0000-000000000000'::uuid OR t.id < $2)`
+			q = `SELECT ` + tb.rowAs(ctx) + ` FROM ` + tb.ident() + ` t, jsonb_populate_record(NULL::` + tb.ident() + `, $1) w WHERE ($2 = '00000000-0000-0000-0000-000000000000'::uuid OR t.id < $2)`
 			order = " ORDER BY t.id DESC LIMIT $3"
 		}
 		for _, k := range specKeys(where) {
@@ -204,7 +204,7 @@ func (a *Archive) Get(ctx context.Context, typ string, id uuid.UUID) (map[string
 }
 
 func (a *Archive) coreGet(ctx context.Context, tb *Table, id uuid.UUID) (map[string]any, error) {
-	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowSQL()+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
+	rs, err := storeRows(ctx, a.st, `SELECT `+tb.rowAs(ctx)+` FROM `+tb.ident()+` t WHERE t.id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +274,7 @@ func (a *Archive) coreCreate(ctx context.Context, tb *Table, data map[string]any
 	if len(cols) == 0 {
 		q = `INSERT INTO ` + tb.ident() + ` AS t SELECT FROM jsonb_populate_record(NULL::` + tb.ident() + `, $1) r`
 	}
-	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowSQL(), out)
+	rs, err := storeRows(ctx, a.st, q+` RETURNING `+tb.rowAs(ctx), out)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +307,7 @@ func (a *Archive) Patch(ctx context.Context, typ string, id uuid.UUID, data map[
 		for _, c := range specKeys(out) {
 			q += ", " + pgIdent(c) + " = r." + pgIdent(c)
 		}
-		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowSQL(), id, out)
+		rs, err := storeRows(ctx, a.st, q+` FROM jsonb_populate_record(NULL::`+tb.ident()+`, $2) r WHERE t.id = $1 RETURNING `+tb.rowAs(ctx), id, out)
 		if err != nil {
 			return nil, err
 		}
@@ -614,6 +614,9 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_authenticator') THEN
         CREATE ROLE "{p}_authenticator" LOGIN NOINHERIT;
     END IF;
+    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_guest') THEN
+        CREATE ROLE "{p}_guest" NOLOGIN;
+    END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_viewer') THEN
         CREATE ROLE "{p}_viewer" NOLOGIN;
     END IF;
@@ -629,6 +632,7 @@ const storeRoles = `DO $$ BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '{p}_owner') THEN
         CREATE ROLE "{p}_owner" NOLOGIN;
     END IF;
+    GRANT "{p}_guest" TO "{p}_viewer";
     GRANT "{p}_viewer" TO "{p}_editor";
     GRANT "{p}_editor" TO "{p}_manager";
     GRANT "{p}_manager" TO "{p}_engineer";
@@ -639,6 +643,9 @@ const storeRoles = `DO $$ BEGIN
     END IF;
     IF NOT has_database_privilege('{p}_authenticator', current_database(), 'CONNECT') THEN
         EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_authenticator"', current_database());
+    END IF;
+    IF NOT has_database_privilege('{p}_guest', current_database(), 'CONNECT') THEN
+        EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_guest"', current_database());
     END IF;
     IF NOT has_database_privilege('{p}_viewer', current_database(), 'CONNECT') THEN
         EXECUTE format('GRANT CONNECT ON DATABASE %I TO "{p}_viewer"', current_database());
@@ -934,6 +941,11 @@ func (s *pgStore) As(ctx context.Context, role string, fn func(context.Context) 
 	}
 	after := &[]func(){}
 	return storeCommitted(after, storeErr(pgx.BeginTxFunc(ctx, pool, opts, func(tx pgx.Tx) error {
+		if ac, ok := ctx.Value(callerKey{}).(*Actor); ok && ac.entry.Scope != nil {
+			if _, err := tx.Exec(ctx, "SELECT set_config('archive.scope', $1, true)", ac.entry.Scope.String()); err != nil {
+				return err
+			}
+		}
 		return fn(context.WithValue(ctx, storeTxKey{}, storeTx{tx, role, after, &schemaTx{}}))
 	})))
 }

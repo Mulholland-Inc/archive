@@ -1,7 +1,7 @@
 /**
  * Archive runs your TypeScript against the `archive` SDK below. Your code is the body of an async function: use
  * top-level await and `return` a JSON value. Output: { result, logs, error, files }; console.log, warn and error add to logs.
- * Only archive, console, fetch, input and standard JavaScript exist: no require, import, timers, files or process.
+ * Only archive, caller, console, fetch, input and standard JavaScript exist: no require, import, timers, files or process.
  * Limits: {timeout} a run, 256 KB of result, 64 KB of logs. Return what you need, not whole tables.
  *
  * Types
@@ -28,6 +28,14 @@
  *   Quote "group" in SQL. Managers and up write the member table { email, role, group }: one group by id or name, a new name
  *   makes it, null takes them out, adding an email invites them. Deleting a group takes its members out. Nobody sets or removes a role above their own. The owner stays: only
  *   they transfer, with archive.update("member", id, { role: "owner" }), which makes them an engineer.
+ * - A guest is a member with role guest and no email, made with archive.create("member", { role: "guest", scope, name, group }): scope is the id of the row
+ *   they stand for, like a supplier. They hold a link, not a sign-in: archive.link(member) gives its token, and they send it as Authorization: Bearer. Their row is theirs
+ *   only through what you say: a guest reads no table until GRANT SELECT (a, b), UPDATE (b) ON supplier_order TO guest, a statement of archive.migrate, and such a table
+ *   needs a restrictive policy that says which rows:
+ *   CREATE POLICY guest ON supplier_order AS RESTRICTIVE USING (archive.scope() IS NULL OR supplier = archive.scope()) WITH CHECK (archive.scope() IS NULL OR supplier = archive.scope()).
+ *   archive.scope() is the row the guest stands for, null for everyone else. Columns not granted stay out of reach. A guest reads and writes granted tables, uploads
+ *   files, reads only files they uploaded and runs workflows whose runs is their group; they run no code, do not search and do not talk with agents.
+ *   Grant updated_at along with what they update. A new column reaches a guest only when you grant it.
  * - SDK errors have code ('invalid', 'not_found', 'forbidden', 'conflict' or a SQLSTATE); invalid has errors: [{ path, message }].
  *
  * Data
@@ -94,7 +102,11 @@
  * Workflows
  * - A workflow is a saved script Archive runs by itself, a row of workflow: archive.create("workflow", { name, source, on, access }).
  *   source is written like this code and each run is a run like this one, as whoever saved it last. name is letters, digits,
- *   - and _. You see your own and those whose access is your group; only its owner changes or runs it.
+ *   - and _. You see your own and those whose access is your group; only its owner changes it.
+ * - Who else runs it: runs is a group's id, and that group and managers and up may run it, with archive.run or POST /api/run/{name} and JSON input. It runs as whoever
+ *   saved it, in its own transaction, so it stays done if the caller's own run rolls back. caller says who asked; check caller.scope and caller.role before trusting input.
+ *   Asked by a guest, archive.scope() is that guest's for the whole run, so every restrictive policy still holds even though it runs as you: it cannot reach another guest's rows.
+ *   A table without a restrictive policy is open to it, so keep what a guest must not reach behind one.
  * - on: { cron: "0 9 * * 1-5", tz?: "America/New_York" } (UTC by default; also @every 15m, @hourly, @daily, @weekly, @monthly);
  *   { table: "invoice", events: ["created", "updated"] } (never deletes, nor rows it wrote itself); { webhook: true } (POST
  *   to the row's url, which anyone with it can call); null (only when run).
@@ -121,13 +133,16 @@
  *   What is in a folder is seen as the folder is: it takes the folder's access when it comes in, and archive.update("file", folder, { access }), a group
  *   or null for everyone, changes it for everything under the folder. A file in a folder refuses an access of its own; move it out to give it one.
  *   Bytes held, each once: archive.query("SELECT archive.stored()").
+ * - A file a guest uploads is theirs; a manager gives one to a guest with archive.update("file", id, { scope }), the row the guest stands for.
+ * - A folder of any size downloads as one stream, past the limits of a run: GET /api/file/{id}/zip, with the folders inside it kept and only what the reader may see.
  *
  * Email
  * - Every agent has an address, the workspace's slug, a hyphen, and the slug column of agent, at Archive's domain: acme-sales@archive.dev.
  *   Slugs follow names, so a rename changes the address and the old one stops working.
- * - archive.email({ to, subject, text, from }) sends one plain text email from an agent. Talking with an agent, from is that agent; otherwise
+ * - archive.email({ to, subject, text, html, from }) sends one email from an agent; text is required, html is optional and mail clients that read it show it instead. Talking with an agent, from is that agent; otherwise
  *   name the agent, by id, slug or name. You must be able to see it, and viewers cannot send. Like actions, a sent email stays sent if the run rolls back.
  * - A workspace sends 100 a day, until midnight UTC. Past that it throws forbidden.
+ * - While the mail_only table has rows, mail goes only to those addresses and anything else throws forbidden: archive.create("mail_only", { email }). Empty, it goes to anyone.
  * - Talking with an agent, sending to someone who is not a member of this workspace throws forbidden until a later turn: tell them who it goes to
  *   and what it says, and stop. Its error has a confirm: once they agree, in a later turn, send the very same email with it. Workflows send freely.
  * - Mail to an address lands in the inbox table, for those who may see the agent; it starts no turn and gets no automatic reply. Read only.
@@ -206,14 +221,30 @@ interface ArchiveSDK {
     model(reqs: ModelReq[]): Promise<ModelResult[]>;
     /** Have an agent reach goal by writing and running scripts inside this run's transaction, and return its answer; 10 minutes a run (see Models). */
     do(goal: string, opts?: { model?: string; instructions?: string; files?: { id: string; page?: number }[]; maxRuns?: number }): Promise<DoResult>;
-    /** Send one plain text email from an agent; it stays sent if the run rolls back (see Email). */
-    email(mail: { to: string; subject: string; text: string; from?: string; confirm?: string }): Promise<EmailSent>;
+    /** Send one email from an agent, with html if you give it; it stays sent if the run rolls back (see Email). */
+    email(mail: { to: string; subject: string; text: string; html?: string; from?: string; confirm?: string }): Promise<EmailSent>;
+    /** The token of a guest's link, made the first time; rotate replaces it, and the old one stops working. Managers and up (see Transaction and access). */
+    link(member: string, opts?: { rotate?: boolean }): Promise<string>;
     /** Do the action name, like "gmail.search", with one of your connected accounts; connection picks one when you have several (see Connected accounts). */
     action<A extends keyof Actions>(name: A, input: Actions[A]["input"], opts?: { connection?: string }): Promise<Actions[A]["output"]>;
 }
 
 /** What started this run (see Workflows in the header). A plain run has it undefined; a saved workflow has the type of its on. */
 declare const input: unknown;
+
+/** Who asked for this run: the person or guest who ran it, or for a schedule whoever saved it (see Workflows in the header). */
+declare const caller: Caller;
+
+interface Caller {
+    member: string;
+    email: string;
+    name: string;
+    role: string;
+    /** The id of their group, or null. */
+    group: string | null;
+    /** The id of the row a guest stands for, null for everyone else. */
+    scope: string | null;
+}
 
 /** Adds to the run's logs. */
 declare const console: { log(...args: unknown[]): void; info(...args: unknown[]): void; debug(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void };

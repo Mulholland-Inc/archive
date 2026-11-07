@@ -57,6 +57,15 @@ CREATE FUNCTION archive.groups() RETURNS uuid[] LANGUAGE sql STABLE AS $$
         OR EXISTS (SELECT FROM pg_catalog.pg_roles r WHERE r.rolname = archive.group_role(g.id) AND pg_has_role(current_user, r.oid, 'USAGE')))
 $$;
 
+CREATE FUNCTION archive.scope() RETURNS uuid LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog AS $$
+DECLARE
+    found uuid;
+BEGIN
+    SELECT m.scope INTO found FROM archive.member m WHERE m.scope IS NOT NULL
+        AND '{p}_u' || translate(rtrim(encode(uuid_send(m.id), 'base64'), '='), '+/', '-_') = session_user;
+    RETURN coalesce(found, nullif(current_setting('archive.scope', true), '')::uuid);
+END $$;
+
 CREATE FUNCTION archive.uses(target regclass, id uuid) RETURNS TABLE ("schema" text, "table" text, "column" text, total bigint, "rows" jsonb, restricts bool) LANGUAGE plpgsql STABLE AS $$
 DECLARE
     r record;
@@ -256,22 +265,25 @@ CREATE TABLE archive.composite_use (
 );
 COMMENT ON TABLE archive.composite_use IS 'Always empty; it uses every built-in composite type, so pg-schema-diff sees them as used by a table before and after a user table starts using one';
 
-CREATE TYPE archive.level AS ENUM ('viewer', 'editor', 'manager', 'engineer', 'owner');
-COMMENT ON TYPE archive.level IS 'What a member may do: a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
+CREATE TYPE archive.level AS ENUM ('guest', 'viewer', 'editor', 'manager', 'engineer', 'owner');
+COMMENT ON TYPE archive.level IS 'What a member may do: a guest holds a link and reaches only what its table grants name, a viewer reads, an editor also writes, a manager also changes the schema, the members, integrations and agents and sees every row, an engineer also changes the workspace''s name and look and has its API keys, and its one owner also deletes it and transfers it';
 
 CREATE TABLE archive.member (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
-    email      archive.email NOT NULL UNIQUE,
+    email      archive.email NOT NULL UNIQUE DEFAULT (uuidv7()::text || '@guest.invalid'),
     role       archive.level NOT NULL DEFAULT 'viewer',
     "group"    uuid REFERENCES archive."group" ON DELETE SET NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
     name       text NOT NULL DEFAULT '',
-    access     uuid REFERENCES archive."group" ON DELETE RESTRICT
+    access     uuid REFERENCES archive."group" ON DELETE RESTRICT,
+    scope      uuid,
+    CONSTRAINT member_guest CHECK ((role::text = 'guest') = (scope IS NOT NULL) AND (role::text = 'guest') = (email::text LIKE '%@guest.invalid'))
 ) INHERITS (archive.object);
 COMMENT ON TABLE archive.member IS 'A person in this workspace. Managers and up add, change and remove members, none of them above their own role; adding an email invites that person
 icon: users';
-COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change';
+COMMENT ON COLUMN archive.member.email IS 'The address they sign in with; it cannot change. A guest has none and leaves it out';
+COMMENT ON COLUMN archive.member.scope IS 'The row a guest stands for, what archive.scope() returns for them and what restrictive policies compare to; required for a guest, null for everyone else';
 COMMENT ON COLUMN archive.member.role IS 'One member is the owner. To transfer the workspace the owner sets another member''s role to owner, which makes the old owner an engineer';
 COMMENT ON COLUMN archive.member."group" IS 'references group; the one group they are in, or null. A row whose access is a group is seen only by its members and by managers, engineers and the owner';
 CREATE UNIQUE INDEX member_owner_idx ON archive.member (role) WHERE role = 'owner';
@@ -344,7 +356,7 @@ BEGIN
             EXECUTE format('CREATE ROLE %I NOLOGIN', m);
         END IF;
         IF TG_OP = 'INSERT' OR NEW.role <> OLD.role THEN
-            EXECUTE format('REVOKE %I, %I, %I, %I, %I FROM %I', '{p}_viewer', '{p}_editor', '{p}_manager', '{p}_engineer', '{p}_owner', u);
+            EXECUTE format('REVOKE %I, %I, %I, %I, %I, %I FROM %I', '{p}_guest', '{p}_viewer', '{p}_editor', '{p}_manager', '{p}_engineer', '{p}_owner', u);
             EXECUTE format('GRANT %I TO %I', '{p}_' || NEW.role, u);
         END IF;
         EXECUTE format('GRANT %I TO %I', m, u);
@@ -365,6 +377,16 @@ CREATE TRIGGER member_check BEFORE INSERT OR UPDATE OR DELETE ON archive.member 
 CREATE TRIGGER member_transfer BEFORE UPDATE ON archive.member FOR EACH ROW WHEN (NEW.role = 'owner' AND OLD.role <> 'owner') EXECUTE FUNCTION archive.member_transfer();
 CREATE TRIGGER member_roles AFTER INSERT OR UPDATE OR DELETE ON archive.member FOR EACH ROW EXECUTE FUNCTION archive.member_roles();
 
+CREATE TABLE archive.mail_only (
+    id         uuid PRIMARY KEY DEFAULT uuidv7(),
+    email      archive.email NOT NULL UNIQUE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+COMMENT ON TABLE archive.mail_only IS 'While it has rows, archive.email sends only to these addresses and throws forbidden for any other. Empty, it sends to anyone. Managers and up change it
+icon: mail-check';
+COMMENT ON COLUMN archive.mail_only.email IS 'An address mail may go to';
+
 CREATE TABLE archive.workflow (
     id         uuid PRIMARY KEY DEFAULT uuidv7(),
     user_id    uuid NOT NULL,
@@ -382,6 +404,7 @@ CREATE TABLE archive.workflow (
     member     uuid REFERENCES archive.member ON DELETE CASCADE,
     "on"       jsonb,
     broken     text,
+    runs       uuid REFERENCES archive."group" ON DELETE SET NULL,
     UNIQUE (user_id, name)
 ) INHERITS (archive.object);
 CREATE INDEX workflow_next_idx ON archive.workflow (next_at) WHERE next_at IS NOT NULL;
@@ -392,6 +415,7 @@ COMMENT ON COLUMN archive.workflow.source IS 'Its TypeScript, written like a run
 COMMENT ON COLUMN archive.workflow."on" IS 'When it runs: { cron, tz? }, { table, events }, { webhook: true }, or null to run only with archive.run';
 COMMENT ON COLUMN archive.workflow.member IS 'references member; whose it is, who alone changes, runs or deletes it';
 COMMENT ON COLUMN archive.workflow.access IS 'Group that sees it and its runs too; null for only you. Only you change, run or delete it';
+COMMENT ON COLUMN archive.workflow.runs IS 'references group; who else may run it, as whoever saved it: that group and managers and up. Null for only you. A run has them as caller';
 COMMENT ON COLUMN archive.workflow.broken IS 'Why a migration stopped it, with line and column; it does not run until a save changes its source and passes the checks, which clears this. Read only';
 COMMENT ON COLUMN archive.workflow.next_at IS 'When it runs next: a cron workflow''s next time, or now for a table workflow with rows waiting';
 
@@ -623,11 +647,19 @@ CREATE TABLE archive.file (
     retry_at      timestamptz,
     seen_at       timestamptz NOT NULL DEFAULT now(),
     updated_at    timestamptz NOT NULL DEFAULT now(),
+    scope         uuid,
     CONSTRAINT file_source UNIQUE (connection, stream, source_id)
 );
 CREATE INDEX file_pending_idx ON archive.file (id) WHERE status = 'pending' AND connection IS NULL;
 CREATE INDEX file_search_idx ON archive.file USING gin (search);
-CREATE UNIQUE INDEX file_key ON archive.file (access, parent, hash, name) NULLS NOT DISTINCT WHERE connection IS NULL;
+CREATE UNIQUE INDEX file_key ON archive.file (access, parent, hash, name, scope) NULLS NOT DISTINCT WHERE connection IS NULL;
+CREATE INDEX file_scope_idx ON archive.file (scope) WHERE scope IS NOT NULL;
+CREATE FUNCTION archive.file_scope() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.scope := coalesce(NEW.scope, archive.scope());
+    RETURN NEW;
+END $$;
+CREATE TRIGGER file_scope BEFORE INSERT ON archive.file FOR EACH ROW EXECUTE FUNCTION archive.file_scope();
 CREATE INDEX file_parent_idx ON archive.file (parent);
 CREATE INDEX file_hash_idx ON archive.file (hash) WHERE hash <> '';
 CREATE INDEX file_thumb_idx ON archive.file ((metadata#>>'{thumbnail,sha256}')) WHERE metadata ? 'thumbnail';
@@ -636,6 +668,7 @@ CREATE INDEX file_owner_idx ON archive.file (owner);
 CREATE INDEX file_editor_idx ON archive.file (editor);
 COMMENT ON TABLE archive.file IS 'A file or folder: one you uploaded or made here, or one of a drive you connected, like Google Drive, SharePoint, Dropbox or Box, with its bytes and its words when Archive reads them. Change yours with archive.edit; what a connection synced is read only, so archive.copy it to change it here, or its connector''s upload to change it there
 icon: folder-open';
+COMMENT ON COLUMN archive.file.scope IS 'The row of the guest it belongs to: that guest sees it, and everyone else sees it as its access says. Null for no guest';
 COMMENT ON COLUMN archive.file.hash IS 'The sha256 of its bytes; empty while Archive has none, as for a folder or a file not yet copied';
 COMMENT ON COLUMN archive.file.name IS 'Its name; a Google Doc, Sheet or Slides deck''s ends in .docx, .xlsx or .pptx, as Archive keeps it';
 COMMENT ON COLUMN archive.file.mime IS 'Its media type, like application/pdf';
@@ -4732,13 +4765,16 @@ COMMENT ON COLUMN archive.billing.name IS 'The linked card, like visa 4242; empt
 COMMENT ON COLUMN archive.billing.customer IS 'Its Stripe customer id';
 CREATE UNIQUE INDEX billing_one_idx ON archive.billing ((true));
 
-GRANT USAGE ON SCHEMA archive TO "{p}_viewer";
+GRANT USAGE ON SCHEMA archive TO "{p}_guest", "{p}_viewer";
+GRANT SELECT, INSERT ON archive.file TO "{p}_guest";
 GRANT SELECT ON archive.business, archive.agreement, archive.billing TO "{p}_viewer";
 GRANT INSERT, UPDATE ON archive.business TO "{p}_owner";
 GRANT INSERT ON archive.agreement TO "{p}_owner";
 GRANT SELECT ON archive.file, archive.member, archive."group", archive.revision TO "{p}_viewer";
 GRANT INSERT, UPDATE, DELETE ON archive.file TO "{p}_editor";
 GRANT INSERT, UPDATE, DELETE ON archive.member, archive."group" TO "{p}_manager";
+GRANT SELECT ON archive.mail_only TO "{p}_viewer";
+GRANT INSERT, UPDATE, DELETE ON archive.mail_only TO "{p}_manager";
 GRANT SELECT, INSERT, UPDATE, DELETE ON archive.workflow TO "{p}_viewer";
 GRANT SELECT ON archive.workflow_run TO "{p}_viewer";
 GRANT SELECT ON archive.agent, archive.turn, archive.memory, archive.inbox TO "{p}_viewer";
@@ -4754,6 +4790,7 @@ CREATE POLICY see ON archive.file FOR SELECT USING ((access IS NULL OR access = 
 CREATE POLICY add ON archive.file FOR INSERT WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
 CREATE POLICY change ON archive.file FOR UPDATE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL) WITH CHECK ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
 CREATE POLICY remove ON archive.file FOR DELETE USING ((access IS NULL OR access = ANY((SELECT archive.groups())::uuid[])) AND connection IS NULL);
+CREATE POLICY scope ON archive.file AS RESTRICTIVE USING ((SELECT archive.scope()) IS NULL OR scope = (SELECT archive.scope())) WITH CHECK ((SELECT archive.scope()) IS NULL OR scope = (SELECT archive.scope()));
 
 
 ALTER TABLE archive.workflow ENABLE ROW LEVEL SECURITY;
@@ -4883,10 +4920,13 @@ CREATE FUNCTION archive.catalog() RETURNS jsonb LANGUAGE sql STABLE SET search_p
             'security_invoker', coalesce((SELECT o.option_value::bool FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false),
             'object', EXISTS (SELECT FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid AND i.inhparent = 'archive.object'::regclass),
             'partitioned', c.relkind = 'p' OR c.relispartition,
-            'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polpermissive AND p.polroles = '{0}'::oid[]
+            'guest', coalesce((SELECT jsonb_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_attribute a
+                WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND has_column_privilege('{p}_guest', c.oid, a.attnum, 'SELECT')), '[]'),
+            'restrictive', EXISTS (SELECT FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND NOT p.polpermissive),
+            'policy', coalesce((SELECT count(*) = 1 AND bool_and(p.polname = 'access' AND p.polcmd = '*' AND p.polroles = '{0}'::oid[]
                 AND pg_get_expr(p.polqual, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))'
                 AND pg_get_expr(p.polwithcheck, p.polrelid) = '((access IS NULL) OR (access = ANY (( SELECT groups() AS groups)::uuid[])))')
-                FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid), false),
+                FROM pg_catalog.pg_policy p WHERE p.polrelid = c.oid AND p.polpermissive), false),
             'columns', col.cols))
             FROM pg_catalog.pg_class c LEFT JOIN col ON col.rel = c.oid
             WHERE (c.relnamespace = 'public'::regnamespace OR c.relnamespace = 'archive'::regnamespace AND c.relname NOT IN ('object', 'revision', 'ddl_key', 'upload', 'composite_use', 'blob_gone', 'work')
@@ -4932,7 +4972,7 @@ SELECT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = sqlc.arg(role)::n
 SELECT NOT EXISTS (SELECT FROM archive.member);
 
 -- name: MemberEntry :one
-SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group" FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
+SELECT coalesce((SELECT r.id::text || ':' || r.hash FROM archive.revision r ORDER BY r.id DESC LIMIT 1), '')::text AS revision, m.id, m.role::text AS role, m."group", m.scope FROM archive.member m WHERE m.email = sqlc.arg(email)::text;
 
 -- name: Members :many
 SELECT id, email::text AS email, role::text AS role, "group", name FROM archive.member ORDER BY email;
@@ -5114,6 +5154,21 @@ SELECT archive.ddl_revision(sqlc.arg(key), sqlc.arg(hash), sqlc.arg(author), sql
 -- name: WorkflowAll :many
 SELECT w.id::uuid AS id, w.name::text AS name, w.source::text AS source, w."on"::jsonb AS "on", (w.broken IS NOT NULL)::bool AS broken FROM archive.workflow_all($1) w;
 
+-- name: WorkflowRunnable :many
+SELECT * FROM archive.workflow w WHERE w.name = ANY(sqlc.arg(names)::text[]) AND (w.user_id = sqlc.arg(user_id) OR w.runs = ANY(sqlc.arg(groups)::uuid[])) ORDER BY (w.user_id = sqlc.arg(user_id)) DESC, w.id LIMIT 2;
+
+-- name: GuestMember :one
+SELECT email::text AS email, name FROM archive.member WHERE id = $1 AND role::text = 'guest';
+
+-- name: FileChildren :many
+SELECT id, kind, name, hash, size, created_at FROM archive.file WHERE parent = $1 ORDER BY kind DESC, name, id;
+
+-- name: MyGroups :one
+SELECT archive.groups()::uuid[];
+
+-- name: MailOnly :many
+SELECT email::text FROM archive.mail_only ORDER BY 1;
+
 -- name: WorkflowStop :exec
 SELECT archive.workflow_stop(sqlc.arg(key), sqlc.arg(why));
 
@@ -5157,14 +5212,14 @@ SELECT * FROM archive.workflow WHERE id = $1 FOR UPDATE;
 SELECT * FROM archive.workflow WHERE hook = $1 AND trigger = 'webhook';
 
 -- name: InsertWorkflow :one
-INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id, access)
+INSERT INTO archive.workflow (user_id, member, role, name, source, "on", trigger, hook, next_at, cursor_at, cursor_id, access, runs)
 VALUES (sqlc.arg(user_id), sqlc.arg(member), sqlc.arg(role), sqlc.arg(name), sqlc.arg(source), nullif(sqlc.arg(on_json)::jsonb, 'null'), sqlc.arg(trigger), sqlc.arg(hook),
-    sqlc.narg(next_at), sqlc.narg(cursor_at), sqlc.narg(cursor_id), sqlc.narg(access))
+    sqlc.narg(next_at), sqlc.narg(cursor_at), sqlc.narg(cursor_id), sqlc.narg(access), sqlc.narg(runs))
 RETURNING id;
 
 -- name: UpdateWorkflow :execrows
 UPDATE archive.workflow SET name = sqlc.arg(name), source = sqlc.arg(source), "on" = nullif(sqlc.arg(on_json)::jsonb, 'null'), trigger = sqlc.arg(trigger),
-    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), broken = CASE WHEN source = sqlc.arg(source) THEN broken END, updated_at = now()
+    next_at = sqlc.narg(next_at), cursor_at = sqlc.narg(cursor_at), cursor_id = sqlc.narg(cursor_id), access = sqlc.narg(access), runs = sqlc.narg(runs), broken = CASE WHEN source = sqlc.arg(source) THEN broken END, updated_at = now()
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteWorkflow :execrows

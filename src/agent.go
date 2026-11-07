@@ -61,6 +61,13 @@ func (a *Archive) ClearTurns(ctx context.Context, agent uuid.UUID) error {
 var bootLists = map[string]string{"agents": "agent_list", "workflows": "workflow_list", "members": "member"}
 
 func (a *Archive) boot(ctx context.Context, only string) (map[string]any, error) {
+	if ac := ActorFrom(ctx); ac != nil && ac.entry.Role == "guest" {
+		me, err := a.me(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"me": me, "types": map[string]any{"tables": a.Catalog().forGuest(), "types": a.Catalog().Types}}, nil
+	}
 	want := map[string]bool{}
 	for _, k := range strings.Split(only, ",") {
 		switch {
@@ -886,6 +893,7 @@ type emailMail struct {
 	To      string `json:"to"`
 	Subject string `json:"subject"`
 	Text    string `json:"text"`
+	HTML    string `json:"html"`
 	From    string `json:"from"`
 	Confirm string `json:"confirm"`
 }
@@ -948,6 +956,9 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 	case len(m.Text) > emailBig:
 		bad("text", fmt.Sprintf("want at most %d bytes", emailBig))
 	}
+	if len(m.HTML) > emailBig {
+		bad("html", fmt.Sprintf("want at most %d bytes", emailBig))
+	}
 	turnAgent, _ := ctx.Value(emailAgentKey{}).(string)
 	who := cmp.Or(m.From, turnAgent)
 	if who == "" {
@@ -1005,6 +1016,16 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 			}
 		}
 	}
+	var only []string
+	if err := a.sys(ctx, func(ctx context.Context) (err error) {
+		only, err = a.st.db(ctx).MailOnly(ctx)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+	if len(only) > 0 && !slices.ContainsFunc(only, func(s string) bool { return strings.EqualFold(s, to.Address) }) {
+		return nil, fmt.Errorf("%s is not in mail_only, so this workspace does not send to it: %w", to.Address, ErrForbidden)
+	}
 	key := strings.TrimSpace(secretEnv("ARCHIVE_EMAIL"))
 	if key == "" {
 		return nil, fmt.Errorf("this server does not send email: ARCHIVE_EMAIL is not set: %w", ErrForbidden)
@@ -1018,7 +1039,7 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 	if err != nil {
 		return nil, err
 	}
-	status, refused, err := emailPost(ctx, key, address, agent.Name, to.Address, subject, m.Text)
+	status, refused, err := emailPost(ctx, key, address, agent.Name, to.Address, subject, m.Text, m.HTML)
 	if refused {
 		if err := a.hub.q().UncountEmail(context.WithoutCancel(ctx), a.ws.ID); err != nil {
 			fmt.Fprintf(os.Stderr, "archive: workspace %s email count: %v\n", a.ws.ID, err)
@@ -1030,13 +1051,17 @@ func (a *Archive) Email(ctx context.Context, m emailMail) (*EmailSent, error) {
 	return &EmailSent{From: address, To: to.Address, Status: status}, nil
 }
 
-func emailPost(ctx context.Context, key, from, name, to, subject, text string) (status string, refused bool, err error) {
+func emailPost(ctx context.Context, key, from, name, to, subject, text, html string) (status string, refused bool, err error) {
 	u, err := url.Parse(key)
 	if err != nil || u.User == nil {
 		return "", true, errors.New("ARCHIVE_EMAIL: want https://<account id>:<token>@api.cloudflare.com")
 	}
 	token, _ := u.User.Password()
-	body, _ := json.Marshal(map[string]any{"from": map[string]string{"address": from, "name": name}, "to": to, "subject": subject, "text": text})
+	mail := map[string]any{"from": map[string]string{"address": from, "name": name}, "to": to, "subject": subject, "text": text}
+	if html != "" {
+		mail["html"] = html
+	}
+	body, _ := json.Marshal(mail)
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.Scheme+"://"+u.Host+"/client/v4/accounts/"+url.PathEscape(u.User.Username())+"/email/sending/send", bytes.NewReader(body))
