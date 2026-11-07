@@ -346,7 +346,7 @@ func (h *Hub) liveHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "live updates are served at the edge", http.StatusNotFound)
 		return
 	}
-	if o := r.Header.Get("Origin"); o != "" && !h.ownOrigin(o) && o != httpOrigin(h.api) {
+	if o := r.Header.Get("Origin"); o != "" && o != httpOrigin(h.app) && o != httpOrigin(h.api) {
 		http.Error(w, "this origin may not listen", http.StatusForbidden)
 		return
 	}

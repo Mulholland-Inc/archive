@@ -231,22 +231,6 @@ UPDATE archive."user" SET totp = NULL, totp_step = 0, totp_fails = 0, totp_until
 -- name: CreateToken :one
 INSERT INTO archive.token (id, user_id, workspace, kind, name, role, hash, sealed, expires_at) VALUES ($1, $2, $3, 'api', $4, $5, $6, $7, $8) RETURNING created_at, expires_at;
 
--- name: GuestToken :one
-SELECT id, sealed FROM archive.token WHERE user_id = $1 AND workspace = $2 AND kind = 'guest';
-
--- name: DropGuestToken :exec
-DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 AND kind = 'guest';
-
--- name: CreateGuestToken :exec
-INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, sealed) VALUES ($1, $2, $3, 'guest', $4, $5, $6);
-
--- name: CreateClaim :exec
-WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'claim' AND x.expires_at < now())
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'claim', $2, now() + interval '2 minutes');
-
--- name: UseClaim :one
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'claim' AND expires_at > now() RETURNING user_id;
-
 -- name: KeyWorkspace :one
 SELECT workspace FROM archive.token WHERE id = $1 AND user_id = $2 AND kind = 'api';
 

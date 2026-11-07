@@ -51,7 +51,3 @@ jobs:
         working-directory: apps/web
       - run: npm run build
         working-directory: apps/web
-      - run: npm ci
-        working-directory: apps/lulu
-      - run: npm run build
-        working-directory: apps/lulu

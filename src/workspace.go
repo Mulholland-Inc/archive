@@ -859,7 +859,7 @@ func (h *Hub) secret(r *http.Request) (string, error) {
 
 func (h *Hub) authenticate(ctx context.Context, secret, want string, kinds ...string) (*Archive, *Actor, func(), error) {
 	if len(kinds) == 0 {
-		kinds = []string{"api", "session", "guest"}
+		kinds = []string{"api", "session"}
 	}
 	t, err := h.q().Authenticate(ctx, authHash(secret), kinds)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -978,51 +978,9 @@ func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
 			return
 		}
 		defer release()
-		if ac.entry.Role == "guest" && !guestMay(a, r) {
-			httpWrite(w, 0, nil, fmt.Errorf("a guest link cannot reach %s: %w", r.URL.Path, ErrForbidden))
-			return
-		}
 		ctx := context.WithValue(WithActor(r.Context(), ac), clientKey{}, clientOf(r))
 		next(a).ServeHTTP(w, r.WithContext(withArchive(ctx, a)))
 	})
-}
-
-func guestMay(a *Archive, r *http.Request) bool {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 2 || parts[0] != "api" {
-		return false
-	}
-	switch parts[1] {
-	case "boot":
-		return r.Method == http.MethodGet && len(parts) == 2
-	case "run":
-		return r.Method == http.MethodPost && len(parts) == 3
-	case "file":
-		if len(parts) == 4 && r.Method == http.MethodGet {
-			return parts[3] == "content" || parts[3] == "thumbnail"
-		}
-		return len(parts) == 2 && r.Method == http.MethodPost || len(parts) >= 3 && parts[2] == "tus"
-	}
-	t := a.Catalog().Tables[parts[1]]
-	return t != nil && t.Schema == "public" && len(parts) <= 3
-}
-
-func (h *Hub) ownOrigin(origin string) bool {
-	if origin == httpOrigin(h.app) {
-		return true
-	}
-	app, err := url.Parse(h.app)
-	if err != nil {
-		return false
-	}
-	u, err := url.Parse(origin)
-	if err != nil || u.Scheme != app.Scheme {
-		return false
-	}
-	if h.localApp() {
-		return localHost(u.Hostname())
-	}
-	return strings.HasSuffix(u.Hostname(), "."+strings.TrimPrefix(app.Hostname(), "app."))
 }
 
 func (h *Hub) inWorkspace(f func(a *Archive, w http.ResponseWriter, r *http.Request)) http.HandlerFunc {
