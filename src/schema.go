@@ -1157,14 +1157,14 @@ func schemaFunctions(ctx context.Context, q generated.DBTX) error {
         JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
         JOIN pg_catalog.pg_language l ON l.oid = p.prolang
         WHERE n.nspname NOT IN ('pg_catalog', 'information_schema', 'archive')
-        AND (p.prosecdef OR l.lanname NOT IN ('sql', 'plpgsql')) LIMIT 1`).Scan(&name)
+        AND (l.lanname NOT IN ('sql', 'plpgsql') OR p.prosecdef AND NOT EXISTS (SELECT FROM unnest(p.proconfig) c WHERE c LIKE 'search_path=%')) LIMIT 1`).Scan(&name)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("function %s: functions are LANGUAGE sql or plpgsql, without SECURITY DEFINER: %w", name, ErrForbidden)
+	return fmt.Errorf("function %s: functions are LANGUAGE sql or plpgsql, and SECURITY DEFINER needs SET search_path: %w", name, ErrForbidden)
 }
 
 func schemaSetSearch(table string, cols []string) string {

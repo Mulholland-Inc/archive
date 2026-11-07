@@ -69,7 +69,10 @@
  * - Keep data with ALTER TABLE ... RENAME and ALTER COLUMN ... TYPE ... USING. An enum value added is usable only from
  *   the next run. To undo a migration, migrate the reverse. Past ones:
  *   archive.query("SELECT created_at, author, statements FROM archive.revision WHERE statements <> '[]' ORDER BY created_at DESC LIMIT 20")
- * - Tables: CREATE TABLE house (address text NOT NULL, price archive.money, owner uuid REFERENCES person) INHERITS (archive.object);
+ * - A function may be SECURITY DEFINER with SET search_path: it runs as a manager with row-level security still on, so archive.scope() and every restrictive policy
+ *   hold in it. A trigger uses one when a guest's write has to read or update what the guest cannot. A function with neither is refused.
+ * - RAISE EXCEPTION in a trigger refuses the write: the API answers 400 with its message word for word, and in a script it throws with that message.
+ * - Tables: CREATE TABLE house (address text NOT NULL,price archive.money, owner uuid REFERENCES person) INHERITS (archive.object);
  *   COMMENT ON TABLE house IS 'A house you own'; object gives id, name, access, created_at and updated_at, and Archive
  *   adds the primary key, a search column, and row-level security, so write no policy. Comments become these docs. Use the built-in archive.* types to
  *   get their cleaning. A list of references is uuid[] with a column comment starting 'references other'.

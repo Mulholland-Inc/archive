@@ -982,12 +982,19 @@ func (s *pgStore) System(ctx context.Context, fn func(context.Context) error) er
 	})))
 }
 
+type storeRefused string
+
+func (r storeRefused) Error() string        { return string(r) }
+func (r storeRefused) Is(target error) bool { return target == httpErrBadRequest }
+
 func storeErr(err error) error {
 	var pe *pgconn.PgError
 	if !errors.As(err, &pe) {
 		return err
 	}
 	switch {
+	case pe.Code == "P0001":
+		return storeRefused(pe.Message)
 	case pe.Code == "42501" && (strings.HasPrefix(pe.Message, "must be owner of ") || strings.HasPrefix(pe.Message, "permission denied for schema ")):
 		return fmt.Errorf("%s; change the schema with archive.migrate: %w", pe.Message, ErrForbidden)
 	case pe.Code == "42501":

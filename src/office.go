@@ -14,6 +14,7 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -582,7 +583,27 @@ func OfficeEdit(b []byte, name string, ops []OfficeOp) ([]byte, error) {
 		}
 		st = officeNewIDs(w.ps)
 	}
-	for i, op := range ops {
+	for i := 0; i < len(ops); i++ {
+		op := ops[i]
+		if kind == "xlsx" {
+			end := i
+			for end < len(ops) && ops[end].Op == "set_cell" && ops[end].Sheet == op.Sheet {
+				end++
+			}
+			if end-i > 1 {
+				rest, err := officeSetCells(p, ops[i:end])
+				if err != nil {
+					return nil, fmt.Errorf("edits %d to %d (set_cell): %v", i, end-1, err)
+				}
+				for _, one := range rest {
+					if err := officeApply(p, kind, one, st); err != nil {
+						return nil, fmt.Errorf("edit (set_cell %s): %v", one.Cell, err)
+					}
+				}
+				i = end - 1
+				continue
+			}
+		}
 		n := len(p.Log[officeDocPart])
 		if err := officeApply(p, kind, op, st); err != nil {
 			return nil, fmt.Errorf("edit %d (%s): %v", i, op.Op, err)
@@ -1889,6 +1910,197 @@ func (bk *officeBook) fullCalcOnLoad() error {
 	}
 	return bk.pkg.Splice(bk.wbPart, []OfficeSplice{{at, at, []byte("<" + OfficeQ(x, "calcPr") + ` fullCalcOnLoad="1"/>`)}})
 }
+func officeSetCells(p *OfficePackage, ops []OfficeOp) ([]OfficeOp, error) {
+	bk, err := officeOpenBook(p)
+	if err != nil {
+		return nil, err
+	}
+	s, err := bk.sheet(ops[0].Sheet)
+	if err != nil {
+		return nil, err
+	}
+	var rest []OfficeOp
+	x := s.x
+	type area struct{ c1, r1, c2, r2 int }
+	var merged, arrays []area
+	for _, mc := range OfficeRoot(s.doc).Find(x, "mergeCell") {
+		if c1, r1, c2, r2, err := officeRangeOf(mc.Attrv("ref")); err == nil {
+			merged = append(merged, area{c1, r1, c2, r2})
+		}
+	}
+	for _, f := range s.data.Find(x, "f") {
+		if f.Attrv("t") == "array" && f.Attrv("ref") != "" {
+			if c1, r1, c2, r2, err := officeRangeOf(f.Attrv("ref")); err == nil && (c1 != c2 || r1 != r2) {
+				arrays = append(arrays, area{c1, r1, c2, r2})
+			}
+		}
+	}
+	want := map[int]map[int]OfficeOp{}
+cells:
+	for _, e := range ops {
+		if e.Cell == "" {
+			rest = append(rest, e)
+			continue
+		}
+		col, rown, err := OfficeParseRef(e.Cell)
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range append(merged[:len(merged):len(merged)], arrays...) {
+			if col >= m.c1 && col <= m.c2 && rown >= m.r1 && rown <= m.r2 {
+				rest = append(rest, e)
+				continue cells
+			}
+		}
+		if want[rown] == nil {
+			want[rown] = map[int]OfficeOp{}
+		}
+		want[rown][col] = e
+	}
+	body := func(e OfficeOp, col, rown int, style string) (string, error) {
+		c := "<" + OfficeQ(x, "c") + ` r="` + OfficeColName(col) + strconv.Itoa(rown) + `"`
+		if style != "" {
+			c += ` s="` + style + `"`
+		}
+		end := "</" + OfficeQ(x, "c") + ">"
+		switch v := e.Value.(type) {
+		case string:
+			return c + ` t="inlineStr"><` + OfficeQ(x, "is") + "><" + OfficeQ(x, "t") + ` xml:space="preserve">` + OfficeEsc(v) + "</" + OfficeQ(x, "t") + "></" + OfficeQ(x, "is") + ">" + end, nil
+		case float64:
+			return c + "><" + OfficeQ(x, "v") + ">" + strconv.FormatFloat(v, 'g', -1, 64) + "</" + OfficeQ(x, "v") + ">" + end, nil
+		case bool:
+			b := "0"
+			if v {
+				b = "1"
+			}
+			return c + ` t="b"><` + OfficeQ(x, "v") + ">" + b + "</" + OfficeQ(x, "v") + ">" + end, nil
+		case nil:
+			return "", fmt.Errorf("set_cell needs a value: a JSON string, number or boolean (use clear_cell to empty a cell)")
+		}
+		return "", fmt.Errorf("set_cell value must be a string, number or boolean, got %T", e.Value)
+	}
+	from := s.styleOf(bk.styleFrom)
+	rows := s.rows()
+	byRow := map[int]officeRowAt{}
+	for _, r := range rows {
+		byRow[r.r] = r
+	}
+	var ss []OfficeSplice
+	var fresh strings.Builder
+	c1, r1, c2, r2 := 0, 0, 0, 0
+	dim := OfficeRoot(s.doc).Child(x, "dimension")
+	if dim != nil {
+		if a, b, c, d, err := officeRangeOf(dim.Attrv("ref")); err == nil {
+			c1, r1, c2, r2 = a, b, c, d
+		} else {
+			dim = nil
+		}
+	}
+	grew := false
+	for _, rown := range slices.Sorted(maps.Keys(want)) {
+		cols := slices.Sorted(maps.Keys(want[rown]))
+		for _, col := range []int{cols[0], cols[len(cols)-1]} {
+			if col < c1 || col > c2 || rown < r1 || rown > r2 {
+				c1, r1, c2, r2, grew = min(c1, col), min(r1, rown), max(c2, col), max(r2, rown), true
+			}
+		}
+		row, has := byRow[rown]
+		if !has {
+			var line strings.Builder
+			line.WriteString("<" + OfficeQ(x, "row") + ` r="` + strconv.Itoa(rown) + `">`)
+			for _, col := range cols {
+				c, err := body(want[rown][col], col, rown, from)
+				if err != nil {
+					return nil, err
+				}
+				line.WriteString(c)
+			}
+			line.WriteString("</" + OfficeQ(x, "row") + ">")
+			if s.data.SelfClosing() {
+				fresh.WriteString(line.String())
+				continue
+			}
+			at := s.data.InEnd
+			for _, r := range rows {
+				if r.r > rown {
+					at = r.n.Start
+					break
+				}
+			}
+			ss = append(ss, OfficeSplice{at, at, []byte(line.String())})
+			continue
+		}
+		style := from
+		if style == "" {
+			if st, ok := row.n.Get("s"); ok && row.n.Attrv("customFormat") == "1" {
+				style = st
+			}
+		}
+		if row.n.SelfClosing() {
+			var line strings.Builder
+			line.WriteString(officeDropSpans(strings.TrimSuffix(strings.TrimRight(strings.TrimSuffix(officeRaw(s.b, row.n), "/>"), " "), "/")) + ">")
+			for _, col := range cols {
+				c, err := body(want[rown][col], col, rown, style)
+				if err != nil {
+					return nil, err
+				}
+				line.WriteString(c)
+			}
+			line.WriteString("</" + OfficeQ(x, "row") + ">")
+			ss = append(ss, OfficeSplice{row.n.Start, row.n.End, []byte(line.String())})
+			continue
+		}
+		cells := s.cells(row)
+		added := false
+		for _, col := range cols {
+			var old *OfficeNode
+			at := row.n.InEnd
+			for _, cl := range cells {
+				if cl.r == col {
+					old = cl.n
+					break
+				}
+				if cl.r > col {
+					at = cl.n.Start
+					break
+				}
+			}
+			if old != nil {
+				if old.Child(x, "f") != nil {
+					rest = append(rest, want[rown][col])
+					continue
+				}
+				st, _ := old.Get("s")
+				c, err := body(want[rown][col], col, rown, st)
+				if err != nil {
+					return nil, err
+				}
+				ss = append(ss, OfficeSplice{old.Start, old.End, []byte(c)})
+				continue
+			}
+			c, err := body(want[rown][col], col, rown, style)
+			if err != nil {
+				return nil, err
+			}
+			ss = append(ss, OfficeSplice{at, at, []byte(c)})
+			added = true
+		}
+		if _, ok := row.n.Get("spans"); ok && added {
+			ss = append(ss, OfficeSplice{row.n.Start, row.n.InStart, []byte(officeDropSpans(string(s.b[row.n.Start:row.n.InStart])))})
+		}
+	}
+	if fresh.Len() > 0 {
+		ss = append(ss, OfficeSplice{s.data.Start, s.data.End, []byte("<" + OfficeQ(x, "sheetData") + ">" + fresh.String() + "</" + OfficeQ(x, "sheetData") + ">")})
+	}
+	if dim != nil && grew {
+		ss = append(ss, OfficeSplice{dim.Start, dim.End, []byte("<" + OfficeQ(x, "dimension") + ` ref="` + OfficeColName(c1) + strconv.Itoa(r1) + ":" + OfficeColName(c2) + strconv.Itoa(r2) + `"/>`)})
+	}
+	if err := bk.pkg.Splice(s.part, ss); err != nil {
+		return nil, err
+	}
+	return rest, bk.fullCalcOnLoad()
+}
+
 func (bk *officeBook) setCell(e OfficeOp) error {
 	s, err := bk.sheet(e.Sheet)
 	if err != nil {
