@@ -1098,7 +1098,6 @@ func (r *runner) run(ctx context.Context) error {
 		in = v
 	}
 	r.vm.Set("input", in)
-	r.vm.Set("caller", callerOf(ctx))
 	stop := context.AfterFunc(ctx, func() { r.vm.Interrupt(ctx.Err()) })
 	defer stop()
 	v, err := r.vm.RunScript("script.js", r.js)

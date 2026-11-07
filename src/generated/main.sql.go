@@ -217,41 +217,6 @@ func (q *Queries) CountEmail(ctx context.Context, iD uuid.UUID, cap int32) (int3
 	return sent, err
 }
 
-const createClaim = `-- name: CreateClaim :exec
-WITH old AS (DELETE FROM archive.token x WHERE x.kind = 'claim' AND x.expires_at < now())
-INSERT INTO archive.token (user_id, kind, hash, expires_at) VALUES ($1, 'claim', $2, now() + interval '2 minutes')
-`
-
-func (q *Queries) CreateClaim(ctx context.Context, userID uuid.UUID, hash string) error {
-	_, err := q.db.Exec(ctx, createClaim, userID, hash)
-	return err
-}
-
-const createGuestToken = `-- name: CreateGuestToken :exec
-INSERT INTO archive.token (id, user_id, workspace, kind, name, hash, sealed) VALUES ($1, $2, $3, 'guest', $4, $5, $6)
-`
-
-type CreateGuestTokenParams struct {
-	ID        uuid.UUID
-	UserID    uuid.UUID
-	Workspace *uuid.UUID
-	Name      string
-	Hash      string
-	Sealed    []byte
-}
-
-func (q *Queries) CreateGuestToken(ctx context.Context, arg CreateGuestTokenParams) error {
-	_, err := q.db.Exec(ctx, createGuestToken,
-		arg.ID,
-		arg.UserID,
-		arg.Workspace,
-		arg.Name,
-		arg.Hash,
-		arg.Sealed,
-	)
-	return err
-}
-
 const createMCPClient = `-- name: CreateMCPClient :one
 INSERT INTO archive.mcp_client (name, redirect_uris, secret) VALUES ($1, $2, $3) RETURNING id, created_at
 `
@@ -489,15 +454,6 @@ func (q *Queries) DisableTotp(ctx context.Context, iD uuid.UUID, step int64) (in
 	return result.RowsAffected(), nil
 }
 
-const dropGuestToken = `-- name: DropGuestToken :exec
-DELETE FROM archive.token WHERE user_id = $1 AND workspace = $2 AND kind = 'guest'
-`
-
-func (q *Queries) DropGuestToken(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) error {
-	_, err := q.db.Exec(ctx, dropGuestToken, userID, workspace)
-	return err
-}
-
 const dropWatches = `-- name: DropWatches :exec
 DELETE FROM archive.watch WHERE connection = $1 AND NOT key = ANY($2::text[])
 `
@@ -568,22 +524,6 @@ func (q *Queries) FirstAdmin(ctx context.Context) (ArchiveUser, error) {
 		&i.TotpFails,
 		&i.TotpUntil,
 	)
-	return i, err
-}
-
-const guestToken = `-- name: GuestToken :one
-SELECT id, sealed FROM archive.token WHERE user_id = $1 AND workspace = $2 AND kind = 'guest'
-`
-
-type GuestTokenRow struct {
-	ID     uuid.UUID
-	Sealed []byte
-}
-
-func (q *Queries) GuestToken(ctx context.Context, userID uuid.UUID, workspace *uuid.UUID) (GuestTokenRow, error) {
-	row := q.db.QueryRow(ctx, guestToken, userID, workspace)
-	var i GuestTokenRow
-	err := row.Scan(&i.ID, &i.Sealed)
 	return i, err
 }
 
@@ -1120,17 +1060,6 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		arg.ID,
 	)
 	return err
-}
-
-const useClaim = `-- name: UseClaim :one
-DELETE FROM archive.token WHERE hash = $1 AND kind = 'claim' AND expires_at > now() RETURNING user_id
-`
-
-func (q *Queries) UseClaim(ctx context.Context, hash string) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, useClaim, hash)
-	var user_id uuid.UUID
-	err := row.Scan(&user_id)
-	return user_id, err
 }
 
 const useMCPCode = `-- name: UseMCPCode :one

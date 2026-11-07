@@ -271,7 +271,7 @@ func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[strin
 		var old *generated.ArchiveWorkflow
 		var name, source string
 		var on any
-		var access, runs *uuid.UUID
+		var access *uuid.UUID
 		if id != uuid.Nil {
 			w, err := q.LockWorkflow(ctx, id)
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -281,7 +281,7 @@ func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[strin
 				return nil, err
 			}
 			old = &w
-			name, source, on, access, runs = w.Name, w.Source, json.RawMessage(w.On), w.Access, w.Runs
+			name, source, on, access = w.Name, w.Source, json.RawMessage(w.On), w.Access
 		}
 		verr := &ValidationError{Type: "workflow"}
 		bad := func(path, msg string) { verr.Errors = append(verr.Errors, FieldError{Path: path, Message: msg}) }
@@ -311,20 +311,9 @@ func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[strin
 					}
 					access = &g
 				}
-			case "runs":
-				runs = nil
-				if data[k] != nil {
-					s, _ := data[k].(string)
-					g, err := uuid.Parse(s)
-					if err != nil {
-						bad(k, "want a group's id, or null for only you")
-						continue
-					}
-					runs = &g
-				}
 			case "id", "created_at", "updated_at", "next_at", "url", "member", "broken":
 			default:
-				bad(k, "unknown field; a workflow takes name, source, on, access and runs")
+				bad(k, "unknown field; a workflow takes name, source, on and access")
 			}
 		}
 		switch {
@@ -383,10 +372,10 @@ func (a *Archive) workflowSave(ctx context.Context, id uuid.UUID, data map[strin
 		}
 		if old == nil {
 			id, err = q.InsertWorkflow(ctx, generated.InsertWorkflowParams{UserID: ac.UserID, Member: &ac.member, Role: ac.Role, Name: name, Source: source,
-				OnJson: o.json(), Trigger: trig, Hook: workflowToken(), NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access, Runs: runs})
+				OnJson: o.json(), Trigger: trig, Hook: workflowToken(), NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access})
 		} else {
 			_, err = q.UpdateWorkflow(ctx, generated.UpdateWorkflowParams{ID: id, Name: name, Source: source, OnJson: o.json(), Trigger: trig,
-				NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access, Runs: runs})
+				NextAt: next, CursorAt: cursorAt, CursorID: cursorID, Access: access})
 		}
 		if err != nil {
 			return nil, storeErr(err)
@@ -468,66 +457,6 @@ func (a *Archive) workflow(ctx context.Context, name string) (generated.ArchiveW
 		return w, fmt.Errorf("workflow %s %w; yours are %s", name, ErrNotFound, strings.Join(all, ", "))
 	}
 	return w, err
-}
-
-type callerKey struct{}
-
-func callerOf(ctx context.Context) map[string]any {
-	ac, _ := ctx.Value(callerKey{}).(*Actor)
-	if ac == nil {
-		ac = ActorFrom(ctx)
-	}
-	id := func(u *uuid.UUID) any {
-		if u == nil {
-			return nil
-		}
-		return u.String()
-	}
-	if ac == nil {
-		return map[string]any{"member": "", "email": "", "name": "", "role": "", "group": nil, "scope": nil}
-	}
-	return map[string]any{"member": ac.member.String(), "email": ac.Email, "name": ac.Name, "role": ac.entry.Role, "group": id(ac.entry.Group), "scope": id(ac.entry.Scope)}
-}
-
-func (a *Archive) workflowCall(ctx context.Context, name string, input any) (map[string]any, error) {
-	ac, err := signedIn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var groups []uuid.UUID
-	if err := a.as(ctx, func(ctx context.Context) (err error) {
-		groups, err = a.st.db(ctx).MyGroups(ctx)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	var found []generated.ArchiveWorkflow
-	if err := a.sys(ctx, func(ctx context.Context) (err error) {
-		found, err = a.st.db(ctx).WorkflowRunnable(ctx, []string{strings.TrimSpace(name)}, ac.UserID, groups)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	switch {
-	case len(found) == 0:
-		return nil, fmt.Errorf("workflow %s: %w", name, ErrNotFound)
-	case len(found) > 1 && found[0].UserID != ac.UserID:
-		return nil, fmt.Errorf("two workflows you may run are named %s: %w", name, ErrConflict)
-	}
-	w := found[0]
-	saver, err := a.workflowActor(ctx, w)
-	if err != nil {
-		return nil, err
-	}
-	run, err := a.workflowExec(context.WithValue(ctx, callerKey{}, ac), w, saver, "run", input)
-	if err != nil {
-		return nil, err
-	}
-	said := run.Error
-	if w.UserID != ac.UserID {
-		said, _, _ = strings.Cut(said, "\n")
-	}
-	return map[string]any{"result": run.Result, "error": said}, nil
 }
 
 func (a *Archive) workflowRecord(ctx context.Context, id uuid.UUID, trigger string, at time.Time, out *RunOutput, d time.Duration) (WorkflowRun, error) {
@@ -795,21 +724,6 @@ func (a *Archive) workflowHook(rw http.ResponseWriter, r *http.Request) {
 
 func (r *runner) workflowSDK(o *goja.Object) {
 	a := r.a
-	r.def(o, "link", func(ctx context.Context, call goja.FunctionCall) (any, error) {
-		id, err := r.id(call, 0, "link")
-		if err != nil {
-			return nil, err
-		}
-		var opts struct {
-			Rotate bool `json:"rotate"`
-		}
-		if v := call.Argument(1); !goja.IsUndefined(v) {
-			if err := r.arg(call, 1, "link", "opts", &opts); err != nil {
-				return nil, err
-			}
-		}
-		return a.GuestLink(ctx, id, opts.Rotate)
-	})
 	r.def(o, "run", func(ctx context.Context, call goja.FunctionCall) (any, error) {
 		name, err := r.str(call, 0, "run", "name")
 		if err != nil {
@@ -822,15 +736,6 @@ func (r *runner) workflowSDK(o *goja.Object) {
 			}
 		}
 		w, err := a.workflow(ctx, name)
-		if errors.Is(err, ErrNotFound) {
-			var in any
-			if len(call.Arguments) > 1 {
-				in = call.Argument(1).Export()
-			}
-			if out, callErr := a.workflowCall(context.WithoutCancel(ctx), name, in); callErr == nil {
-				return out, nil
-			}
-		}
 		if err != nil {
 			return nil, err
 		}

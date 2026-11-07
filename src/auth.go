@@ -219,7 +219,7 @@ func (a *Archive) me(ctx context.Context) (map[string]any, error) {
 			all = append(all, w)
 		}
 	}
-	return map[string]any{"actor": ac, "role": role, "group": ac.entry.Group, "scope": ac.entry.Scope, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
+	return map[string]any{"actor": ac, "role": role, "group": ac.entry.Group, "workspace": a.ws.ID.String(), "workspaces": all, "admin": u.Admin && ac.Role == ac.UserRole}, nil
 }
 
 func (a *Archive) AddUser(ctx context.Context, email, name, role string) (*User, error) {
@@ -439,54 +439,6 @@ func (a *Archive) CreateToken(ctx context.Context, name string, ttl time.Duratio
 	})
 }
 
-func (a *Archive) GuestLink(ctx context.Context, member uuid.UUID, rotate bool) (string, error) {
-	lvl, _, err := a.level(ctx)
-	if err != nil {
-		return "", err
-	}
-	if !mayManage(lvl) {
-		return "", fmt.Errorf("only managers, engineers and the owner give out a guest's link: %w", ErrForbidden)
-	}
-	var m generated.GuestMemberRow
-	err = a.as(ctx, func(ctx context.Context) (err error) {
-		m, err = a.st.db(ctx).GuestMember(ctx, member)
-		return err
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("no guest %s: %w", member, ErrNotFound)
-	}
-	if err != nil {
-		return "", err
-	}
-	hq := a.hub.q()
-	if _, err := hq.JoinWorkspace(ctx, m.Email, m.Name, a.ws.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return "", err
-	}
-	u, err := userBy(ctx, a.hub, (*generated.Queries).UserByEmail, m.Email)
-	if err != nil {
-		return "", err
-	}
-	if !rotate {
-		t, err := hq.GuestToken(ctx, u.ID, &a.ws.ID)
-		if err == nil {
-			n := a.hub.aead.NonceSize()
-			plain, err := a.hub.aead.Open(nil, t.Sealed[:n], t.Sealed[n:], []byte("token "+t.ID.String()))
-			if err != nil {
-				return "", fmt.Errorf("guest token does not open: %w", err)
-			}
-			return string(plain), nil
-		}
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return "", err
-		}
-	}
-	if err := hq.DropGuestToken(ctx, u.ID, &a.ws.ID); err != nil {
-		return "", err
-	}
-	id, secret := coreNewID(), authNewSecret()
-	return secret, hq.CreateGuestToken(ctx, generated.CreateGuestTokenParams{ID: id, UserID: u.ID, Workspace: &a.ws.ID, Name: m.Name, Hash: authHash(secret), Sealed: a.sealToken(id, secret)})
-}
-
 func (a *Archive) sealToken(id uuid.UUID, secret string) []byte {
 	nonce := make([]byte, a.hub.aead.NonceSize())
 	rand.Read(nonce)
@@ -647,7 +599,6 @@ type signinState struct {
 	Bind     string `json:"b"`
 	Exp      int64  `json:"x"`
 	Next     string `json:"t,omitempty"`
-	App      string `json:"a,omitempty"`
 }
 
 type signinUser struct {
@@ -991,13 +942,6 @@ func (s *signin) handler() http.Handler {
 		}
 		bind := authNewSecret()
 		st := signinState{Nonce: authNewSecret(), Verifier: oauth2.GenerateVerifier(), Bind: authHash(bind), Exp: time.Now().Add(10 * time.Minute).Unix(), Next: signinNext(r.URL.Query().Get("next"))}
-		if app := r.URL.Query().Get("app"); app != "" {
-			if !h.ownOrigin(app) {
-				httpWrite(w, 0, nil, fmt.Errorf("app %q is not on Archive's domain: %w", app, httpErrBadRequest))
-				return
-			}
-			st.App = app
-		}
 		http.SetCookie(w, s.cookie(signinOIDC, bind, "/auth/oidc/", 600))
 		opts := []oauth2.AuthCodeOption{oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)}
 		if p.apple != nil {
@@ -1020,21 +964,8 @@ func (s *signin) handler() http.Handler {
 		http.SetCookie(w, s.cookie(signinOIDC, "", "/auth/oidc/", -1))
 		u, err := s.oidcCallback(r)
 		next := "/"
-		app := h.app
-		if st, _ := s.unseal(r.URL.Query().Get("state")); st != nil {
-			if st.Next != "" {
-				next = st.Next
-			}
-			if st.App != "" {
-				app = st.App
-			}
-		}
-		if err == nil && app != h.app {
-			code := authNewSecret()
-			if err = h.q().CreateClaim(r.Context(), u.ID, authHash(code)); err == nil {
-				http.Redirect(w, r, app+"/auth/claim?"+url.Values{"code": {code}, "next": {next}}.Encode(), http.StatusSeeOther)
-				return
-			}
+		if st, _ := s.unseal(r.URL.Query().Get("state")); st != nil && st.Next != "" {
+			next = st.Next
 		}
 		if err == nil {
 			_, err = s.signedIn(w, r, u)
@@ -1043,25 +974,7 @@ func (s *signin) handler() http.Handler {
 			httpWrite(w, 0, nil, err)
 			return
 		}
-		http.Redirect(w, r, app+next, http.StatusSeeOther)
-	})
-	mux.HandleFunc("GET /auth/claim", func(w http.ResponseWriter, r *http.Request) {
-		id, err := h.q().UseClaim(r.Context(), authHash(r.URL.Query().Get("code")))
-		if errors.Is(err, pgx.ErrNoRows) {
-			err = fmt.Errorf("this sign-in has expired; sign in again: %w", ErrUnauthorized)
-		}
-		var u *User
-		if err == nil {
-			u, err = userBy(r.Context(), h, (*generated.Queries).UserByID, id)
-		}
-		if err == nil {
-			_, err = s.signedIn(w, r, u)
-		}
-		if err != nil {
-			httpWrite(w, 0, nil, err)
-			return
-		}
-		http.Redirect(w, r, signinNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+		http.Redirect(w, r, h.app+next, http.StatusSeeOther)
 	})
 	h.workspaceRoutes(authed)
 	h.mcpRoutesSignin(open)
@@ -1100,7 +1013,7 @@ func (s *signin) signedIn(w http.ResponseWriter, r *http.Request, u *User) (any,
 }
 
 func (s *signin) sameOrigin(r *http.Request) error {
-	if !s.h.ownOrigin(r.Header.Get("Origin")) {
+	if r.Header.Get("Origin") != httpOrigin(s.h.app) {
 		return fmt.Errorf("send this from %s: %w", s.h.app, ErrForbidden)
 	}
 	return nil
