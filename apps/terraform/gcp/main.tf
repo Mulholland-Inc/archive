@@ -664,6 +664,24 @@ resource "cloudflare_workers_custom_domain" "app" {
   service    = cloudflare_workers_script.app.script_name
 }
 
+resource "cloudflare_workers_script" "lulu" {
+  account_id  = data.cloudflare_zone.this.account.id
+  script_name = "archive-lulu"
+  main_module = "worker.js"
+  content     = "export default { fetch: () => new Response(null, { status: 503 }) };"
+
+  lifecycle {
+    ignore_changes = all
+  }
+}
+
+resource "cloudflare_workers_custom_domain" "lulu" {
+  account_id = data.cloudflare_zone.this.account.id
+  zone_id    = data.cloudflare_zone.this.zone_id
+  hostname   = "lulu.${var.domain}"
+  service    = cloudflare_workers_script.lulu.script_name
+}
+
 resource "cloudflare_workers_route" "live" {
   zone_id = data.cloudflare_zone.this.zone_id
   pattern = "api.${var.domain}/live*"
