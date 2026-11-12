@@ -1,6 +1,6 @@
 module github.com/Mulholland-Inc/archive
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/buke/typescript-go-internal/v7 v7.0.2
