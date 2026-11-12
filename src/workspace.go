@@ -961,14 +961,15 @@ func (h *Hub) pickWorkspace(ctx context.Context, user uuid.UUID) error {
 	return fmt.Errorf("this key works in several workspaces, so send Archive-Workspace with the id of one: %s: %w", strings.Join(names, ", "), httpErrBadRequest)
 }
 
-func (h *Hub) httpAuth(next func(a *Archive) http.Handler) http.Handler {
+// httpAuth lets a signed-in browser or an API key through, and a token of each further kind named.
+func (h *Hub) httpAuth(next func(a *Archive) http.Handler, kinds ...string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var a *Archive
 		var ac *Actor
 		var release func()
 		secret, err := h.secret(r)
 		if err == nil {
-			a, ac, release, err = h.authenticate(r.Context(), secret, r.Header.Get("Archive-Workspace"))
+			a, ac, release, err = h.authenticate(r.Context(), secret, r.Header.Get("Archive-Workspace"), append([]string{"api", "session"}, kinds...)...)
 		}
 		if errors.Is(err, ErrUnauthorized) && r.Header.Get("Authorization") == "" && h.local(r) {
 			a, ac, release, err = h.localUser(r.Context(), r.Header.Get("Archive-Workspace"))
