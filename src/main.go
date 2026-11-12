@@ -102,7 +102,9 @@ func serve(ctx context.Context, h *Hub, addr string) error {
 		return err
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/api/", h.httpAuth((*Archive).handler))
+	// An OAuth token reads and writes rows as it runs code over MCP, in its one workspace. /auth, where keys
+	// are made and shown, stays a browser's and a key's.
+	mux.Handle("/api/", h.httpAuth((*Archive).handler, "mcp"))
 	tus := h.httpAuth(func(a *Archive) http.Handler { return http.HandlerFunc(a.tus) })
 	mux.Handle("/api/file/tus", tus)
 	mux.Handle("/api/file/tus/", tus)
